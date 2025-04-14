@@ -37,7 +37,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
   }, [messages, isAtBottom]);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const messagesEndRef = useRef<HTMLDivElement>(null);
   };
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
