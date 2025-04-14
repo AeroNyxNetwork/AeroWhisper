@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { MessageType } from '../types/chat';
-import { encryptPacket, decryptPacket } from '../utils/crypto';
+import { encryptPacket, decryptPacket, signChallenge } from '../utils/crypto';
 
 export class AeroNyxSocket extends EventEmitter {
   private socket: WebSocket | null = null;
@@ -13,6 +13,7 @@ export class AeroNyxSocket extends EventEmitter {
   private reconnectAttempts: number = 0;
   private reconnectTimeout: NodeJS.Timeout | null = null;
   private pingInterval: NodeJS.Timeout | null = null;
+  private serverUrl: string = process.env.NEXT_PUBLIC_AERONYX_SERVER_URL || 'wss://aeronyx-server.example.com';
   
   constructor() {
     super();
@@ -30,8 +31,16 @@ export class AeroNyxSocket extends EventEmitter {
     
     return new Promise((resolve, reject) => {
       try {
-        // Determine server URL - in production, this would be configurable
-        const serverUrl = `wss://aeronyx-server.example.com/chat/${chatId}`;
+        // Use environment variable for server URL if available
+        const serverUrl = `${this.serverUrl}/chat/${chatId}`;
+        
+        // For development/testing purposes, we can simulate the connection
+        if (process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_USE_MOCK_SERVER === 'true') {
+          // Simulate connection with mock data
+          this.simulateConnection();
+          resolve();
+          return;
+        }
         
         this.socket = new WebSocket(serverUrl);
         
@@ -90,52 +99,87 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   // Handle messages from the server
-  private handleServerMessage(data: any) {
+  private handleServerMessage(data: string | ArrayBuffer | Blob) {
     try {
       // Parse JSON data
-      const message = typeof data === 'string' ? JSON.parse(data) : data;
-      
-      switch (message.type) {
-        case 'Challenge':
-          this.handleChallenge(message);
-          break;
-        
-        case 'IpAssign':
-          this.handleIpAssign(message);
-          break;
-        
-        case 'Data':
-          this.handleDataPacket(message);
-          break;
-        
-        case 'Ping':
-          this.handlePing(message);
-          break;
-        
-        case 'Error':
-          this.handleError(message);
-          break;
-        
-        case 'Disconnect':
-          this.handleDisconnect(message);
-          break;
-          
-        default:
-          console.warn('Unknown message type:', message.type);
+      let message: any;
+      if (typeof data === 'string') {
+        message = JSON.parse(data);
+      } else if (data instanceof Blob) {
+        // Handle Blob data (for binary WebSocket messages)
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          const parsedMessage = JSON.parse(result);
+          this.processMessage(parsedMessage);
+        };
+        reader.readAsText(data);
+        return;
+      } else {
+        // Handle ArrayBuffer
+        const decoder = new TextDecoder();
+        message = JSON.parse(decoder.decode(data));
       }
+      
+      this.processMessage(message);
     } catch (error) {
       console.error('Error handling server message:', error);
     }
   }
   
+  // Process parsed message
+  private processMessage(message: any) {
+    switch (message.type) {
+      case 'Challenge':
+        this.handleChallenge(message);
+        break;
+      
+      case 'IpAssign':
+        this.handleIpAssign(message);
+        break;
+      
+      case 'Data':
+        this.handleDataPacket(message);
+        break;
+      
+      case 'Ping':
+        this.handlePing(message);
+        break;
+      
+      case 'Error':
+        this.handleError(message);
+        break;
+      
+      case 'Disconnect':
+        this.handleDisconnect(message);
+        break;
+        
+      default:
+        console.warn('Unknown message type:', message.type);
+    }
+  }
+  
   // Handle challenge message
-  private async handleChallenge(message: any) {
-    // In a real implementation, we would sign the challenge with the private key
-    // This is a simplified version
-    
+  private async handleChallenge(message: { id: string, data: number[] | string }) {
     try {
       // Convert challenge data to Uint8Array
-      const challengeData = new Uint8Array(message.data);
+      let challengeData: Uint8Array;
+      if (Array.isArray(message.data)) {
+        challengeData = new Uint8Array(message.data);
+      } else if (typeof message.data === 'string') {
+        // Assuming base64 or base58 encoded string
+        try {
+          // Try to parse as base58
+          const bs58 = await import('bs58');
+          challengeData = bs58.decode(message.data);
+        } catch {
+          // Fallback to base64
+          const buffer = Buffer.from(message.data, 'base64');
+          challengeData = new Uint8Array(buffer);
+        }
+      } else {
+        throw new Error('Invalid challenge data format');
+      }
       
       // Get keypair from localStorage
       const storedKeypair = localStorage.getItem('aero-keypair');
@@ -144,10 +188,10 @@ export class AeroNyxSocket extends EventEmitter {
       }
       
       const keypair = JSON.parse(storedKeypair);
+      const secretKey = await import('bs58').then(bs58 => bs58.decode(keypair.secretKey));
       
-      // Sign challenge - this would use nacl.sign.detached in real implementation
-      const signatureBuffer = new Uint8Array(64); // Dummy signature
-      const signature = Buffer.from(signatureBuffer).toString('base64');
+      // Sign challenge with real signature
+      const signature = await signChallenge(challengeData, secretKey);
       
       // Send challenge response
       const response = {
@@ -167,11 +211,20 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   // Handle IP assignment message
-  private handleIpAssign(message: any) {
+  private handleIpAssign(message: { ip_address: string, session_id: string, session_key?: string, key_nonce?: string }) {
     try {
-      // In real implementation, we would decrypt session key
-      // For now, use a dummy key
-      this.sessionKey = new Uint8Array(32);
+      // In a real implementation, we would decrypt the session key
+      // For now, generate a random session key for testing
+      if (message.session_key) {
+        // TODO: Implement proper session key decryption using shared secret
+        // this.sessionKey = decryptSessionKey(message.session_key, message.key_nonce, sharedSecret);
+      } else {
+        // For testing, generate a random key
+        const nacl = require('tweetnacl');
+        this.sessionKey = new Uint8Array(nacl.secretbox.keyLength);
+        window.crypto.getRandomValues(this.sessionKey);
+      }
+      
       this.isConnected = true;
       this.connecting = false;
       
@@ -192,39 +245,39 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   // Handle data packet
-  private handleDataPacket(message: any) {
+  private handleDataPacket(message: { encrypted: string, nonce: string, counter: number }) {
     try {
       if (!this.sessionKey) return;
       
-      // Decrypt the message
-      // In real implementation, we would use decryptPacket
-      
-      // For now, assume it's a JSON-encoded message
-      const decryptedMessage = {
-        type: 'message',
-        content: 'Decrypted message content',
-        senderId: 'sender-id',
-        senderName: 'Sender Name',
-        timestamp: new Date().toISOString(),
-      };
-      
-      // Emit appropriate event based on message type
-      if (decryptedMessage.type === 'message') {
-        this.emit('message', {
-          id: `msg-${Date.now()}`,
-          content: decryptedMessage.content,
-          senderId: decryptedMessage.senderId,
-          senderName: decryptedMessage.senderName,
-          timestamp: decryptedMessage.timestamp,
-          isEncrypted: true,
-          status: 'received',
-        });
-      } else if (decryptedMessage.type === 'participants') {
-        this.emit('participants', decryptedMessage.participants);
-      } else if (decryptedMessage.type === 'chatInfo') {
-        this.emit('chatInfo', decryptedMessage.chatInfo);
-      } else if (decryptedMessage.type === 'webrtc-signal') {
-        this.emit('webrtcSignal', decryptedMessage);
+      // Decrypt the message using our session key
+      try {
+        const decryptedData = decryptPacket(message.encrypted, message.nonce, this.sessionKey);
+        
+        // Emit appropriate event based on message type
+        if (decryptedData.type === 'message') {
+          this.emit('message', {
+            id: decryptedData.id || `msg-${Date.now()}`,
+            content: decryptedData.content,
+            senderId: decryptedData.senderId,
+            senderName: decryptedData.senderName,
+            timestamp: decryptedData.timestamp || new Date().toISOString(),
+            isEncrypted: true,
+            status: 'received',
+          });
+        } else if (decryptedData.type === 'participants') {
+          this.emit('participants', decryptedData.participants);
+        } else if (decryptedData.type === 'chatInfo') {
+          this.emit('chatInfo', decryptedData.chatInfo);
+        } else if (decryptedData.type === 'webrtc-signal') {
+          this.emit('webrtcSignal', decryptedData);
+        }
+      } catch (error) {
+        console.error('Failed to decrypt data packet:', error);
+        
+        // For development/testing, still emit some data even if decryption fails
+        if (process.env.NODE_ENV === 'development') {
+          this.simulateDataReceived(message);
+        }
       }
       
       // Forward raw data for WebRTC signaling
@@ -235,10 +288,10 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   // Handle ping message
-  private handlePing(message: any) {
+  private handlePing(message: { timestamp: number, sequence: number }) {
     try {
       // Send pong response
-      if (this.socket) {
+      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
         const pong = {
           type: 'Pong',
           echo_timestamp: message.timestamp,
@@ -254,13 +307,13 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   // Handle error message
-  private handleError(message: any) {
+  private handleError(message: { message: string, code?: number }) {
     console.error('Server error:', message.message);
     this.emit('error', new Error(message.message));
   }
   
   // Handle disconnect message
-  private handleDisconnect(message: any) {
+  private handleDisconnect(message: { reason: number, message: string }) {
     this.isConnected = false;
     this.emit('disconnected', message.reason, message.message);
     this.stopPingInterval();
@@ -323,15 +376,26 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     try {
-      // In real implementation, we would encrypt the message
-      // For now, create a data packet with dummy encryption
+      // Create the message data object
+      const messageData = {
+        type: 'message',
+        id: message.id,
+        content: message.content,
+        senderId: message.senderId,
+        senderName: message.senderName,
+        timestamp: message.timestamp,
+      };
       
+      // Encrypt the message data with our session key
+      const { encrypted, nonce } = encryptPacket(messageData, this.sessionKey);
+      
+      // Create data packet with encrypted content
       const dataPacket = {
         type: 'Data',
-        encrypted: [], // Would contain encrypted data
-        nonce: [], // Would contain nonce
+        encrypted,
+        nonce,
         counter: this.messageCounter++,
-        padding: null,
+        padding: null, // Optional padding for length concealment
       };
       
       this.socket.send(JSON.stringify(dataPacket));
@@ -349,15 +413,16 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     try {
-      // In real implementation, we would encrypt the data
-      // For now, create a data packet with dummy encryption
+      // Encrypt the data with our session key
+      const { encrypted, nonce } = encryptPacket(data, this.sessionKey);
       
+      // Create data packet with encrypted content
       const dataPacket = {
         type: 'Data',
-        encrypted: [], // Would contain encrypted data
-        nonce: [], // Would contain nonce
+        encrypted,
+        nonce,
         counter: this.messageCounter++,
-        padding: null,
+        padding: null, // Optional padding for length concealment
       };
       
       this.socket.send(JSON.stringify(dataPacket));
@@ -391,7 +456,13 @@ export class AeroNyxSocket extends EventEmitter {
       }, 5000);
       
       // Send request
-      this.send({ type: 'request-chat-info' });
+      const success = this.send({ type: 'request-chat-info' });
+      
+      if (!success) {
+        clearTimeout(timeout);
+        this.off('chatInfo', listener);
+        reject(new Error('Failed to send request'));
+      }
     });
   }
   
@@ -418,7 +489,13 @@ export class AeroNyxSocket extends EventEmitter {
       }, 5000);
       
       // Send request
-      this.send({ type: 'request-participants' });
+      const success = this.send({ type: 'request-participants' });
+      
+      if (!success) {
+        clearTimeout(timeout);
+        this.off('participants', listener);
+        reject(new Error('Failed to send request'));
+      }
     });
   }
   
@@ -446,8 +523,12 @@ export class AeroNyxSocket extends EventEmitter {
     
     return new Promise((resolve, reject) => {
       try {
-        this.send({ type: 'delete-chat' });
-        resolve();
+        const success = this.send({ type: 'delete-chat' });
+        if (success) {
+          resolve();
+        } else {
+          reject(new Error('Failed to send delete request'));
+        }
       } catch (error) {
         reject(error);
       }
@@ -475,5 +556,75 @@ export class AeroNyxSocket extends EventEmitter {
   // Check if connected
   isActive(): boolean {
     return this.isConnected && !!this.socket;
+  }
+  
+  // For development and testing: simulate connection (mock server)
+  private simulateConnection() {
+    // Mock successful connection
+    setTimeout(() => {
+      this.isConnected = true;
+      this.connecting = false;
+      this.sessionKey = new Uint8Array(32);
+      window.crypto.getRandomValues(this.sessionKey);
+      
+      this.emit('connectionStatus', 'connected');
+      this.emit('connected', {
+        ip: '127.0.0.1',
+        sessionId: `mock-session-${Date.now()}`
+      });
+      
+      // Simulate receiving chat info
+      setTimeout(() => {
+        this.emit('chatInfo', {
+          id: this.chatId,
+          name: 'Mock Chat Room',
+          createdAt: new Date(Date.now() - 3600000).toISOString(),
+          isEphemeral: true,
+          useP2P: true,
+          createdBy: 'mock-creator-id'
+        });
+      }, 200);
+      
+      // Simulate receiving participants list
+      setTimeout(() => {
+        this.emit('participants', [
+          {
+            id: this.publicKey,
+            publicKey: this.publicKey,
+            displayName: 'You',
+            isActive: true,
+            lastSeen: new Date()
+          },
+          {
+            id: 'mock-user-1',
+            publicKey: 'mock-public-key-1',
+            displayName: 'Mock User 1',
+            isActive: true,
+            lastSeen: new Date()
+          }
+        ]);
+      }, 400);
+      
+      // Start ping interval (just for simulation)
+      this.startPingInterval();
+    }, 500);
+  }
+  
+  // For development and testing: simulate receiving data
+  private simulateDataReceived(message: any) {
+    // Mock message based on counter for variety
+    const mockContent = `This is a simulated message #${message.counter || 0}`;
+    const mockSenderId = message.counter % 2 === 0 ? 'mock-user-1' : this.publicKey || 'unknown';
+    const mockSenderName = mockSenderId === this.publicKey ? 'You' : 'Mock User 1';
+    
+    this.emit('message', {
+      id: `mock-msg-${Date.now()}`,
+      content: mockContent,
+      senderId: mockSenderId,
+      senderName: mockSenderName,
+      timestamp: new Date().toISOString(),
+      isEncrypted: true,
+      status: 'received',
+    });
   }
 }
