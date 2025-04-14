@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/router';
 import { Button, Text, Flex, Box, useColorMode } from '@chakra-ui/react';
-import { ConnectionButton } from '../../components/auth/ConnectionButton';
+import { ConnectionButton } from '../../auth/ConnectionButton';
 import { generateKeyPair } from '../../utils/crypto';
 import { Layout } from '../../components/layout/Layout';
 import { useAuth } from '../../contexts/AuthContext';
