@@ -23,7 +23,6 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     sendMessage, 
     participants,
     connectionStatus,
-    isP2PEnabled,
     encryptionType
   } = useChat(chatId);
 
