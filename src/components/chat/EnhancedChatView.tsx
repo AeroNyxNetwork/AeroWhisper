@@ -23,8 +23,11 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     sendMessage, 
     participants,
     connectionStatus,
-    encryptionType
+    chatInfo
   } = useChat(chatId);
+
+  // Default encryption type
+  const encryptionType = 'standard';
 
   // Scroll handling logic
   useEffect(() => {
@@ -51,7 +54,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     >
       {/* Security Status Bar */}
       <EncryptionIndicator 
-        type={encryptionType || 'standard'}
+        type={encryptionType}
         isP2P={connectionStatus === 'p2p-connected'}
         participants={participants.length}
       />
@@ -100,7 +103,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
       <MessageComposer 
         onSendMessage={sendMessage}
         isEncrypted={true}
-        encryptionType={encryptionType || 'standard'}
+        encryptionType={encryptionType}
         isP2P={connectionStatus === 'p2p-connected'}
         chatId={chatId}
       />
