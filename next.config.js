@@ -5,6 +5,7 @@ const withBundleAnalyzer = process.env.ANALYZE === 'true'
 
 const nextConfig = {
   reactStrictMode: true,
+  output: 'standalone', // Optimized for Docker deployment
   webpack: (config) => {
     // Fixes npm packages that depend on `buffer` module
     config.resolve.fallback = {
@@ -18,6 +19,7 @@ const nextConfig = {
   },
   images: {
     domains: ['aeronyx-server.example.com'],
+    unoptimized: process.env.NODE_ENV !== 'production',
   },
   experimental: {
     scrollRestoration: true,
@@ -26,6 +28,8 @@ const nextConfig = {
     AERONYX_SERVER_URL: process.env.AERONYX_SERVER_URL || 'wss://aeronyx-server.example.com',
     BUILD_VERSION: process.env.BUILD_VERSION || '0.1.0',
   },
+  // Enable SWC minification for faster builds
+  swcMinify: true,
 }
 
 module.exports = withBundleAnalyzer(nextConfig);
