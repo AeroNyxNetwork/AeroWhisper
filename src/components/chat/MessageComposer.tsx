@@ -31,7 +31,7 @@ import {
 } from 'react-icons/fa';
 import { FileTransfer } from './FileTransfer';
 
-type EncryptionType = 'standard' | 'high' | 'p2p';
+type EncryptionType = 'standard' | 'high' | 'maximum';
 
 interface MessageComposerProps {
   onSendMessage: (text: string) => Promise<boolean>;
