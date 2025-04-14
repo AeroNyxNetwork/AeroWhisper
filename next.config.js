@@ -10,9 +10,16 @@ const nextConfig = {
     if (!isServer) {
       config.resolve.fallback = { 
         ...config.resolve.fallback,
-        crypto: require.resolve('crypto-browserify'),
-        stream: require.resolve('stream-browserify'),
-        buffer: require.resolve('buffer/'),
+        crypto: 'crypto-browserify',
+        stream: 'stream-browserify',
+        buffer: 'buffer/',
+        // Add other polyfills if needed
+        util: 'util/',
+        assert: 'assert/',
+        fs: false,
+        net: false,
+        tls: false,
+        path: false,
       };
     }
     return config;
