@@ -6,11 +6,17 @@ import { MessageType } from '../../types/chat';
 
 interface MessageProps {
   message: MessageType;
-  isOwnMessage: boolean;
-  showSender: boolean;
+  previousMessage?: MessageType | null;
+  isOwnMessage?: boolean;
+  showAvatar?: boolean;
 }
 
-export const Message: React.FC<MessageProps> = ({ message, isOwnMessage, showSender }) => {
+export const Message: React.FC<MessageProps> = ({ 
+  message, 
+  previousMessage = null, 
+  isOwnMessage = false, 
+  showAvatar = true 
+}) => {
   const { colorMode } = useColorMode();
   const [showDetails, setShowDetails] = useState(false);
   
@@ -41,22 +47,22 @@ export const Message: React.FC<MessageProps> = ({ message, isOwnMessage, showSen
       alignSelf={isOwnMessage ? 'flex-end' : 'flex-start'}
       maxW={{ base: '80%', md: '70%' }}
     >
-      {showSender && !isOwnMessage && (
+      {showAvatar && !isOwnMessage && message.senderName && (
         <Text 
           fontSize="xs" 
           ml={2} 
           mb={1}
           color={colorMode === 'dark' ? 'gray.400' : 'gray.600'}
         >
-          {message.senderName || 'Unknown'}
+          {message.senderName}
         </Text>
       )}
       
       <Flex align="flex-end">
-        {!isOwnMessage && (
+        {!isOwnMessage && showAvatar && (
           <Avatar 
             size="xs" 
-            name={message.senderName} 
+            name={message.senderName || 'Unknown'} 
             mr={2} 
             bg="purple.500"
           />
@@ -111,7 +117,7 @@ export const Message: React.FC<MessageProps> = ({ message, isOwnMessage, showSen
           )}
         </Box>
         
-        {isOwnMessage && (
+        {isOwnMessage && showAvatar && (
           <Avatar 
             size="xs" 
             name="Me" 
@@ -135,9 +141,9 @@ export const Message: React.FC<MessageProps> = ({ message, isOwnMessage, showSen
           <Text>
             Sent: {messageDate.toLocaleString()}
           </Text>
-          {message.metaData && (
+          {message.metaData && message.metaData.encryptionType && (
             <Text>
-              Encryption: {message.metaData.encryptionType || 'Standard'}
+              Encryption: {message.metaData.encryptionType}
             </Text>
           )}
         </Box>
