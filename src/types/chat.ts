@@ -1,5 +1,5 @@
 // Message status
-export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'received';
 
 // Message type
 export interface MessageType {
@@ -13,9 +13,18 @@ export interface MessageType {
     encryptionType?: string;
     isP2P?: boolean;
     deviceId?: string;
+    reactions?: MessageReaction[];
     [key: string]: any;
   };
   status?: MessageStatus;
+}
+
+// Message reaction
+export interface MessageReaction {
+  type: string;
+  userId: string;
+  userName?: string;
+  timestamp?: string | Date;
 }
 
 // Chat room
@@ -50,4 +59,32 @@ export interface ChatInvitation {
   invitedBy: string;
   expires: string;
   token: string;
+}
+
+// Participant type
+export interface Participant {
+  id: string;
+  publicKey: string;
+  displayName: string;
+  isActive: boolean;
+  lastSeen: Date | string;
+}
+
+// Connection status
+export type ConnectionStatus = 
+  | 'connecting' 
+  | 'connected' 
+  | 'p2p-connecting' 
+  | 'p2p-connected' 
+  | 'disconnected';
+
+// Chat room info
+export interface ChatInfo {
+  id: string;
+  name: string;
+  createdAt: string;
+  isEphemeral: boolean;
+  useP2P: boolean;
+  createdBy: string;
+  encryptionType?: 'standard' | 'high' | 'maximum';
 }
