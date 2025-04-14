@@ -8,7 +8,11 @@ import { MessageComposer } from './MessageComposer';
 import { EncryptionIndicator } from './EncryptionIndicator';
 import { useChat } from '../../hooks/useChat';
 
-export const EnhancedChatView = ({ chatId }) => {
+interface EnhancedChatViewProps {
+  chatId: string;
+}
+
+export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) => {
   const { colorMode } = useColorMode();
   const theme = useTheme();
   const messagesEndRef = useRef(null);
@@ -34,8 +38,8 @@ export const EnhancedChatView = ({ chatId }) => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const handleScroll = (e) => {
-    const bottom = e.target.scrollHeight - e.target.scrollTop === e.target.clientHeight;
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const bottom = e.currentTarget.scrollHeight - e.currentTarget.scrollTop === e.currentTarget.clientHeight;
     setIsAtBottom(bottom);
   };
 
@@ -131,7 +135,7 @@ export const EnhancedChatView = ({ chatId }) => {
 };
 
 // Helper function to determine if avatar should be shown
-function shouldShowAvatar(currentMsg, prevMsg) {
+function shouldShowAvatar(currentMsg: any, prevMsg: any): boolean {
   if (!prevMsg) return true;
   return currentMsg.senderId !== prevMsg.senderId || 
     (new Date(currentMsg.timestamp).getTime() - new Date(prevMsg.timestamp).getTime() > 300000);
