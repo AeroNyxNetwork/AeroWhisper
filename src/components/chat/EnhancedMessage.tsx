@@ -38,10 +38,10 @@ import {
 } from 'react-icons/fa';
 import { formatDistanceToNow, format } from 'date-fns';
 import { motion } from 'framer-motion';
-import { MessageType } from '../../types/chat';
+import { MessageType, MessageStatus } from '../../types/chat';
 import { useAuth } from '../../contexts/AuthContext';
 import { MessageReactions } from './MessageReactions';
-import { ReadReceipts, MessageStatus } from './ReadReceipts';
+import { ReadReceipts } from './ReadReceipts';
 import { RichMediaPreview } from './RichMediaPreview';
 
 interface EnhancedMessageProps {
