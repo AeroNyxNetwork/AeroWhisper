@@ -84,6 +84,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [settings, setSettings] = useState<NotificationSettings>(defaultSettings);
   const [hasPermission, setHasPermission] = useState(false);
   const [notificationsSupported, setNotificationsSupported] = useState(false);
+  const [isClient, setIsClient] = useState(false);
   
   // Unread message tracking
   const [unreadMessages, setUnreadMessages] = useState<Record<string, NotificationMessage[]>>({});
@@ -92,16 +93,35 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   // Muted chats with expiry timestamps
   const [mutedChats, setMutedChats] = useState<Record<string, number | null>>({});
   
-  // Sound elements for notifications
-  const [notificationSounds] = useState({
-    standard: new Audio('/sounds/notification-standard.mp3'),
-    subtle: new Audio('/sounds/notification-subtle.mp3'),
-    energetic: new Audio('/sounds/notification-energetic.mp3')
+  // Sound elements for notifications - initialized safely for SSR
+  const [notificationSounds] = useState(() => {
+    // Only initialize Audio objects on the client side
+    if (typeof window !== 'undefined' && typeof Audio !== 'undefined') {
+      return {
+        standard: new Audio('/sounds/notification-standard.mp3'),
+        subtle: new Audio('/sounds/notification-subtle.mp3'),
+        energetic: new Audio('/sounds/notification-energetic.mp3')
+      };
+    }
+    // Return empty objects for server-side rendering
+    return {
+      standard: {} as any,
+      subtle: {} as any,
+      energetic: {} as any
+    };
   });
+
+  // Set isClient to true when component mounts (client-side only)
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   // Initialize notification support and load settings
   useEffect(() => {
-    const supported = 'Notification' in window;
+    // Skip during SSR
+    if (!isClient) return;
+    
+    const supported = typeof window !== 'undefined' && 'Notification' in window;
     setNotificationsSupported(supported);
     
     if (supported) {
@@ -138,10 +158,12 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
         console.error('Failed to load muted chats:', error);
       }
     }
-  }, []);
+  }, [isClient]);
   
   // Update unread count whenever unreadMessages changes
   useEffect(() => {
+    if (!isClient) return;
+    
     const total = Object.values(unreadMessages).reduce(
       (sum, messages) => sum + messages.length,
       0
@@ -157,10 +179,12 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     } else {
       document.title = 'AeroNyx';
     }
-  }, [unreadMessages]);
+  }, [unreadMessages, isClient]);
   
   // Helper to update favicon with badge
   const updateFaviconBadge = (count: number) => {
+    if (!isClient) return;
+    
     // This would require a favicon badge library to implement
     // For simplicity, we'll just implement the concept here
     console.log(`Updating favicon badge: ${count}`);
@@ -168,7 +192,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   // Request notification permission
   const requestPermission = async (): Promise<boolean> => {
-    if (!notificationsSupported) return false;
+    if (!isClient || !notificationsSupported) return false;
     
     try {
       const permission = await Notification.requestPermission();
@@ -188,6 +212,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   // Update notification settings
   const updateSettings = useCallback((newSettings: Partial<NotificationSettings>) => {
+    if (!isClient) return;
+    
     setSettings(prev => {
       const updated = { ...prev, ...newSettings };
       
@@ -196,11 +222,11 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       
       return updated;
     });
-  }, []);
+  }, [isClient]);
 
   // Check if we're in quiet hours
   const isInQuietHours = useCallback(() => {
-    if (!settings.quietHoursEnabled) return false;
+    if (!isClient || !settings.quietHoursEnabled) return false;
     
     try {
       const now = new Date();
@@ -224,7 +250,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       console.error('Error calculating quiet hours:', error);
       return false;
     }
-  }, [settings.quietHoursEnabled, settings.quietHoursStart, settings.quietHoursEnd]);
+  }, [settings.quietHoursEnabled, settings.quietHoursStart, settings.quietHoursEnd, isClient]);
   
   // Check if a chat is muted
   const isMuted = useCallback((chatId: string) => {
@@ -236,52 +262,58 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   
   // Mute a chat
   const mute = useCallback((chatId: string, duration?: number) => {
+    if (!isClient) return;
+    
     setMutedChats(prev => {
       const expiry = duration ? Date.now() + duration : null; // null = indefinite
       const updated = { ...prev, [chatId]: expiry };
       localStorage.setItem('aero-muted-chats', JSON.stringify(updated));
       return updated;
     });
-  }, []);
+  }, [isClient]);
   
   // Unmute a chat
   const unmute = useCallback((chatId: string) => {
+    if (!isClient) return;
+    
     setMutedChats(prev => {
       const updated = { ...prev };
       delete updated[chatId];
       localStorage.setItem('aero-muted-chats', JSON.stringify(updated));
       return updated;
     });
-  }, []);
+  }, [isClient]);
   
   // Play notification sound
   const playSound = useCallback(() => {
-    if (settings.notificationSound === 'none') return;
+    if (!isClient || settings.notificationSound === 'none') return;
     
     try {
       const soundElement = notificationSounds[settings.notificationSound];
-      if (soundElement) {
+      if (soundElement && soundElement.play) {
         soundElement.currentTime = 0;
         soundElement.play().catch(err => console.error("Error playing notification sound:", err));
       }
     } catch (error) {
       console.error('Failed to play notification sound:', error);
     }
-  }, [settings.notificationSound, notificationSounds]);
+  }, [settings.notificationSound, notificationSounds, isClient]);
   
   // Vibrate device
   const vibrate = useCallback(() => {
-    if (!settings.vibrate || !navigator.vibrate) return;
+    if (!isClient || !settings.vibrate || !navigator.vibrate) return;
     
     try {
       navigator.vibrate(200);
     } catch (error) {
       console.error('Failed to vibrate device:', error);
     }
-  }, [settings.vibrate]);
+  }, [settings.vibrate, isClient]);
   
   // Show a notification for a new message
   const showNotification = useCallback((message: NotificationMessage) => {
+    if (!isClient) return;
+    
     // Add to unread messages
     setUnreadMessages(prev => {
       const chatMessages = prev[message.chatId] || [];
@@ -338,7 +370,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }
   }, [
     settings, hasPermission, isInQuietHours, isMuted, 
-    playSound, vibrate, notificationsSupported, user?.id
+    playSound, vibrate, notificationsSupported, user?.id, isClient
   ]);
   
   // Get unread count for a specific chat
