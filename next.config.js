@@ -10,20 +10,27 @@ const nextConfig = {
     if (!isServer) {
       config.resolve.fallback = { 
         ...config.resolve.fallback,
-        crypto: 'crypto-browserify',
-        stream: 'stream-browserify',
-        buffer: 'buffer/',
-        // Add other polyfills if needed
-        util: 'util/',
-        assert: 'assert/',
-        fs: false,
-        net: false,
-        tls: false,
-        path: false,
+        crypto: false,
+        stream: false,
+        buffer: false,
+        util: false,
+        assert: false,
       };
     }
     return config;
   },
+  // Ensure pages are properly exported
+  trailingSlash: true,
+  // Explicitly configure dynamic routes
+  exportPathMap: async function () {
+    return {
+      '/': { page: '/' },
+      '/dashboard': { page: '/dashboard' },
+      '/auth/connect-wallet': { page: '/auth/connect-wallet' },
+      '/settings': { page: '/settings' },
+      '/404': { page: '/404' }
+    };
+  }
 }
 
 module.exports = nextConfig
