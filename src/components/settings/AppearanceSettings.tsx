@@ -39,13 +39,15 @@ interface AppearanceSettingsProps {
   onSave?: () => void;
 }
 
+type ColorModeWithSystem = 'light' | 'dark' | 'system';
+
 export const AppearanceSettings: React.FC<AppearanceSettingsProps> = ({ onSave }) => {
   const { colorMode, toggleColorMode } = useColorMode();
   const toast = useToast();
   
   // Theme settings state
   const [settings, setSettings] = useState({
-    colorMode: colorMode, // 'light', 'dark', or 'system'
+    colorMode: colorMode as ColorModeWithSystem, // 'light', 'dark', or 'system'
     primaryColor: 'purple', // default color theme
     fontSize: 'medium', // 'small', 'medium', 'large'
     messageDensity: 'comfortable', // 'compact', 'comfortable', 'spacious'
@@ -71,7 +73,7 @@ export const AppearanceSettings: React.FC<AppearanceSettingsProps> = ({ onSave }
   // Saving state
   const [isSaving, setIsSaving] = useState(false);
   
-  const handleColorModeChange = (value: 'light' | 'dark' | 'system') => {
+  const handleColorModeChange = (value: ColorModeWithSystem) => {
     setSettings({ ...settings, colorMode: value });
     
     // Update the actual color mode
@@ -203,7 +205,7 @@ export const AppearanceSettings: React.FC<AppearanceSettingsProps> = ({ onSave }
           
           <RadioGroup
             value={settings.colorMode}
-            onChange={(value) => handleColorModeChange(value as 'light' | 'dark' | 'system')}
+            onChange={(value) => handleColorModeChange(value as ColorModeWithSystem)}
           >
             <Stack direction={['column', 'row']} spacing={5}>
               <Radio value="light">
