@@ -4,7 +4,7 @@ import {
   Box, Flex, Text, IconButton, Input, Heading,
   useColorMode, Button, Menu, MenuButton, MenuList,
   MenuItem, VStack, HStack, Tooltip, Badge, Divider,
-  useClipboard, useToast
+  useClipboard, useToast, Center, Spinner
 } from '@chakra-ui/react';
 import { 
   FaPaperPlane, FaEllipsisV, FaUserPlus, FaClipboard, 
@@ -28,6 +28,36 @@ const ChatPage = () => {
   const inputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
   
+  // Client-side only states
+  const [isClient, setIsClient] = useState(false);
+  const [currentUrl, setCurrentUrl] = useState('');
+  const [hasCopiedUrl, setHasCopiedUrl] = useState(false);
+  const [newMessage, setNewMessage] = useState('');
+  const [showInviteModal, setShowInviteModal] = useState(false);
+
+  // Use a safe version of useClipboard that only runs on client
+  const copyToClipboard = () => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(currentUrl);
+      setHasCopiedUrl(true);
+      toast({
+        title: "Invitation link copied",
+        status: "success",
+        duration: 2000,
+      });
+      setTimeout(() => setHasCopiedUrl(false), 2000);
+    }
+  };
+
+  // Initialize client-side functionality
+  useEffect(() => {
+    setIsClient(true);
+    if (typeof window !== 'undefined') {
+      setCurrentUrl(window.location.href);
+    }
+  }, []);
+  
+  // Chat hooks - conditionally run when chatId is available
   const { 
     messages, 
     sendMessage, 
@@ -37,12 +67,7 @@ const ChatPage = () => {
     leaveChat,
     deleteChat,
     isSendingMessage
-  } = useChat(chatId);
-  
-  const [newMessage, setNewMessage] = useState('');
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  
-  const { hasCopied, onCopy } = useClipboard(window.location.href);
+  } = useChat(chatId || '');
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
@@ -68,31 +93,32 @@ const ChatPage = () => {
     }
   };
 
-  const handleCopyInvite = () => {
-    onCopy();
-    toast({
-      title: "Invitation link copied",
-      status: "success",
-      duration: 2000,
-    });
-  };
-
   const handleLeaveChat = async () => {
-    if (window.confirm("Are you sure you want to leave this chat?")) {
+    if (typeof window !== 'undefined' && window.confirm("Are you sure you want to leave this chat?")) {
       await leaveChat();
       router.push('/dashboard');
     }
   };
 
   const handleDeleteChat = async () => {
-    if (window.confirm("Are you sure you want to permanently delete this chat? This action cannot be undone.")) {
+    if (typeof window !== 'undefined' && window.confirm("Are you sure you want to permanently delete this chat? This action cannot be undone.")) {
       await deleteChat();
       router.push('/dashboard');
     }
   };
 
-  if (!chatId) {
-    return <Text>Loading...</Text>;
+  // Loading state when router is not ready or in SSR
+  if (!isClient || !chatId) {
+    return (
+      <Layout>
+        <Center h="calc(100vh - 80px)">
+          <Flex direction="column" align="center">
+            <Spinner size="xl" color="purple.500" thickness="4px" speed="0.65s" />
+            <Text mt={4} fontSize="lg">Loading chat...</Text>
+          </Flex>
+        </Center>
+      </Layout>
+    );
   }
 
   return (
@@ -152,7 +178,7 @@ const ChatPage = () => {
                   <Button 
                     leftIcon={<FaClipboard />} 
                     variant="outline" 
-                    onClick={handleCopyInvite}
+                    onClick={copyToClipboard}
                   >
                     Copy Link
                   </Button>
@@ -185,7 +211,7 @@ const ChatPage = () => {
                 <MenuItem icon={<FaUserPlus />} onClick={() => setShowInviteModal(true)}>
                   Invite Others
                 </MenuItem>
-                <MenuItem icon={<FaClipboard />} onClick={handleCopyInvite}>
+                <MenuItem icon={<FaClipboard />} onClick={copyToClipboard}>
                   Copy Invitation Link
                 </MenuItem>
                 <Divider />
@@ -226,12 +252,14 @@ const ChatPage = () => {
         </Box>
       </Flex>
       
-      <InviteModal 
-        isOpen={showInviteModal} 
-        onClose={() => setShowInviteModal(false)}
-        chatId={chatId}
-        inviteLink={window.location.href}
-      />
+      {isClient && (
+        <InviteModal 
+          isOpen={showInviteModal} 
+          onClose={() => setShowInviteModal(false)}
+          chatId={chatId}
+          inviteLink={currentUrl}
+        />
+      )}
     </Layout>
   );
 };
