@@ -278,7 +278,7 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({ onSave }) =>
             
             {settings.autoDeleteMessages && (
               <FormControl>
-                <FormLabel d="flex" alignItems="center">
+                <FormLabel display="flex" alignItems="center">
                   <Text mr={2}>Auto-Delete Delay</Text>
                   <Badge colorScheme="purple" ml={2}>
                     {settings.autoDeleteDelay} hours
@@ -304,7 +304,7 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({ onSave }) =>
             )}
             
             <FormControl>
-              <FormLabel d="flex" alignItems="center">
+              <FormLabel display="flex" alignItems="center">
                 <Text mr={2}>Message Retention Period</Text>
                 <Badge colorScheme="purple" ml={2}>
                   {settings.messageRetention === 0 ? 'Forever' : `${settings.messageRetention} days`}
