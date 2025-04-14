@@ -7,6 +7,7 @@ import { Message } from './Message';
 import { MessageComposer } from './MessageComposer';
 import { EncryptionIndicator } from './EncryptionIndicator';
 import { useChat } from '../../hooks/useChat';
+import { MessageType } from '../../types/chat';
 
 interface EnhancedChatViewProps {
   chatId: string;
@@ -15,7 +16,7 @@ interface EnhancedChatViewProps {
 export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) => {
   const { colorMode } = useColorMode();
   const theme = useTheme();
-  const messagesEndRef = useRef(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   
   const { 
@@ -26,8 +27,8 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     chatInfo
   } = useChat(chatId);
 
-  // Default encryption type
-  const encryptionType = 'standard';
+  // Get encryption type from chatInfo or use default
+  const encryptionType = chatInfo?.encryptionType || 'standard';
 
   // Scroll handling logic
   useEffect(() => {
@@ -37,7 +38,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
   }, [messages, isAtBottom]);
 
   const scrollToBottom = () => {
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -137,8 +138,9 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
 };
 
 // Helper function to determine if avatar should be shown
-function shouldShowAvatar(currentMsg: any, prevMsg: any): boolean {
+function shouldShowAvatar(currentMsg: MessageType, prevMsg: MessageType | null): boolean {
   if (!prevMsg) return true;
+  // Check if sender changed or if messages are more than 5 minutes apart
   return currentMsg.senderId !== prevMsg.senderId || 
     (new Date(currentMsg.timestamp).getTime() - new Date(prevMsg.timestamp).getTime() > 300000);
 }
