@@ -6,7 +6,7 @@ import {
   HStack, Spacer
 } from '@chakra-ui/react';
 import { FaUserPlus, FaUsers } from 'react-icons/fa';
-import { ConnectionStatus } from '../../hooks/useChat';
+import { ConnectionStatus } from '../../types/chat';
 
 interface ChatHeaderProps {
   chatName: string;
