@@ -118,7 +118,7 @@ const ChatPage = () => {
                   key={message.id || index}
                   message={message}
                   isOwnMessage={message.senderId === user?.id}
-                  showSender={true}
+                  showAvatar={true}
                 />
               ))}
               <div ref={messagesEndRef} />
