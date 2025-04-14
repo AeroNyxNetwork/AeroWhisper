@@ -28,8 +28,15 @@ export class WebRTCManager extends EventEmitter {
     this.sessionKey = sessionKey;
     
     // Handle incoming signaling messages
-    socket.on('data', (data) => {
+    socket.on('data', (data: any) => {
       if (data.type === 'webrtc-signal') {
+        this.handleSignalingMessage(data.signal, data.sender);
+      }
+    });
+    
+    // Handle WebRTC signaling events
+    socket.on('webrtcSignal', (data: any) => {
+      if (data.recipient === this.remotePeerId || !this.remotePeerId) {
         this.handleSignalingMessage(data.signal, data.sender);
       }
     });
@@ -180,8 +187,46 @@ export class WebRTCManager extends EventEmitter {
     
     this.dataChannel.onmessage = (event) => {
       try {
-        const message = JSON.parse(event.data);
-        this.emit('message', message);
+        // Handle encrypted message
+        if (this.sessionKey) {
+          // Parse encrypted message
+          const encryptedData = JSON.parse(event.data);
+          
+          if (encryptedData.ciphertext && encryptedData.nonce) {
+            // Decrypt the message
+            try {
+              const decryptedText = decryptMessage(
+                encryptedData.ciphertext,
+                encryptedData.nonce,
+                this.sessionKey
+              );
+              
+              // Parse decrypted message
+              const message = JSON.parse(decryptedText);
+              this.emit('message', message);
+            } catch (decryptError) {
+              console.error('Failed to decrypt P2P message:', decryptError);
+              
+              // For development/testing, still emit the message even if decryption fails
+              if (process.env.NODE_ENV === 'development') {
+                try {
+                  const fallbackMessage = JSON.parse(event.data);
+                  this.emit('message', fallbackMessage);
+                } catch (parseError) {
+                  console.error('Failed to parse P2P message:', parseError);
+                }
+              }
+            }
+          } else {
+            // Fallback for unencrypted messages
+            const message = JSON.parse(event.data);
+            this.emit('message', message);
+          }
+        } else {
+          // No session key, just parse as JSON
+          const message = JSON.parse(event.data);
+          this.emit('message', message);
+        }
       } catch (error) {
         console.error('Error parsing message:', error);
       }
@@ -206,8 +251,23 @@ export class WebRTCManager extends EventEmitter {
     }
     
     try {
-      const messageString = JSON.stringify(message);
-      this.dataChannel.send(messageString);
+      if (this.sessionKey) {
+        // Encrypt the message with the session key
+        const messageString = JSON.stringify(message);
+        const { ciphertext, nonce } = encryptMessage(messageString, this.sessionKey);
+        
+        // Send encrypted message
+        const encryptedMessage = JSON.stringify({
+          ciphertext,
+          nonce,
+        });
+        
+        this.dataChannel.send(encryptedMessage);
+      } else {
+        // Fallback to sending unencrypted messages
+        const messageString = JSON.stringify(message);
+        this.dataChannel.send(messageString);
+      }
       return true;
     } catch (error) {
       console.error('Error sending message:', error);
