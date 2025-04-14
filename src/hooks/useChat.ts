@@ -184,4 +184,175 @@ export const useChat = (chatId: string) => {
   }, [connectionStatus, toast]);
   
   // Send a message
-  const sendMessage = useCallback(async (content:
+  // Send a message
+  const sendMessage = useCallback(async (content: string) => {
+    if (!user || !socketRef.current || !chatId || content.trim() === '') {
+      return false;
+    }
+    
+    try {
+      setIsSendingMessage(true);
+      
+      // Generate a unique message ID
+      const messageId = uuid();
+      
+      // Create message object
+      const message: MessageType = {
+        id: messageId,
+        content,
+        senderId: user.id,
+        senderName: user.displayName || 'Unknown',
+        timestamp: new Date().toISOString(),
+        isEncrypted: true,
+        status: 'sending',
+      };
+      
+      // Add message to local state immediately (optimistic UI)
+      setMessages(prev => [...prev, message]);
+      
+      // Try to send via WebRTC if connected
+      let sentViaP2P = false;
+      if (webrtcRef.current && webrtcRef.current.isDirectlyConnected()) {
+        const p2pMessage = {
+          id: messageId,
+          content,
+          senderId: user.id,
+          senderName: user.displayName || 'Unknown',
+          timestamp: new Date().toISOString(),
+        };
+        
+        sentViaP2P = webrtcRef.current.sendMessage(p2pMessage);
+      }
+      
+      // If not sent via P2P, send via server
+      if (!sentViaP2P) {
+        await socketRef.current.sendMessage(message);
+      }
+      
+      // Update message status to sent
+      setMessages(prev => 
+        prev.map(m => 
+          m.id === messageId 
+            ? { ...m, status: 'sent' } 
+            : m
+        )
+      );
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      
+      // Update message status to failed
+      setMessages(prev => 
+        prev.map(m => 
+          m.id === messageId 
+            ? { ...m, status: 'failed' } 
+            : m
+        )
+      );
+      
+      toast({
+        title: "Failed to send message",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      
+      return false;
+    } finally {
+      setIsSendingMessage(false);
+    }
+  }, [user, chatId, toast]);
+  
+  // Leave the chat room
+  const leaveChat = useCallback(async () => {
+    try {
+      if (socketRef.current) {
+        await socketRef.current.leaveChat();
+      }
+      
+      if (webrtcRef.current) {
+        webrtcRef.current.disconnect();
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to leave chat:', error);
+      return false;
+    }
+  }, []);
+  
+  // Delete the chat room (if creator)
+  const deleteChat = useCallback(async () => {
+    try {
+      if (!socketRef.current || !chatInfo || chatInfo.createdBy !== user?.id) {
+        throw new Error('Not authorized to delete this chat room');
+      }
+      
+      await socketRef.current.deleteChat();
+      
+      if (webrtcRef.current) {
+        webrtcRef.current.disconnect();
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to delete chat:', error);
+      throw error;
+    }
+  }, [chatInfo, user?.id]);
+  
+  // Connect to a peer directly via WebRTC
+  const connectToPeer = useCallback((peerId: string) => {
+    if (!webrtcRef.current) {
+      toast({
+        title: "P2P not available",
+        description: "Peer-to-peer connection is not available for this chat",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return false;
+    }
+    
+    try {
+      webrtcRef.current.connectToPeer(peerId);
+      setConnectionStatus('p2p-connecting');
+      return true;
+    } catch (error) {
+      console.error('Failed to connect to peer:', error);
+      toast({
+        title: "P2P connection failed",
+        description: "Could not establish direct connection",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return false;
+    }
+  }, [toast]);
+  
+  // Refresh participants list
+  const refreshParticipants = useCallback(async () => {
+    if (!socketRef.current) return;
+    
+    try {
+      await socketRef.current.requestParticipants();
+    } catch (error) {
+      console.error('Failed to refresh participants:', error);
+    }
+  }, []);
+  
+  return {
+    messages,
+    sendMessage,
+    participants,
+    connectionStatus,
+    chatInfo,
+    leaveChat,
+    deleteChat,
+    connectToPeer,
+    refreshParticipants,
+    isSendingMessage,
+  };
+};
