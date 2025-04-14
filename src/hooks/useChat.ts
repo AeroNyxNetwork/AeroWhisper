@@ -2,37 +2,15 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { v4 as uuid } from 'uuid';
 import { useAuth } from '../contexts/AuthContext';
-import { MessageType } from '../types/chat';
+import { 
+  MessageType, 
+  Participant,
+  ConnectionStatus,
+  ChatInfo
+} from '../types/chat';
 import { WebRTCManager } from '../lib/webrtc';
 import { AeroNyxSocket } from '../lib/socket';
 import { useToast } from '@chakra-ui/react';
-
-// Connection status types
-export type ConnectionStatus = 
-  | 'connecting' 
-  | 'connected' 
-  | 'p2p-connecting' 
-  | 'p2p-connected' 
-  | 'disconnected';
-
-// Participant type
-export type Participant = {
-  id: string;
-  publicKey: string;
-  displayName: string;
-  isActive: boolean;
-  lastSeen: Date;
-};
-
-// Chat room info
-export type ChatInfo = {
-  id: string;
-  name: string;
-  createdAt: string;
-  isEphemeral: boolean;
-  useP2P: boolean;
-  createdBy: string;
-};
 
 export const useChat = (chatId: string) => {
   const { user } = useAuth();
@@ -184,16 +162,18 @@ export const useChat = (chatId: string) => {
   }, [chatId, user, toast, initializeWebRTC]);
   
   // Send a message
-  const sendMessage = useCallback(async (content: string) => {
+  const sendMessage = useCallback(async (content: string): Promise<boolean> => {
     if (!user || !socketRef.current || !chatId || content.trim() === '') {
       return false;
     }
+    
+    let messageId = '';
     
     try {
       setIsSendingMessage(true);
       
       // Generate a unique message ID
-      const messageId = uuid();
+      messageId = uuid();
       
       // Create message object
       const message: MessageType = {
