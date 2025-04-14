@@ -2,9 +2,7 @@
 import React from 'react';
 import { Flex, Icon, Tooltip, useColorMode } from '@chakra-ui/react';
 import { FaCheck, FaCheckDouble, FaClock, FaBan } from 'react-icons/fa';
-
-// Message status types
-export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+import { MessageStatus } from '../../types/chat';
 
 interface ReadReceiptsProps {
   status: MessageStatus;
@@ -65,6 +63,12 @@ export const ReadReceipts: React.FC<ReadReceiptsProps> = ({
           icon: FaBan,
           color: 'red.500',
           tooltip: 'Failed to send',
+        };
+      case 'received':
+        return {
+          icon: FaCheck,
+          color: 'gray.500',
+          tooltip: `Received at ${formatTime(messageTime)}`,
         };
       default:
         return {
