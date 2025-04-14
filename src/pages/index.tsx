@@ -1,53 +1,32 @@
 import React, { useEffect } from 'react';
-import { AppProps } from 'next/app';
-import { ChakraProvider, ColorModeScript } from '@chakra-ui/react';
-import { Inter } from 'next/font/google';
-import Head from 'next/head';
-import theme from '../theme';
-import { AuthProvider } from '../contexts/AuthContext';
-import { NotificationProvider } from '../contexts/NotificationContext';
-import { ThemeProvider } from '../contexts/ThemeContext';
-import '../styles/globals.css';
+import { useRouter } from 'next/router';
+import { Center, Spinner, Text, VStack } from '@chakra-ui/react';
+import { useAuth } from '../contexts/AuthContext';
 
-// Load Inter font
-const inter = Inter({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-inter',
-});
+const IndexPage = () => {
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
 
-export default function App({ Component, pageProps }: AppProps) {
   useEffect(() => {
-    // Polyfill Buffer for client-side
-    if (typeof window !== 'undefined') {
-      (window as any).Buffer = require('buffer/').Buffer;
+    if (!isLoading) {
+      // If authenticated, redirect to dashboard
+      if (isAuthenticated) {
+        router.push('/dashboard');
+      } else {
+        // If not authenticated, redirect to onboarding or auth page
+        router.push('/auth/connect-wallet');
+      }
     }
-  }, []);
+  }, [isAuthenticated, isLoading, router]);
 
   return (
-    <>
-      <Head>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>AeroNyx Secure Messaging</title>
-        <meta name="description" content="End-to-end encrypted peer-to-peer messaging with AeroNyx" />
-        <link rel="icon" href="/favicon.ico" />
-        <meta name="theme-color" content="#7762F3" />
-      </Head>
-      <style jsx global>{`
-        :root {
-          --font-inter: ${inter.variable};
-        }
-      `}</style>
-      <ChakraProvider theme={theme}>
-        <ColorModeScript initialColorMode={theme.config.initialColorMode} />
-        <AuthProvider>
-          <NotificationProvider>
-            <ThemeProvider>
-              <Component {...pageProps} />
-            </ThemeProvider>
-          </NotificationProvider>
-        </AuthProvider>
-      </ChakraProvider>
-    </>
+    <Center height="100vh" bg="gray.50">
+      <VStack spacing={4}>
+        <Spinner size="xl" color="purple.500" thickness="4px" />
+        <Text fontSize="lg">Loading AeroNyx Secure Chat...</Text>
+      </VStack>
+    </Center>
   );
-}
+};
+
+export default IndexPage;
