@@ -51,6 +51,63 @@ export const useChat = (chatId: string) => {
   const webrtcRef = useRef<WebRTCManager | null>(null);
   const sessionKeyRef = useRef<Uint8Array | null>(null);
   
+  // Initialize WebRTC for P2P communication
+  const initializeWebRTC = useCallback((socket: AeroNyxSocket) => {
+    const webrtc = new WebRTCManager();
+    webrtcRef.current = webrtc;
+    
+    // Initialize WebRTC with socket and session key
+    if (sessionKeyRef.current) {
+      webrtc.initialize(socket, sessionKeyRef.current);
+    }
+    
+    // Handle WebRTC connection state changes
+    webrtc.on('connectionStateChanged', (state: string) => {
+      if (state === 'connected') {
+        setConnectionStatus('p2p-connected');
+        toast({
+          title: "P2P Connected",
+          description: "Direct peer-to-peer connection established",
+          status: "success",
+          duration: 3000,
+          isClosable: true,
+        });
+      } else if (state === 'connecting') {
+        setConnectionStatus('p2p-connecting');
+      } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+        if (connectionStatus === 'p2p-connected') {
+          setConnectionStatus('connected');
+          toast({
+            title: "P2P Disconnected",
+            description: "Falling back to server connection",
+            status: "warning",
+            duration: 3000,
+            isClosable: true,
+          });
+        }
+      }
+    });
+    
+    // Handle WebRTC messages
+    webrtc.on('message', (messageData: any) => {
+      const message: MessageType = {
+        id: uuid(),
+        content: messageData.content,
+        senderId: messageData.senderId,
+        senderName: messageData.senderName,
+        timestamp: messageData.timestamp || new Date().toISOString(),
+        isEncrypted: true,
+        metaData: {
+          encryptionType: 'P2P',
+          isP2P: true,
+        },
+        status: 'received',
+      };
+      
+      setMessages(prev => [...prev, message]);
+    });
+  }, [connectionStatus, toast]);
+  
   // Connect to chat room
   useEffect(() => {
     if (!chatId || !user) return;
@@ -124,66 +181,8 @@ export const useChat = (chatId: string) => {
         webrtcRef.current.disconnect();
       }
     };
-  }, [chatId, user, toast]);
+  }, [chatId, user, toast, initializeWebRTC]);
   
-  // Initialize WebRTC for P2P communication
-  const initializeWebRTC = useCallback((socket: AeroNyxSocket) => {
-    const webrtc = new WebRTCManager();
-    webrtcRef.current = webrtc;
-    
-    // Initialize WebRTC with socket and session key
-    if (sessionKeyRef.current) {
-      webrtc.initialize(socket, sessionKeyRef.current);
-    }
-    
-    // Handle WebRTC connection state changes
-    webrtc.on('connectionStateChanged', (state: string) => {
-      if (state === 'connected') {
-        setConnectionStatus('p2p-connected');
-        toast({
-          title: "P2P Connected",
-          description: "Direct peer-to-peer connection established",
-          status: "success",
-          duration: 3000,
-          isClosable: true,
-        });
-      } else if (state === 'connecting') {
-        setConnectionStatus('p2p-connecting');
-      } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-        if (connectionStatus === 'p2p-connected') {
-          setConnectionStatus('connected');
-          toast({
-            title: "P2P Disconnected",
-            description: "Falling back to server connection",
-            status: "warning",
-            duration: 3000,
-            isClosable: true,
-          });
-        }
-      }
-    });
-    
-    // Handle WebRTC messages
-    webrtc.on('message', (messageData: any) => {
-      const message: MessageType = {
-        id: uuid(),
-        content: messageData.content,
-        senderId: messageData.senderId,
-        senderName: messageData.senderName,
-        timestamp: messageData.timestamp || new Date().toISOString(),
-        isEncrypted: true,
-        metaData: {
-          encryptionType: 'P2P',
-          isP2P: true,
-        },
-        status: 'received',
-      };
-      
-      setMessages(prev => [...prev, message]);
-    });
-  }, [connectionStatus, toast]);
-  
-  // Send a message
   // Send a message
   const sendMessage = useCallback(async (content: string) => {
     if (!user || !socketRef.current || !chatId || content.trim() === '') {
