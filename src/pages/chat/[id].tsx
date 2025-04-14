@@ -3,12 +3,12 @@ import { useRouter } from 'next/router';
 import {
   Box, Flex, Text, IconButton, Input, Heading,
   useColorMode, Button, Menu, MenuButton, MenuList,
-  MenuItem, VStack, HStack, Tooltip, Badge, Divider,
-  useClipboard, useToast, Center, Spinner
+  MenuItem, VStack, HStack, Tooltip, Divider,
+  useToast, Center, Spinner
 } from '@chakra-ui/react';
 import { 
   FaPaperPlane, FaEllipsisV, FaUserPlus, FaClipboard, 
-  FaTrash, FaSignOutAlt, FaShieldAlt, FaKey
+  FaTrash, FaSignOutAlt, FaShieldAlt
 } from 'react-icons/fa';
 import { Layout } from '../../components/layout/Layout';
 import { Message } from '../../components/chat/Message';
@@ -18,12 +18,26 @@ import { ChatEncryptionIndicator } from '../../components/chat/ChatEncryptionInd
 import { ChatHeader } from '../../components/chat/ChatHeader';
 import { InviteModal } from '../../components/modals/InviteModal';
 
+// Define getStaticProps and getStaticPaths for proper routing
+export async function getStaticProps() {
+  return {
+    props: {}
+  };
+}
+
+export async function getStaticPaths() {
+  return {
+    paths: [],
+    fallback: 'blocking'
+  };
+}
+
 const ChatPage = () => {
   const router = useRouter();
   const { id } = router.query;
-  const chatId = id as string;
+  const chatId = typeof id === 'string' ? id : '';
   const { colorMode } = useColorMode();
-  const { user } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
@@ -31,23 +45,8 @@ const ChatPage = () => {
   // Client-side only states
   const [isClient, setIsClient] = useState(false);
   const [currentUrl, setCurrentUrl] = useState('');
-  const [hasCopiedUrl, setHasCopiedUrl] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [showInviteModal, setShowInviteModal] = useState(false);
-
-  // Use a safe version of useClipboard that only runs on client
-  const copyToClipboard = () => {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(currentUrl);
-      setHasCopiedUrl(true);
-      toast({
-        title: "Invitation link copied",
-        status: "success",
-        duration: 2000,
-      });
-      setTimeout(() => setHasCopiedUrl(false), 2000);
-    }
-  };
 
   // Initialize client-side functionality
   useEffect(() => {
@@ -55,7 +54,12 @@ const ChatPage = () => {
     if (typeof window !== 'undefined') {
       setCurrentUrl(window.location.href);
     }
-  }, []);
+    
+    // Redirect to login if not authenticated
+    if (!isLoading && !isAuthenticated) {
+      router.push('/auth/connect-wallet');
+    }
+  }, [isAuthenticated, isLoading, router]);
   
   // Chat hooks - conditionally run when chatId is available
   const { 
@@ -67,7 +71,7 @@ const ChatPage = () => {
     leaveChat,
     deleteChat,
     isSendingMessage
-  } = useChat(chatId || '');
+  } = useChat(chatId);
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
@@ -76,6 +80,18 @@ const ChatPage = () => {
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Function to copy to clipboard with browser API
+  const copyToClipboard = () => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(currentUrl);
+      toast({
+        title: "Invitation link copied",
+        status: "success",
+        duration: 2000,
+      });
+    }
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
@@ -108,13 +124,32 @@ const ChatPage = () => {
   };
 
   // Loading state when router is not ready or in SSR
-  if (!isClient || !chatId) {
+  if (!isClient || isLoading || !isAuthenticated) {
     return (
       <Layout>
         <Center h="calc(100vh - 80px)">
           <Flex direction="column" align="center">
             <Spinner size="xl" color="purple.500" thickness="4px" speed="0.65s" />
             <Text mt={4} fontSize="lg">Loading chat...</Text>
+          </Flex>
+        </Center>
+      </Layout>
+    );
+  }
+
+  if (!chatId) {
+    return (
+      <Layout>
+        <Center h="calc(100vh - 80px)">
+          <Flex direction="column" align="center">
+            <Text fontSize="lg">Invalid chat ID</Text>
+            <Button 
+              mt={4} 
+              colorScheme="purple" 
+              onClick={() => router.push('/dashboard')}
+            >
+              Return to Dashboard
+            </Button>
           </Flex>
         </Center>
       </Layout>
