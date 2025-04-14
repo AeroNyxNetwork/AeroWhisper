@@ -84,7 +84,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       mediaQuery.addEventListener('change', handleChange);
       return () => mediaQuery.removeEventListener('change', handleChange);
     }
-  }, [setColorMode]);
+  }, [setColorMode, appearance.colorMode]);
   
   // Generate theme when appearance changes
   useEffect(() => {
