@@ -193,7 +193,7 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({ onSave }) =>
           
           <VStack spacing={5} align="stretch">
             <FormControl>
-              <FormLabel d="flex" alignItems="center">
+              <FormLabel display="flex" alignItems="center">
                 <Text mr={2}>Encryption Level</Text>
                 <Tooltip
                   label="Higher levels provide stronger security but may use more device resources"
