@@ -5,6 +5,8 @@ import { Inter } from 'next/font/google';
 import Head from 'next/head';
 import theme from '../theme';
 import { AuthProvider } from '../contexts/AuthContext';
+import { NotificationProvider } from '../contexts/NotificationContext';
+import { ThemeProvider } from '../contexts/ThemeContext';
 import '../styles/globals.css';
 
 // Load Inter font
@@ -39,7 +41,11 @@ export default function App({ Component, pageProps }: AppProps) {
       <ChakraProvider theme={theme}>
         <ColorModeScript initialColorMode={theme.config.initialColorMode} />
         <AuthProvider>
-          <Component {...pageProps} />
+          <NotificationProvider>
+            <ThemeProvider>
+              <Component {...pageProps} />
+            </ThemeProvider>
+          </NotificationProvider>
         </AuthProvider>
       </ChakraProvider>
     </>
