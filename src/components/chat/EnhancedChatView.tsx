@@ -48,7 +48,7 @@ export const EnhancedChatView = ({ chatId }) => {
     >
       {/* Security Status Bar */}
       <EncryptionIndicator 
-        type={encryptionType}
+        type={encryptionType || 'standard'}
         isP2P={connectionStatus === 'p2p-connected'}
         participants={participants.length}
       />
@@ -97,8 +97,9 @@ export const EnhancedChatView = ({ chatId }) => {
       <MessageComposer 
         onSendMessage={sendMessage}
         isEncrypted={true}
-        encryptionType={encryptionType}
+        encryptionType={encryptionType || 'standard'}
         isP2P={connectionStatus === 'p2p-connected'}
+        chatId={chatId}
       />
       
       {/* New Message Indicator */}
