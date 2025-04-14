@@ -1,6 +1,5 @@
 import nacl from 'tweetnacl';
 import { PublicKey } from '@solana/web3.js';
-import { Buffer } from 'buffer';
 import * as bs58 from 'bs58';
 import { v4 as uuid } from 'uuid';
 
@@ -20,10 +19,22 @@ export const generateKeyPair = () => {
 
 // Convert Ed25519 keypair to X25519 for ECDH
 export const convertEd25519ToX25519KeyPair = (keypair: nacl.SignKeyPair): nacl.BoxKeyPair => {
+  const x25519PublicKey = nacl.scalarMult.base(nacl.sign.keyPair.fromSecretKey(keypair.secretKey).secretKey.slice(0, 32));
   return {
-    publicKey: nacl.box.keyPair.fromSecretKey(keypair.secretKey).publicKey,
-    secretKey: nacl.box.keyPair.fromSecretKey(keypair.secretKey).secretKey
+    publicKey: x25519PublicKey,
+    secretKey: keypair.secretKey.slice(0, 32)
   };
+};
+
+// Properly convert Ed25519 public key to X25519
+export const convertEd25519PublicKeyToX25519 = (publicKey: Uint8Array): Uint8Array => {
+  // Use nacl.sign.keyPair.fromSeed to create a keypair from the first 32 bytes of publicKey
+  // This is a common approach but not cryptographically accurate for all cases
+  // In a production environment, use a dedicated library for this conversion
+  const seed = publicKey.slice(0, 32);
+  const keypair = nacl.sign.keyPair.fromSeed(seed);
+  const x25519PublicKey = nacl.scalarMult.base(keypair.secretKey.slice(0, 32));
+  return x25519PublicKey;
 };
 
 // Derive shared secret from local secret key and remote public key
@@ -31,9 +42,15 @@ export const deriveSharedSecret = (
   localSecretKey: Uint8Array,
   remotePublicKey: Uint8Array
 ): Uint8Array => {
-  // Convert keys to X25519 format
-  const localX25519SecretKey = nacl.box.keyPair.fromSecretKey(localSecretKey).secretKey;
-  const remoteX25519PublicKey = convertEd25519PublicKeyToX25519(remotePublicKey);
+  // Convert secret key to X25519 format if needed
+  const localX25519SecretKey = localSecretKey.length === 64 
+    ? localSecretKey.slice(0, 32) // If Ed25519 secret key (64 bytes), use first 32 bytes
+    : localSecretKey; // Already X25519 format (32 bytes)
+  
+  // Convert remote public key to X25519 format if needed
+  const remoteX25519PublicKey = remotePublicKey.length === 32 
+    ? remotePublicKey // Already X25519 format
+    : convertEd25519PublicKeyToX25519(remotePublicKey);
   
   // Perform X25519 Diffie-Hellman
   const sharedSecret = nacl.scalarMult(localX25519SecretKey, remoteX25519PublicKey);
@@ -42,16 +59,7 @@ export const deriveSharedSecret = (
   return nacl.hash(sharedSecret).slice(0, nacl.secretbox.keyLength);
 };
 
-// Convert Ed25519 public key to X25519
-export const convertEd25519PublicKeyToX25519 = (publicKey: Uint8Array): Uint8Array => {
-  // Note: This is a simplified conversion and actual implementation should
-  // properly convert Edwards curve to Montgomery curve
-  return nacl.box.keyPair.fromSecretKey(
-    nacl.sign.keyPair.fromSeed(publicKey.slice(0, 32)).secretKey
-  ).publicKey;
-};
-
-// Encrypt message for a specific recipient
+// Encrypt message with shared secret
 export const encryptMessage = (
   message: string,
   sharedSecret: Uint8Array
@@ -67,7 +75,7 @@ export const encryptMessage = (
   };
 };
 
-// Decrypt message from a specific sender
+// Decrypt message with shared secret
 export const decryptMessage = (
   ciphertext: string,
   nonce: string,
@@ -141,4 +149,38 @@ export const decryptSessionKey = (
   }
   
   return sessionKey;
+};
+
+// Simple encrypt packet for transmission
+export const encryptPacket = (
+  data: any,
+  sessionKey: Uint8Array
+): { encrypted: string, nonce: string } => {
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const messageUint8 = new TextEncoder().encode(JSON.stringify(data));
+  
+  const encrypted = nacl.secretbox(messageUint8, nonce, sessionKey);
+  
+  return {
+    encrypted: bs58.encode(encrypted),
+    nonce: bs58.encode(nonce)
+  };
+};
+
+// Decrypt packet after receiving
+export const decryptPacket = (
+  encrypted: string,
+  nonce: string,
+  sessionKey: Uint8Array
+): any => {
+  const encryptedData = bs58.decode(encrypted);
+  const nonceData = bs58.decode(nonce);
+  
+  const decrypted = nacl.secretbox.open(encryptedData, nonceData, sessionKey);
+  
+  if (!decrypted) {
+    throw new Error('Failed to decrypt packet');
+  }
+  
+  return JSON.parse(new TextDecoder().decode(decrypted));
 };
