@@ -34,50 +34,108 @@ export class AeroNyxSocket extends EventEmitter {
         // Use environment variable for server URL if available
         const serverUrl = `${this.serverUrl}/chat/${chatId}`;
         
-        // For development/testing purposes, we can simulate the connection
-        if (process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_USE_MOCK_SERVER === 'true') {
-          // Simulate connection with mock data
-          this.simulateConnection();
-          resolve();
-          return;
-        }
+        console.log(`Connecting to WebSocket server at: ${serverUrl}`);
         
         this.socket = new WebSocket(serverUrl);
         
+        // Add timeout for connection attempt
+        const connectionTimeout = setTimeout(() => {
+          if (this.connecting) {
+            const timeoutError = new Error('WebSocket connection timed out');
+            console.error('Connection timeout:', timeoutError);
+            this.emit('error', {
+              type: 'connection',
+              message: 'Connection to secure chat server timed out. This might be due to network issues or server unavailability.',
+              code: 'TIMEOUT',
+              retry: true
+            });
+            
+            if (this.socket) {
+              this.socket.close();
+            }
+            
+            this.connecting = false;
+            reject(timeoutError);
+          }
+        }, 10000); // 10 second timeout
+        
         this.socket.onopen = () => {
+          clearTimeout(connectionTimeout);
+          console.log('WebSocket connection established');
           this.sendAuthMessage();
           this.reconnectAttempts = 0;
         };
         
         this.socket.onmessage = (event) => {
+          clearTimeout(connectionTimeout);
           this.handleServerMessage(event.data);
         };
         
-        this.socket.onclose = () => {
+        this.socket.onclose = (event) => {
+          clearTimeout(connectionTimeout);
           this.isConnected = false;
           this.emit('connectionStatus', 'disconnected');
           
+          console.log(`WebSocket connection closed: ${event.code} - ${event.reason}`);
+          
+          // Check for common certificate and security error codes
+          if (event.code === 1006 || event.code === 1015) {
+            const errorMsg = 'Connection closed due to security issues. This might be related to a certificate problem.';
+            console.error(errorMsg);
+            
+            this.emit('error', {
+              type: 'security',
+              message: errorMsg,
+              code: `WS_CLOSED_${event.code}`,
+              details: `You might need to visit ${this.serverUrl.replace('wss://', 'https://')} directly in your browser and accept the certificate.`,
+              retry: false
+            });
+          }
+          
           if (this.connecting) {
-            reject(new Error('Connection closed during handshake'));
+            const closeError = new Error(`Connection closed during handshake: ${event.code} - ${event.reason}`);
+            reject(closeError);
             this.connecting = false;
           }
           
-          // Attempt to reconnect
-          this.scheduleReconnect();
+          // Attempt to reconnect automatically for certain error codes
+          if (event.code === 1001 || event.code === 1006 || event.code === 1012 || event.code === 1013) {
+            this.scheduleReconnect();
+          }
         };
         
         this.socket.onerror = (error) => {
+          clearTimeout(connectionTimeout);
           console.error('WebSocket error:', error);
           
+          const errorDetails = {
+            type: 'connection',
+            message: 'Failed to establish a secure connection to the chat server.',
+            code: 'WS_ERROR',
+            details: 'This might be due to network issues, server unavailability, or certificate problems.',
+            retry: true,
+            originalError: error
+          };
+          
+          this.emit('error', errorDetails);
+          
           if (this.connecting) {
-            reject(error);
+            reject(new Error('WebSocket connection error'));
             this.connecting = false;
           }
-          
-          this.emit('error', error);
         };
       } catch (error) {
+        console.error('Error creating WebSocket connection:', error);
         this.connecting = false;
+        
+        this.emit('error', {
+          type: 'connection',
+          message: 'Failed to initiate connection to the secure chat server.',
+          code: 'INIT_ERROR',
+          details: error instanceof Error ? error.message : 'Unknown error',
+          retry: true
+        });
+        
         reject(error);
       }
     });
