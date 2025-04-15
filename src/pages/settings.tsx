@@ -22,11 +22,13 @@ import {
   FaBell,
   FaUser,
   FaCog,
+  FaServer,
 } from 'react-icons/fa';
 import { Layout } from '../components/layout/Layout';
 import { SecuritySettings } from '../components/settings/SecuritySettings';
 import { AppearanceSettings } from '../components/settings/AppearanceSettings';
 import { NotificationControls } from '../components/settings/NotificationControls';
+import { ServerSettings } from '../components/settings/ServerSettings';
 import { useAuth } from '../contexts/AuthContext';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../contexts/NotificationContext';
@@ -51,7 +53,7 @@ const SettingsPage = () => {
     const { tab } = router.query;
     if (tab) {
       const index = parseInt(tab as string);
-      if (!isNaN(index) && index >= 0 && index <= 3) {
+      if (!isNaN(index) && index >= 0 && index <= 4) { // Updated max index to include server settings
         setTabIndex(index);
       }
     }
@@ -93,6 +95,17 @@ const SettingsPage = () => {
     toast({
       title: "Notification settings saved",
       description: "Your notification preferences have been updated",
+      status: "success",
+      duration: 3000,
+      isClosable: true,
+    });
+  };
+  
+  // Handler for saving server settings
+  const handleSaveServerSettings = () => {
+    toast({
+      title: "Server settings saved",
+      description: "Your server connection preferences have been updated",
       status: "success",
       duration: 3000,
       isClosable: true,
@@ -144,6 +157,10 @@ const SettingsPage = () => {
                 <Icon as={FaUser} mr={2} />
                 <Text>Profile</Text>
               </Tab>
+              <Tab>
+                <Icon as={FaServer} mr={2} />
+                <Text>Server</Text>
+              </Tab>
             </TabList>
             
             <TabPanels>
@@ -166,6 +183,9 @@ const SettingsPage = () => {
                   <Heading size="md" mb={4}>Profile Settings</Heading>
                   <Text>Profile settings coming soon!</Text>
                 </Box>
+              </TabPanel>
+              <TabPanel>
+                <ServerSettings onSave={handleSaveServerSettings} />
               </TabPanel>
             </TabPanels>
           </Tabs>
