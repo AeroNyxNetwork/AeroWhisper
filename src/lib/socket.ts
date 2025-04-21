@@ -396,7 +396,7 @@ export class AeroNyxSocket extends EventEmitter {
       public_key: this.publicKey,
       version: '1.0.0',
       features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], 
-      encryption_algorithm: 'aes-gcm', 
+      encryption: 'aes-gcm', // Use encryption instead of encryption_algorithm
       nonce: Date.now().toString(),
     };
     
@@ -864,7 +864,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle encrypted data packet
    * @param message Data packet message
    */
-  private async handleDataPacket(message: { encrypted: number[], nonce: number[], counter: number, encryption_algorithm?: string }): Promise<void> {
+ private async handleDataPacket(message: { encrypted: number[], nonce: number[], counter: number, encryption?: string }): Promise<void> {
     try {
       if (!this.sessionKey) {
         throw new Error('No session key available to decrypt message');
@@ -875,7 +875,7 @@ export class AeroNyxSocket extends EventEmitter {
       const nonceUint8 = new Uint8Array(message.nonce);
       
       // Check if server specified an encryption algorithm
-      const algorithm = message.encryption_algorithm || this.encryptionAlgorithm;
+      const algorithm = message.encryption || this.encryptionAlgorithm;
       
       // Log packet details for debugging
       console.debug('[Socket] Received encrypted data:', {
@@ -903,7 +903,33 @@ export class AeroNyxSocket extends EventEmitter {
           return;
         }
         
-        // Rest of the method (handling parsed message)...
+        // Store message ID to prevent replay attacks
+        if (decryptedData.id) {
+          this.processedMessageIds.add(decryptedData.id);
+          
+          // Limit the set size
+          if (this.processedMessageIds.size > 1000) {
+            const oldestId = Array.from(this.processedMessageIds)[0];
+            this.processedMessageIds.delete(oldestId);
+          }
+        }
+        
+        // Process the message by type
+        if (decryptedData.type === 'message') {
+          this.emit('message', decryptedData);
+        } else if (decryptedData.type === 'chatInfo') {
+          this.emit('chatInfo', decryptedData.data);
+        } else if (decryptedData.type === 'participants') {
+          this.emit('participants', decryptedData.data);
+        } else {
+          // Forward other message types as is
+          this.emit(decryptedData.type, decryptedData);
+        }
+        
+        console.debug('[Socket] Successfully processed decrypted data:', {
+          type: decryptedData.type,
+          hasId: !!decryptedData.id
+        });
       } catch (decryptError) {
         console.error('[Socket] Failed to decrypt data packet:', decryptError);
         
@@ -1308,7 +1334,7 @@ export class AeroNyxSocket extends EventEmitter {
         encrypted: Array.from(ciphertext), // Convert Uint8Array to regular array for JSON
         nonce: Array.from(nonce),
         counter: this.messageCounter++,
-        encryption_algorithm: this.encryptionAlgorithm, // Include algorithm info
+        encryption: this.encryptionAlgorithm, // Use encryption instead of encryption_algorithm
         padding: null // Optional padding for length concealment
       };
       
