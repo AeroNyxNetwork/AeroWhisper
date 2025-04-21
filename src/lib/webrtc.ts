@@ -827,50 +827,50 @@ export class WebRTCManager extends EventEmitter {
    * @param maxAttempts - Maximum number of retry attempts if sending fails
    * @returns true if sent successfully, false otherwise
    */
-  sendMessage(message: any, maxAttempts: number = 3): boolean {
-    // If not connected, queue message and return false
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      // Queue the message for later
-      this.queueMessage(message, maxAttempts);
-      return false;
-    }
-    
-    try {
-      if (this.sessionKey) {
-        // Encrypt the message with the session key
-        const messageString = JSON.stringify(message);
-        const { ciphertext, nonce } = encryptMessage(messageString, this.sessionKey);
+  async sendMessage(message: any, maxAttempts: number = 3): Promise<boolean> {
+  // If not connected, queue message and return false
+      if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+        // Queue the message for later
+        this.queueMessage(message, maxAttempts);
+        return false;
+      }
+      
+      try {
+        if (this.sessionKey) {
+          // Encrypt the message with the session key
+          const messageString = JSON.stringify(message);
+          const { ciphertext, nonce } = await encryptMessage(messageString, this.sessionKey);
+          
+          // Send encrypted message
+          const encryptedMessage = JSON.stringify({
+            ciphertext,
+            nonce,
+          });
+          
+          this.dataChannel.send(encryptedMessage);
+        } else {
+          // Fallback to sending unencrypted messages
+          const messageString = JSON.stringify(message);
+          this.dataChannel.send(messageString);
+        }
+        return true;
+      } catch (error) {
+        console.error('[WebRTC] Error sending message:', error);
         
-        // Send encrypted message
-        const encryptedMessage = JSON.stringify({
-          ciphertext,
-          nonce,
+        // Queue for retry if appropriate
+        if (maxAttempts > 0) {
+          this.queueMessage(message, maxAttempts);
+        }
+        
+        this.emit('error', {
+          type: 'messaging',
+          message: 'Failed to send message',
+          details: error instanceof Error ? error.message : String(error),
+          recoverable: true
         });
         
-        this.dataChannel.send(encryptedMessage);
-      } else {
-        // Fallback to sending unencrypted messages
-        const messageString = JSON.stringify(message);
-        this.dataChannel.send(messageString);
+        return false;
       }
-      return true;
-    } catch (error) {
-      console.error('[WebRTC] Error sending message:', error);
-      
-      // Queue for retry if appropriate
-      if (maxAttempts > 0) {
-        this.queueMessage(message, maxAttempts);
-      }
-      
-      this.emit('error', {
-        type: 'messaging',
-        message: 'Failed to send message',
-        details: error instanceof Error ? error.message : String(error),
-        recoverable: true
-      });
-      
-      return false;
-    }
   }
   
   /**
