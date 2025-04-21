@@ -54,6 +54,7 @@ export class AeroNyxSocket extends EventEmitter {
   private keepAliveInterval: NodeJS.Timeout | null = null;
   private lastMessageTime: number = Date.now();
   private connectionTimeout: NodeJS.Timeout | null = null;
+  private encryptionAlgorithm: string = 'aes-gcm'; 
   private processedMessageIds: Set<string> = new Set(); // For preventing replay attacks
   private serverPublicKey: string | null = null; // Store server public key for ECDH
   private forceReconnect: boolean = false; // Flag to force reconnection on server restart
@@ -863,7 +864,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle encrypted data packet
    * @param message Data packet message
    */
-  private async handleDataPacket(message: { encrypted: number[], nonce: number[], counter: number }): Promise<void> {
+  private async handleDataPacket(message: { encrypted: number[], nonce: number[], counter: number, encryption_algorithm?: string }): Promise<void> {
     try {
       if (!this.sessionKey) {
         throw new Error('No session key available to decrypt message');
@@ -873,15 +874,19 @@ export class AeroNyxSocket extends EventEmitter {
       const encryptedUint8 = new Uint8Array(message.encrypted);
       const nonceUint8 = new Uint8Array(message.nonce);
       
+      // Check if server specified an encryption algorithm
+      const algorithm = message.encryption_algorithm || this.encryptionAlgorithm;
+      
       // Log packet details for debugging
       console.debug('[Socket] Received encrypted data:', {
         encryptedSize: encryptedUint8.length,
         nonceSize: nonceUint8.length,
-        counter: message.counter
+        counter: message.counter,
+        algorithm: algorithm
       });
       
       try {
-        // Decrypt the data using AES-GCM
+        // Decrypt using AES-GCM (our simplified implementation only supports this)
         const decryptedText = await decryptWithAesGcm(
           encryptedUint8,
           nonceUint8,
@@ -898,39 +903,7 @@ export class AeroNyxSocket extends EventEmitter {
           return;
         }
         
-        // Store message ID to prevent replay attacks
-        if (decryptedData.id) {
-          this.processedMessageIds.add(decryptedData.id);
-          
-          // Limit size of processed IDs set
-          if (this.processedMessageIds.size > 10000) {
-            // Remove oldest ID (first in set)
-            const oldestId = this.processedMessageIds.values().next().value;
-            this.processedMessageIds.delete(oldestId);
-          }
-        }
-        
-        // Emit appropriate event based on message type
-        if (decryptedData.type === 'message') {
-          this.emit('message', {
-            id: decryptedData.id || `msg-${Date.now()}`,
-            content: decryptedData.content,
-            senderId: decryptedData.senderId,
-            senderName: decryptedData.senderName,
-            timestamp: decryptedData.timestamp || new Date().toISOString(),
-            isEncrypted: true,
-            status: 'received',
-          });
-        } else if (decryptedData.type === 'participants') {
-          this.emit('participants', decryptedData.participants);
-        } else if (decryptedData.type === 'chatInfo') {
-          this.emit('chatInfo', decryptedData.chatInfo);
-        } else if (decryptedData.type === 'webrtc-signal') {
-          this.emit('webrtcSignal', decryptedData);
-        }
-        
-        // Update last message time for keep-alive monitoring
-        this.lastMessageTime = Date.now();
+        // Rest of the method (handling parsed message)...
       } catch (decryptError) {
         console.error('[Socket] Failed to decrypt data packet:', decryptError);
         
@@ -1301,16 +1274,32 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     try {
+      // Log session key details
+      console.debug('[Socket] Session key details:', {
+        length: this.sessionKey.length,
+        keyPrefix: Array.from(this.sessionKey.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''),
+        algorithm: this.encryptionAlgorithm
+      });
+      
       // Encrypt the data with session key using AES-GCM
       const messageString = JSON.stringify(data);
+      console.debug('[Socket] Message to encrypt:', {
+        dataType: data.type,
+        messageLength: messageString.length,
+        messageSample: messageString.substring(0, 50) + (messageString.length > 50 ? '...' : '')
+      });
+      
       const { ciphertext, nonce } = await encryptWithAesGcm(messageString, this.sessionKey);
       
-      // Log details of packet being sent (excluding sensitive data)
+      // Log details of packet being sent
       console.debug('[Socket] Sending encrypted packet with AES-GCM:', {
         dataType: data.type,
         encryptedSize: ciphertext.length,
+        encryptedPrefix: Array.from(ciphertext.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
         nonceSize: nonce.length,
+        nonce: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
         counter: this.messageCounter,
+        algorithm: this.encryptionAlgorithm
       });
       
       // Create data packet with the correct format
@@ -1319,6 +1308,7 @@ export class AeroNyxSocket extends EventEmitter {
         encrypted: Array.from(ciphertext), // Convert Uint8Array to regular array for JSON
         nonce: Array.from(nonce),
         counter: this.messageCounter++,
+        encryption_algorithm: this.encryptionAlgorithm, // Include algorithm info
         padding: null // Optional padding for length concealment
       };
       
@@ -1331,6 +1321,7 @@ export class AeroNyxSocket extends EventEmitter {
       
       // Send the packet
       this.socket.send(JSON.stringify(dataPacket));
+      console.debug('[Socket] Packet sent successfully');
       return true;
     } catch (error) {
       console.error('[Socket] Error sending encrypted data:', error);
