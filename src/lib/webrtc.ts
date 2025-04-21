@@ -951,7 +951,6 @@ export class WebRTCManager extends EventEmitter {
         encryptedUint8,
         nonceUint8,
         sessionKey,
-        undefined, // No AAD
         'string' // Output as string
       ) as string;
       
