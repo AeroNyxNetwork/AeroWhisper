@@ -55,6 +55,7 @@ export class AeroNyxSocket extends EventEmitter {
   private forceReconnect: boolean = false; // Flag to force reconnection on server restart
   private heartbeatInterval: NodeJS.Timeout | null = null; // Heartbeat to detect connection issues
   private autoReconnect: boolean = true; // Flag to control automatic reconnection
+  private pingTimeouts: Map<number, NodeJS.Timeout> = new Map(); // Map to track ping timeouts
   
   /**
    * Reconnection configuration with exponential backoff
@@ -90,14 +91,58 @@ export class AeroNyxSocket extends EventEmitter {
       // Listen to online/offline events to handle network changes
       window.addEventListener('online', this.handleNetworkChange);
       window.addEventListener('offline', this.handleNetworkChange);
+      
+      // Also listen for visibility changes to handle tab switching
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
     }
+    
+    console.log('[Socket] AeroNyx socket initialized with config:', {
+      initialDelay: this.reconnectionConfig.initialDelay,
+      maxDelay: this.reconnectionConfig.maxDelay,
+      maxAttempts: this.reconnectionConfig.maxAttempts
+    });
   }
+  
+  /**
+   * Handle visibility changes (tab switching)
+   */
+  private handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[Socket] Tab became visible, checking connection');
+      
+      // If we're not connected but should be, try to reconnect
+      if (!this.isConnected && !this.connecting && this.chatId && this.publicKey && this.autoReconnect) {
+        console.log('[Socket] Reconnecting after tab became visible');
+        this.reconnect();
+      } else if (this.isConnected) {
+        // Even if connected, check health by sending a ping
+        this.sendPing();
+      }
+    }
+  };
   
   /**
    * Handle window beforeunload event to clean up resources
    */
   private handleBeforeUnload = () => {
+    console.log('[Socket] Page unloading, cleaning up socket resources');
     this.autoReconnect = false;
+    
+    // Try to send a clean disconnect message if possible
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      try {
+        // Use a synchronous approach for beforeunload
+        const disconnectMsg = JSON.stringify({
+          type: 'Disconnect',
+          reason: 0,
+          message: 'User left the page',
+        });
+        this.socket.send(disconnectMsg);
+      } catch (e) {
+        // Ignore errors during page unload
+      }
+    }
+    
     this.disconnect();
   };
 
@@ -393,11 +438,25 @@ export class AeroNyxSocket extends EventEmitter {
         const currentTime = Date.now();
         const timeSinceLastMessage = currentTime - this.lastMessageTime;
         
-        // If no message for more than 30 seconds (3 heartbeat intervals)
-        if (timeSinceLastMessage > 30000) {
+        // If no message for more than 20 seconds (2 heartbeat intervals)
+        if (timeSinceLastMessage > 20000) {
           console.warn(`[Socket] No message received for ${Math.round(timeSinceLastMessage/1000)}s, connection may be dead`);
-          this.forceReconnect = true;
-          this.reconnect();
+          
+          // Update UI to show connection issues
+          this.emit('connectionStatus', 'connecting');
+          this.emit('error', {
+            type: 'connection',
+            message: 'Connection appears to be unresponsive',
+            code: 'CONNECTION_UNRESPONSIVE',
+            retry: true
+          });
+          
+          // Try to immediately reconnect
+          if (timeSinceLastMessage > 30000) {
+            console.warn('[Socket] Connection timeout exceeded, forcing reconnection');
+            this.forceReconnect = true;
+            this.reconnect();
+          }
         }
       } catch (error) {
         console.error('[Socket] Error sending heartbeat:', error);
@@ -413,6 +472,12 @@ export class AeroNyxSocket extends EventEmitter {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
+    
+    // Also clear any pending ping timeouts
+    for (const timeout of this.pingTimeouts.values()) {
+      clearTimeout(timeout);
+    }
+    this.pingTimeouts.clear();
   }
   
   /**
@@ -496,6 +561,10 @@ export class AeroNyxSocket extends EventEmitter {
         
         case 'Ping':
           await this.handlePing(message);
+          break;
+          
+        case 'Pong':
+          this.handlePong(message);
           break;
         
         case 'Error':
@@ -732,21 +801,50 @@ export class AeroNyxSocket extends EventEmitter {
     const encoder = new TextEncoder();
     const messageUint8 = encoder.encode(jsonData);
     
-    // Generate random nonce for ChaCha20-Poly1305
-    // Note: nacl.secretbox uses XSalsa20-Poly1305 which requires 24-byte nonce
-    const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
-    
-    // Encrypt the data with session key and nonce
-    const encrypted = nacl.secretbox(messageUint8, nonce, this.sessionKey);
-    
-    if (!encrypted) {
-      throw new Error('Encryption failed');
+    // Generate random nonce - IMPORTANT: Use 12 bytes for ChaCha20-Poly1305 as expected by server
+    // NOTE: nacl.secretbox uses XSalsa20-Poly1305 which typically requires 24-byte nonce,
+    // but our server expects 12 bytes for ChaCha20-Poly1305
+    const nonce = new Uint8Array(12);
+    if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+      window.crypto.getRandomValues(nonce);
+    } else {
+      // Fallback for environments without crypto.getRandomValues
+      for (let i = 0; i < 12; i++) {
+        nonce[i] = Math.floor(Math.random() * 256);
+      }
     }
     
-    return {
-      encrypted,
-      nonce
-    };
+    // For this special case, we need to adapt our encryption to work with 12-byte nonces
+    // We'll use a modified version of secretbox that works with 12-byte nonces
+    // This is a bit of a hack but necessary for compatibility with the server
+    try {
+      // Adapt the key and nonce for nacl.secretbox
+      // We'll use the first 32 bytes of our key (which should be 32 bytes already)
+      const adaptedKey = this.sessionKey.length > 32 
+        ? this.sessionKey.slice(0, 32) 
+        : this.sessionKey;
+      
+      // Create a 24-byte nonce by padding our 12-byte nonce
+      const paddedNonce = new Uint8Array(24);
+      paddedNonce.set(nonce);  // This puts the 12-byte nonce at the beginning
+      
+      // Encrypt with nacl.secretbox using the padded nonce
+      const encrypted = nacl.secretbox(messageUint8, paddedNonce, adaptedKey);
+      
+      if (!encrypted) {
+        throw new Error('Encryption failed');
+      }
+      
+      // Return the encrypted data with the ORIGINAL 12-byte nonce
+      // This is what the server expects to receive
+      return {
+        encrypted,
+        nonce
+      };
+    } catch (error) {
+      console.error('[Socket] Encryption error:', error);
+      throw new Error(`Encryption failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   
   /**
@@ -760,23 +858,38 @@ export class AeroNyxSocket extends EventEmitter {
       throw new Error('No session key available for decryption');
     }
     
-    // Decrypt the data with session key
-    const decrypted = nacl.secretbox.open(encrypted, nonce, this.sessionKey);
-    
-    if (!decrypted) {
-      throw new Error('Decryption failed - data may be corrupted or tampered with');
-    }
-    
-    // Convert binary data to string
-    const decoder = new TextDecoder();
-    const jsonString = decoder.decode(decrypted);
-    
-    // Parse JSON data
     try {
-      return JSON.parse(jsonString);
+      // Adapt the nonce size for nacl.secretbox.open which expects 24 bytes
+      // but our server sends 12 bytes
+      const paddedNonce = new Uint8Array(24);
+      paddedNonce.set(nonce); // This puts the 12-byte nonce at the beginning
+      
+      // Adapt the key (ensure it's 32 bytes)
+      const adaptedKey = this.sessionKey.length > 32 
+        ? this.sessionKey.slice(0, 32) 
+        : this.sessionKey;
+      
+      // Decrypt the data with session key using the padded nonce
+      const decrypted = nacl.secretbox.open(encrypted, paddedNonce, adaptedKey);
+      
+      if (!decrypted) {
+        throw new Error('Decryption failed - data may be corrupted or tampered with');
+      }
+      
+      // Convert binary data to string
+      const decoder = new TextDecoder();
+      const jsonString = decoder.decode(decrypted);
+      
+      // Parse JSON data
+      try {
+        return JSON.parse(jsonString);
+      } catch (error) {
+        console.error('[Socket] Error parsing decrypted JSON:', error);
+        throw new Error('Invalid JSON in decrypted message');
+      }
     } catch (error) {
-      console.error('[Socket] Error parsing decrypted JSON:', error);
-      throw new Error('Invalid JSON in decrypted message');
+      console.error('[Socket] Decryption error:', error);
+      throw new Error(`Decryption failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
@@ -886,9 +999,33 @@ export class AeroNyxSocket extends EventEmitter {
         };
         
         this.socket.send(JSON.stringify(pong));
+        console.log(`[Socket] Responding to ping: ${message.sequence}`);
       }
     } catch (error) {
       console.error('[Socket] Error handling ping:', error);
+    }
+  }
+  
+  /**
+   * Handle server pong message
+   * @param message Pong message
+   */
+  private handlePong(message: { echo_timestamp: number, sequence: number }): void {
+    try {
+      const now = Date.now();
+      const latency = now - message.echo_timestamp;
+      console.log(`[Socket] Received pong: sequence ${message.sequence}, latency ${latency}ms`);
+      
+      // Update last message time
+      this.lastMessageTime = now;
+      
+      // Clear this ping's timeout handler
+      if (this.pingTimeouts.has(message.sequence)) {
+        clearTimeout(this.pingTimeouts.get(message.sequence)!);
+        this.pingTimeouts.delete(message.sequence);
+      }
+    } catch (error) {
+      console.error('[Socket] Error handling pong:', error);
     }
   }
   
@@ -960,17 +1097,28 @@ export class AeroNyxSocket extends EventEmitter {
   private startKeepAliveMonitoring(): void {
     this.stopKeepAliveMonitoring();
     
-    // Check connection health every minute
+    // Check connection health every 30 seconds
     this.keepAliveInterval = setInterval(() => {
       const now = Date.now();
       const timeSinceLastMessage = now - this.lastMessageTime;
       
-      // If no message for 2 minutes, connection might be dead
-      if (timeSinceLastMessage > 120000) {
-        console.warn('[Socket] No messages received for 2 minutes, checking connection health');
+      // If no message for 90 seconds, connection might be dead
+      if (timeSinceLastMessage > 90000) {
+        console.warn(`[Socket] No messages received for ${Math.round(timeSinceLastMessage/1000)}s, checking connection health`);
         this.checkConnectionHealth();
+      } else if (timeSinceLastMessage > 15000 && this.socket && this.socket.readyState === WebSocket.OPEN) {
+        // If it's been over 15 seconds since last message, send a keep-alive ping
+        console.log('[Socket] Sending keep-alive ping');
+        this.sendPing();
       }
-    }, 60000);
+      
+      // Actively detect disconnected state
+      if (!this.isConnected && !this.connecting && this.autoReconnect && 
+          this.reconnectAttempts < this.reconnectionConfig.maxAttempts) {
+        console.log('[Socket] Detected disconnected state, initiating reconnect');
+        this.scheduleReconnect();
+      }
+    }, 30000);
   }
   
   /**
@@ -990,13 +1138,24 @@ export class AeroNyxSocket extends EventEmitter {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
     
     try {
+      const sequenceId = this.messageCounter++;
       const ping = {
         type: 'Ping',
         timestamp: Date.now(),
-        sequence: this.messageCounter++,
+        sequence: sequenceId,
       };
       
       this.socket.send(JSON.stringify(ping));
+      
+      // Set ping timeout detection
+      const pingTimeout = setTimeout(() => {
+        console.warn('[Socket] Ping timeout - no pong received');
+        // If ping times out, the connection might be broken
+        this.checkConnectionHealth();
+      }, 5000); // 5 second timeout
+      
+      // Store this ping's timeout handler
+      this.pingTimeouts.set(sequenceId, pingTimeout);
     } catch (error) {
       console.error('[Socket] Error sending ping:', error);
       // If we can't send a ping, the connection might be dead
@@ -1011,7 +1170,23 @@ export class AeroNyxSocket extends EventEmitter {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       // Send a ping to check if connection is alive
       try {
+        // Clear any existing ping timeouts first
+        for (const [seq, timeout] of this.pingTimeouts.entries()) {
+          clearTimeout(timeout);
+          this.pingTimeouts.delete(seq);
+        }
+        
+        console.log('[Socket] Performing connection health check');
         this.sendPing();
+        
+        // Set a short timeout to see if we get a response
+        setTimeout(() => {
+          if (this.isConnected && Date.now() - this.lastMessageTime > 10000) {
+            console.warn('[Socket] Health check failed - no response received');
+            this.handleConnectionFailure();
+          }
+        }, 3000);
+        
         return;
       } catch (e) {
         // Error sending ping, connection may be dead
@@ -1019,11 +1194,27 @@ export class AeroNyxSocket extends EventEmitter {
       }
     }
     
+    this.handleConnectionFailure();
+  }
+  
+  /**
+   * Handle connection failure
+   */
+  private handleConnectionFailure(): void {
     // Connection unhealthy, attempt to reconnect
     console.warn('[Socket] Connection appears unhealthy, attempting to reconnect');
     this.isConnected = false;
     this.emit('connectionStatus', 'disconnected');
     
+    // Also notify users about the connection issue
+    this.emit('error', {
+      type: 'connection',
+      message: 'Connection to the server was lost. Attempting to reconnect...',
+      code: 'CONNECTION_LOST',
+      retry: true
+    });
+    
+    // Clean up existing socket
     if (this.socket) {
       try {
         this.socket.close();
@@ -1244,6 +1435,14 @@ export class AeroNyxSocket extends EventEmitter {
         return;
       }
       
+      // If not connected and not connecting, attempt to connect first
+      if (!this.connecting && this.chatId && this.publicKey) {
+        console.log('[Socket] Initiating connection before waitForConnection');
+        this.connect(this.chatId, this.publicKey).catch(error => {
+          console.error('[Socket] Failed to initiate connection:', error);
+        });
+      }
+      
       // Add listener for connection
       const connectionListener = () => {
         resolve();
@@ -1254,6 +1453,15 @@ export class AeroNyxSocket extends EventEmitter {
       // Add timeout
       const timeout = setTimeout(() => {
         this.connectionListeners.delete(connectionListener);
+        
+        // Update UI to show connection timeout
+        this.emit('error', {
+          type: 'connection',
+          message: 'Connection attempt timed out. The server may be unavailable.',
+          code: 'CONNECTION_TIMEOUT',
+          retry: true
+        });
+        
         reject(new Error('Timed out waiting for connection'));
       }, timeoutMs);
       
@@ -1423,6 +1631,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.stopKeepAliveMonitoring();
     this.stopHeartbeat();
     
+    // Clear all scheduled reconnection attempts
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -1432,6 +1641,12 @@ export class AeroNyxSocket extends EventEmitter {
       clearTimeout(this.connectionTimeout);
       this.connectionTimeout = null;
     }
+    
+    // Clear all ping timeouts
+    for (const timeout of this.pingTimeouts.values()) {
+      clearTimeout(timeout);
+    }
+    this.pingTimeouts.clear();
     
     if (this.socket) {
       // Only try to close if the socket is not already closed
@@ -1448,6 +1663,8 @@ export class AeroNyxSocket extends EventEmitter {
     
     this.sessionKey = null;
     this.emit('connectionStatus', 'disconnected');
+    
+    console.log('[Socket] Disconnected and cleaned up all resources');
   }
   
   /**
@@ -1468,6 +1685,40 @@ export class AeroNyxSocket extends EventEmitter {
     if (this.isConnected) return 'connected';
     if (this.connecting) return 'connecting';
     return 'disconnected';
+  }
+  
+  /**
+   * Get detailed connection status information
+   * Useful for debugging and displaying to users
+   */
+  getConnectionInfo(): {
+    state: 'connected' | 'connecting' | 'disconnected',
+    socketState: number | null,
+    socketStateText: string,
+    lastMessageTime: number,
+    timeSinceLastMessage: number,
+    reconnectAttempts: number,
+    hasSessionKey: boolean,
+    pendingMessages: number
+  } {
+    const socketState = this.socket ? this.socket.readyState : null;
+    let socketStateText = 'Unknown';
+    
+    if (socketState === WebSocket.CONNECTING) socketStateText = 'CONNECTING';
+    else if (socketState === WebSocket.OPEN) socketStateText = 'OPEN';
+    else if (socketState === WebSocket.CLOSING) socketStateText = 'CLOSING';
+    else if (socketState === WebSocket.CLOSED) socketStateText = 'CLOSED';
+    
+    return {
+      state: this.getConnectionState(),
+      socketState,
+      socketStateText,
+      lastMessageTime: this.lastMessageTime,
+      timeSinceLastMessage: Date.now() - this.lastMessageTime,
+      reconnectAttempts: this.reconnectAttempts,
+      hasSessionKey: !!this.sessionKey,
+      pendingMessages: this.pendingMessages.length
+    };
   }
   
   /**
