@@ -374,7 +374,7 @@ export class WebRTCManager extends EventEmitter {
     };
     
     // Handle incoming messages
-    this.dataChannel.onmessage = (event) => {
+    this.dataChannel.onmessage = async (event) => {
       try {
         // Handle encrypted message
         if (this.sessionKey) {
@@ -384,7 +384,7 @@ export class WebRTCManager extends EventEmitter {
           if (encryptedData.ciphertext && encryptedData.nonce) {
             // Decrypt the message
             try {
-              const decryptedText = decryptMessage(
+              const decryptedText = await decryptMessage(
                 encryptedData.ciphertext,
                 encryptedData.nonce,
                 this.sessionKey
