@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { MessageType } from '../types/chat';
 import { encryptPacket, decryptPacket, signChallenge } from '../utils/crypto';
+import * as bs58 from 'bs58';
 
 /**
  * Configuration for reconnection strategy
@@ -48,6 +49,7 @@ export class AeroNyxSocket extends EventEmitter {
   private keepAliveInterval: NodeJS.Timeout | null = null;
   private lastMessageTime: number = Date.now();
   private connectionTimeout: NodeJS.Timeout | null = null;
+  private processedMessageIds: Set<string> = new Set(); // For preventing replay attacks
   
   /**
    * Reconnection configuration with exponential backoff
@@ -475,16 +477,42 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle encrypted data packet
    * @param message Data packet message
    */
-  private async handleDataPacket(message: { encrypted: string, nonce: string, counter: number }): Promise<void> {
+  private async handleDataPacket(message: { encrypted: number[], nonce: number[], counter: number }): Promise<void> {
     try {
       if (!this.sessionKey) {
         throw new Error('No session key available to decrypt message');
       }
       
+      // Convert array data to Uint8Array for decryption
+      const encryptedUint8 = new Uint8Array(message.encrypted);
+      const nonceUint8 = new Uint8Array(message.nonce);
+      
+      // Convert back to base58 for our decryptPacket function
+      const encryptedBase58 = bs58.encode(encryptedUint8);
+      const nonceBase58 = bs58.encode(nonceUint8);
+      
       // Decrypt the message using our session key
       try {
         // Need to await the decryption since it returns a Promise
-        const decryptedData = await decryptPacket(message.encrypted, message.nonce, this.sessionKey);
+        const decryptedData = await decryptPacket(encryptedBase58, nonceBase58, this.sessionKey);
+        
+        // Check for message replay attempts
+        if (decryptedData.id && this.processedMessageIds.has(decryptedData.id)) {
+          console.warn('Detected message replay attempt, ignoring');
+          return;
+        }
+        
+        // Store message ID to prevent replay attacks
+        if (decryptedData.id) {
+          this.processedMessageIds.add(decryptedData.id);
+          
+          // Limit size of processed IDs set
+          if (this.processedMessageIds.size > 10000) {
+            // Remove oldest ID (first in set)
+            const oldestId = this.processedMessageIds.values().next().value;
+            this.processedMessageIds.delete(oldestId);
+          }
+        }
         
         // Emit appropriate event based on message type
         if (decryptedData.type === 'message') {
@@ -769,17 +797,30 @@ export class AeroNyxSocket extends EventEmitter {
         timestamp: message.timestamp,
       };
       
-      // Encrypt the message data with our session key
+      // Encrypt the message data with our session key - this returns base58 encoded strings
       const { encrypted, nonce } = await encryptPacket(messageData, this.sessionKey);
       
-      // Create data packet with encrypted content
+      // Convert base58 encoded strings back to Uint8Arrays
+      const encryptedBytes = bs58.decode(encrypted);
+      const nonceBytes = bs58.decode(nonce);
+      
+      // Create data packet with encrypted content AS ARRAYS (not base58 strings)
+      // This is critical - the server expects arrays of numbers, not strings
       const dataPacket = {
         type: 'Data',
-        encrypted,
-        nonce,
+        encrypted: Array.from(encryptedBytes), // Convert Uint8Array to regular array
+        nonce: Array.from(nonceBytes),         // Convert Uint8Array to regular array
         counter: this.messageCounter++,
-        padding: null, // Optional padding for length concealment
+        padding: null // Optional padding for length concealment
       };
+      
+      // Debug logging to verify correct format
+      console.debug('Sending message packet structure:', JSON.stringify({
+        type: dataPacket.type,
+        encrypted: `[${encryptedBytes.length} bytes]`,
+        nonce: `[${nonceBytes.length} bytes]`,
+        counter: dataPacket.counter
+      }));
       
       this.socket.send(JSON.stringify(dataPacket));
       return true;
@@ -858,13 +899,17 @@ export class AeroNyxSocket extends EventEmitter {
       // Encrypt the data with our session key
       const { encrypted, nonce } = await encryptPacket(data, this.sessionKey);
       
-      // Create data packet with encrypted content
+      // Convert base58 encoded strings back to Uint8Arrays
+      const encryptedBytes = bs58.decode(encrypted);
+      const nonceBytes = bs58.decode(nonce);
+      
+      // Create data packet with encrypted content AS ARRAYS (not strings)
       const dataPacket = {
         type: 'Data',
-        encrypted,
-        nonce,
+        encrypted: Array.from(encryptedBytes), // Convert to regular array
+        nonce: Array.from(nonceBytes),         // Convert to regular array
         counter: this.messageCounter++,
-        padding: null, // Optional padding for length concealment
+        padding: null // Optional padding for length concealment
       };
       
       this.socket.send(JSON.stringify(dataPacket));
