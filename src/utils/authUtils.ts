@@ -172,7 +172,7 @@ export async function runAesGcmTest() {
     });
     
     // Try decrypting
-    const decrypted = await decryptWithAesGcm(ciphertext, nonce, testKey, undefined, 'string');
+    const decrypted = await decryptWithAesGcm(ciphertext, nonce, testKey, 'string');
     console.log("Test decryption successful:", decrypted);
     
     return true;
