@@ -200,7 +200,7 @@ export const useChat = (chatId: string) => {
           timestamp: new Date().toISOString(),
         };
         
-        sentViaP2P = webrtcRef.current.sendMessage(p2pMessage);
+        sentViaP2P = await webrtcRef.current.sendMessage(p2pMessage);
       }
       
       // If not sent via P2P, send via server
@@ -282,7 +282,7 @@ export const useChat = (chatId: string) => {
   }, [chatInfo, user?.id]);
   
   // Connect to a peer directly via WebRTC
-  const connectToPeer = useCallback((peerId: string) => {
+  const connectToPeer = useCallback(async (peerId: string) => {
     if (!webrtcRef.current) {
       toast({
         title: "P2P not available",
@@ -295,7 +295,7 @@ export const useChat = (chatId: string) => {
     }
     
     try {
-      webrtcRef.current.connectToPeer(peerId);
+      await webrtcRef.current.connectToPeer(peerId);
       setConnectionStatus('p2p-connecting');
       return true;
     } catch (error) {
