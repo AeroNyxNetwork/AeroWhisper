@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { AeroNyxSocket } from './socket';
 import { encryptMessage, decryptMessage } from '../utils/crypto';
+import * as bs58 from 'bs58';
 
 /**
  * WebRTC connection states for type safety
@@ -75,6 +76,8 @@ export class WebRTCManager extends EventEmitter {
   private queuedMessages: Array<{ data: any, attempts: number }> = [];
   private maxQueueSize: number = 100;
   private remoteDescriptionSet: boolean = false;
+  private processedMessageIds: Set<string> = new Set(); // For preventing replay attacks
+  private messageCounter: number = 0; // Added missing message counter property
   
   /**
    * Create a new WebRTC manager
@@ -468,6 +471,39 @@ export class WebRTCManager extends EventEmitter {
   
   /**
    * Handle the closure of a data channel
+   */
+  private handleDataChannelClose(): void {
+    console.log('[WebRTC] Data channel closed, attempting to reestablish if appropriate');
+    
+    // Only attempt to reestablish if we're the initiator and still in a connected state
+    if (this.isInitiator && this.peerConnection && this.connectionState === 'connected') {
+      try {
+        // Create a new data channel
+        this.dataChannel = this.peerConnection.createDataChannel(
+          this.channelLabel, 
+          this.config.dataChannelOptions
+        );
+        
+        console.log('[WebRTC] Recreated data channel after closure');
+        this.setupDataChannel();
+      } catch (error) {
+        console.error('[WebRTC] Failed to recreate data channel:', error);
+        
+        // If we can't recreate the data channel, mark the connection as having an issue
+        if (this.connectionState === 'connected') {
+          this.setConnectionState('disconnected');
+          this.handleConnectionFailure();
+        }
+      }
+    } else if (this.connectionState === 'connected') {
+      // If we're not the initiator but still connected, wait for the other peer to recreate the channel
+      console.log('[WebRTC] Waiting for initiator to recreate data channel');
+    }
+  }
+  
+  /**
+   * Process parsed message
+   * @param data The parsed message
    */
   private processDecryptedMessage(data: any): void {
     // Check for message ID to prevent replay attacks
