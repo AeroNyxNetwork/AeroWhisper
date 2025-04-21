@@ -88,6 +88,7 @@ export interface DataPacket {
   nonce: number[];
   counter: number;
   padding?: any;
+  encryption_algorithm?: string;
 }
 
 /**
