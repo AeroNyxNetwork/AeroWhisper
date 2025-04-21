@@ -424,58 +424,59 @@ export class AeroNyxSocket extends EventEmitter {
   /**
    * Handle encrypted data packet
    */
-  private handleDataPacket(message: { encrypted: string, nonce: string, counter: number }) {
-    try {
-      if (!this.sessionKey) {
-        throw new Error('No session key available to decrypt message');
-      }
-      
-      // Decrypt the message using our session key
+  private async handleDataPacket(message: { encrypted: string, nonce: string, counter: number }) {
       try {
-        const decryptedData = decryptPacket(message.encrypted, message.nonce, this.sessionKey);
-        
-        // Emit appropriate event based on message type
-        if (decryptedData.type === 'message') {
-          this.emit('message', {
-            id: decryptedData.id || `msg-${Date.now()}`,
-            content: decryptedData.content,
-            senderId: decryptedData.senderId,
-            senderName: decryptedData.senderName,
-            timestamp: decryptedData.timestamp || new Date().toISOString(),
-            isEncrypted: true,
-            status: 'received',
-          });
-        } else if (decryptedData.type === 'participants') {
-          this.emit('participants', decryptedData.participants);
-        } else if (decryptedData.type === 'chatInfo') {
-          this.emit('chatInfo', decryptedData.chatInfo);
-        } else if (decryptedData.type === 'webrtc-signal') {
-          this.emit('webrtcSignal', decryptedData);
+        if (!this.sessionKey) {
+          throw new Error('No session key available to decrypt message');
         }
-      } catch (decryptError) {
-        console.error('Failed to decrypt data packet:', decryptError);
         
-        // For development/testing, still emit some data even if decryption fails
-        if (process.env.NODE_ENV === 'development') {
-          this.simulateDataReceived(message);
-        } else {
-          throw decryptError;
+        // Decrypt the message using our session key
+        try {
+          // Need to await the result since decryptPacket is now async
+          const decryptedData = await decryptPacket(message.encrypted, message.nonce, this.sessionKey);
+          
+          // Emit appropriate event based on message type
+          if (decryptedData.type === 'message') {
+            this.emit('message', {
+              id: decryptedData.id || `msg-${Date.now()}`,
+              content: decryptedData.content,
+              senderId: decryptedData.senderId,
+              senderName: decryptedData.senderName,
+              timestamp: decryptedData.timestamp || new Date().toISOString(),
+              isEncrypted: true,
+              status: 'received',
+            });
+          } else if (decryptedData.type === 'participants') {
+            this.emit('participants', decryptedData.participants);
+          } else if (decryptedData.type === 'chatInfo') {
+            this.emit('chatInfo', decryptedData.chatInfo);
+          } else if (decryptedData.type === 'webrtc-signal') {
+            this.emit('webrtcSignal', decryptedData);
+          }
+        } catch (decryptError) {
+          console.error('Failed to decrypt data packet:', decryptError);
+          
+          // For development/testing, still emit some data even if decryption fails
+          if (process.env.NODE_ENV === 'development') {
+            this.simulateDataReceived(message);
+          } else {
+            throw decryptError;
+          }
         }
+        
+        // Forward raw data for WebRTC signaling
+        this.emit('data', message);
+      } catch (error) {
+        console.error('Error handling data packet:', error);
+        this.emit('error', {
+          type: 'data',
+          message: 'Failed to process data packet',
+          code: 'DATA_ERROR',
+          details: error instanceof Error ? error.message : 'Unknown error',
+          retry: false
+        });
       }
-      
-      // Forward raw data for WebRTC signaling
-      this.emit('data', message);
-    } catch (error) {
-      console.error('Error handling data packet:', error);
-      this.emit('error', {
-        type: 'data',
-        message: 'Failed to process data packet',
-        code: 'DATA_ERROR',
-        details: error instanceof Error ? error.message : 'Unknown error',
-        retry: false
-      });
     }
-  }
   
   /**
    * Handle server ping message
