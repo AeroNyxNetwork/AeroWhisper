@@ -436,8 +436,40 @@ export const signChallenge = (
   challenge: Uint8Array,
   secretKey: Uint8Array
 ): string => {
-  const signature = nacl.sign.detached(challenge, secretKey);
-  return bs58.encode(signature);
+  try {
+    // Detailed logs for debugging
+    console.log('Challenge data length:', challenge.length);
+    console.log('Challenge first bytes:', Array.from(challenge.slice(0, 8)));
+    console.log('Secret key length:', secretKey.length);
+    
+    // Ensure secret key is correct length
+    if (secretKey.length !== 64) {
+      // Try to handle various key formats
+      if (secretKey.length === 32) {
+        console.warn('Secret key is only 32 bytes, expected 64 bytes. Converting to compatible format.');
+        // This is just the private portion, reconstruct a full keypair
+        const keypair = nacl.sign.keyPair.fromSecretKey(secretKey);
+        secretKey = keypair.secretKey;
+      } else {
+        throw new Error(`Invalid secret key length: ${secretKey.length}, expected 64 bytes`);
+      }
+    }
+    
+    // In Solana, signatures are created with detached signing
+    // This creates a 64-byte signature without prepending the message
+    const signature = nacl.sign.detached(challenge, secretKey);
+    
+    // Server expects Base58 encoded signature
+    const base58Signature = bs58.encode(signature);
+    
+    console.log('Generated signature first bytes:', Array.from(signature.slice(0, 8)));
+    console.log('Base58 signature:', base58Signature.substring(0, 10) + '...');
+    
+    return base58Signature;
+  } catch (error) {
+    console.error('Error in signChallenge:', error);
+    throw error;
+  }
 };
 
 /**
@@ -574,59 +606,26 @@ export const encryptPacket = async (
   data: any,
   sessionKey: Uint8Array
 ): Promise<{ encrypted: string, nonce: string }> => {
+  // Convert the data to JSON string
   const jsonData = JSON.stringify(data);
   
-  try {
-    if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-      // Generate a random IV/nonce (12 bytes for AES-GCM)
-      const iv = new Uint8Array(12);
-      window.crypto.getRandomValues(iv);
-      
-      // Import the key
-      const cryptoKey = await window.crypto.subtle.importKey(
-        'raw',
-        sessionKey,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['encrypt']
-      );
-      
-      // Encode the data
-      const encoder = new TextEncoder();
-      const dataBytes = encoder.encode(jsonData);
-      
-      // Encrypt the data
-      const ciphertext = await window.crypto.subtle.encrypt(
-        {
-          name: 'AES-GCM',
-          iv: iv,
-          tagLength: 128 // 16 bytes authentication tag
-        },
-        cryptoKey,
-        dataBytes
-      );
-      
-      // Return base58-encoded ciphertext and nonce
-      return {
-        encrypted: bs58.encode(new Uint8Array(ciphertext)),
-        nonce: bs58.encode(iv)
-      };
-    }
-  } catch (e) {
-    console.error('Web Crypto API packet encryption failed, falling back to TweetNaCl:', e);
-  }
+  // Convert to Uint8Array for encryption
+  const encoder = new TextEncoder();
+  const messageUint8 = encoder.encode(jsonData);
   
-  // Fallback to TweetNaCl
+  // Generate random nonce
   const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
-  const messageUint8 = new TextEncoder().encode(jsonData);
   
+  // Encrypt with nacl.secretbox (XSalsa20-Poly1305)
   const encrypted = nacl.secretbox(messageUint8, nonce, sessionKey);
   
+  // Return base58 encoded values
   return {
     encrypted: bs58.encode(encrypted),
     nonce: bs58.encode(nonce)
   };
 };
+
 
 /**
  * Decrypt packet after receiving
@@ -636,52 +635,21 @@ export const decryptPacket = async (
   nonce: string,
   sessionKey: Uint8Array
 ): Promise<any> => {
-  try {
-    if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-      // Decode base58 encrypted and nonce
-      const encryptedData = bs58.decode(encrypted);
-      const ivData = bs58.decode(nonce);
-      
-      // Import the key
-      const cryptoKey = await window.crypto.subtle.importKey(
-        'raw',
-        sessionKey,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['decrypt']
-      );
-      
-      // Decrypt the data
-      const decrypted = await window.crypto.subtle.decrypt(
-        {
-          name: 'AES-GCM',
-          iv: ivData,
-          tagLength: 128 // 16 bytes authentication tag
-        },
-        cryptoKey,
-        encryptedData
-      );
-      
-      // Decode and parse the decrypted data
-      const decoder = new TextDecoder();
-      const jsonData = decoder.decode(decrypted);
-      return JSON.parse(jsonData);
-    }
-  } catch (e) {
-    console.error('Web Crypto API packet decryption failed, falling back to TweetNaCl:', e);
-  }
+  // Decode base58 strings
+  const encryptedUint8 = bs58.decode(encrypted);
+  const nonceUint8 = bs58.decode(nonce);
   
-  // Fallback to TweetNaCl
-  const encryptedData = bs58.decode(encrypted);
-  const nonceData = bs58.decode(nonce);
-  
-  const decrypted = nacl.secretbox.open(encryptedData, nonceData, sessionKey);
+  // Decrypt the data
+  const decrypted = nacl.secretbox.open(encryptedUint8, nonceUint8, sessionKey);
   
   if (!decrypted) {
     throw new Error('Failed to decrypt packet');
   }
   
-  return JSON.parse(new TextDecoder().decode(decrypted));
+  // Convert binary data to text and parse JSON
+  const decoder = new TextDecoder();
+  const jsonData = decoder.decode(decrypted);
+  return JSON.parse(jsonData);
 };
 
 /**
