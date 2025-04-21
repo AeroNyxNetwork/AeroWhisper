@@ -1,47 +1,37 @@
 import * as nacl from 'tweetnacl';
 import * as bs58 from 'bs58';
-
-// Add ChaCha20-Poly1305 polyfill implementation
-// This is a placeholder where you'd import a compatible implementation
-// NOTE: You'll need to add a compatible library to your project
+// Import the ChaCha20-Poly1305 implementation
+import { chacha20poly1305 } from '@noble/ciphers/chacha';
 
 /**
- * ChaCha20-Poly1305 IETF implementation that is compatible with Rust's chacha20poly1305 crate
- * 
- * !!! IMPORTANT: This is a placeholder. You MUST replace this with a proper implementation !!!
- * 
- * Recommendation: Use a library like '@noble/ciphers' that provides IETF standard ChaCha20-Poly1305
- * with 12-byte nonce support to ensure compatibility with your Rust server.
- * 
- * @param key 32-byte key as Uint8Array
- * @param nonce 12-byte nonce as Uint8Array
+ * Encrypt data using ChaCha20-Poly1305 IETF standard (RFC 8439)
+ * This is compatible with Rust's chacha20poly1305 crate
+ * @param key 32-byte key
+ * @param nonce 12-byte nonce
  * @param data Data to encrypt
  * @returns Encrypted data (ciphertext + auth tag)
  */
 function chacha20poly1305Encrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8Array): Uint8Array {
-  // THIS IS A PLACEHOLDER - Replace with actual implementation using a proper library
-  // Example using hypothetical library:
-  // return chacha20poly1305.encrypt(key, nonce, data);
-  
-  throw new Error('PLACEHOLDER: You must implement proper ChaCha20-Poly1305 encryption');
+  const chacha = chacha20poly1305(key);
+  return chacha.seal(nonce, data);
 }
 
 /**
- * ChaCha20-Poly1305 IETF implementation that is compatible with Rust's chacha20poly1305 crate
- * 
- * !!! IMPORTANT: This is a placeholder. You MUST replace this with a proper implementation !!!
- * 
- * @param key 32-byte key as Uint8Array
- * @param nonce 12-byte nonce as Uint8Array
- * @param data Encrypted data to decrypt (ciphertext + auth tag)
+ * Decrypt data using ChaCha20-Poly1305 IETF standard (RFC 8439)
+ * This is compatible with Rust's chacha20poly1305 crate
+ * @param key 32-byte key
+ * @param nonce 12-byte nonce
+ * @param data Encrypted data (ciphertext + auth tag)
  * @returns Decrypted data or null if authentication fails
  */
 function chacha20poly1305Decrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8Array): Uint8Array | null {
-  // THIS IS A PLACEHOLDER - Replace with actual implementation using a proper library
-  // Example using hypothetical library:
-  // return chacha20poly1305.decrypt(key, nonce, data);
-  
-  throw new Error('PLACEHOLDER: You must implement proper ChaCha20-Poly1305 decryption');
+  try {
+    const chacha = chacha20poly1305(key);
+    return chacha.open(nonce, data);
+  } catch (error) {
+    console.error('[Socket] ChaCha20-Poly1305 authentication failed:', error);
+    return null;
+  }
 }
 
 /**
@@ -85,7 +75,6 @@ export async function encryptData(
       const cryptoKey = await window.crypto.subtle.importKey(
         'raw', 
         sessionKey, 
-        // Try different algorithm identifiers if needed
         { name: 'ChaCha20-Poly1305' },
         false, 
         ['encrypt']
@@ -104,18 +93,12 @@ export async function encryptData(
       encrypted = new Uint8Array(encryptedBuffer);
       console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 encryption');
     } catch (webCryptoError) {
-      // Web Crypto API didn't work - use compatible polyfill implementation
-      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, using polyfill', webCryptoError);
+      // Web Crypto API failed or doesn't support ChaCha20-Poly1305
+      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, using @noble/ciphers implementation', webCryptoError);
       
-      // CRITICAL FIX: Use ChaCha20-Poly1305 polyfill that's compatible with the server
-      // instead of falling back to incompatible nacl.secretbox (XSalsa20-Poly1305)
-      try {
-        encrypted = chacha20poly1305Encrypt(sessionKey, nonce, messageUint8);
-        console.log('[Socket] Successfully used ChaCha20-Poly1305 polyfill for encryption');
-      } catch (polyfillError) {
-        console.error('[Socket] ChaCha20-Poly1305 polyfill failed:', polyfillError);
-        throw new Error('Encryption failed - ChaCha20-Poly1305 implementation required');
-      }
+      // Use @noble/ciphers ChaCha20-Poly1305 implementation which is compatible with Rust's chacha20poly1305
+      encrypted = chacha20poly1305Encrypt(sessionKey, nonce, messageUint8);
+      console.log('[Socket] Successfully used @noble/ciphers ChaCha20-Poly1305 for encryption');
     }
     
     if (!encrypted) {
@@ -186,23 +169,17 @@ export async function decryptData(
       decryptedData = new Uint8Array(decryptedBuffer);
       console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 decryption');
     } catch (webCryptoError) {
-      // Web Crypto API failed - use compatible polyfill implementation
-      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305 decryption, using polyfill', webCryptoError);
+      // Web Crypto API failed or doesn't support ChaCha20-Poly1305
+      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305 decryption, using @noble/ciphers implementation', webCryptoError);
       
-      // CRITICAL FIX: Use ChaCha20-Poly1305 polyfill that's compatible with the server
-      // instead of falling back to incompatible nacl.secretbox.open (XSalsa20-Poly1305)
-      try {
-        decryptedData = chacha20poly1305Decrypt(sessionKey, nonce, encrypted);
-        
-        if (!decryptedData) {
-          throw new Error('Decryption failed - authentication tag mismatch or corrupted data');
-        }
-        
-        console.log('[Socket] Successfully used ChaCha20-Poly1305 polyfill for decryption');
-      } catch (polyfillError) {
-        console.error('[Socket] ChaCha20-Poly1305 polyfill failed:', polyfillError);
-        throw new Error('Decryption failed - ChaCha20-Poly1305 implementation required');
+      // Use @noble/ciphers ChaCha20-Poly1305 implementation which is compatible with Rust's chacha20poly1305
+      decryptedData = chacha20poly1305Decrypt(sessionKey, nonce, encrypted);
+      
+      if (!decryptedData) {
+        throw new Error('Decryption failed - authentication tag mismatch or corrupted data');
       }
+      
+      console.log('[Socket] Successfully used @noble/ciphers ChaCha20-Poly1305 for decryption');
     }
     
     if (!decryptedData) {
