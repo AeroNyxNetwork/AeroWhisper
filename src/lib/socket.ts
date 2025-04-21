@@ -46,14 +46,18 @@ import {
 
 import {
   parseMessage,
-  createChallengeResponse,
-  processIpAssign,
   createSocketError,
   handlePingMessage,
   getPongLatency,
   processErrorMessage,
   shouldReconnectAfterDisconnect
 } from './socket/messageHandlers';
+
+// Import improved challenge handling
+import {
+  createChallengeResponse,
+  parseChallengeData
+} from './socket/handleChallenge';
 
 /**
  * AeroNyx Socket - Manages WebSocket connections with error handling,
@@ -606,7 +610,7 @@ export class AeroNyxSocket extends EventEmitter {
         throw new Error('No public key available for challenge response');
       }
       
-      // Create challenge response
+      // Use our improved challenge handling
       const response = await createChallengeResponse(message, this.publicKey);
       
       // Send the response
