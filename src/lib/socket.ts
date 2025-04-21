@@ -2,6 +2,17 @@ import { EventEmitter } from 'events';
 import { MessageType } from '../types/chat';
 import { encryptPacket, decryptPacket, signChallenge } from '../utils/crypto';
 
+interface ReconnectionConfig {
+  initialDelay: number;
+  maxDelay: number;
+  maxAttempts: number;
+  jitter: boolean;
+}
+
+/**
+ * AeroNyx Socket - Manages WebSocket connections with error handling,
+ * reconnection logic, and secure messaging
+ */
 export class AeroNyxSocket extends EventEmitter {
   private socket: WebSocket | null = null;
   private sessionKey: Uint8Array | null = null;
@@ -13,13 +24,39 @@ export class AeroNyxSocket extends EventEmitter {
   private reconnectAttempts: number = 0;
   private reconnectTimeout: NodeJS.Timeout | null = null;
   private pingInterval: NodeJS.Timeout | null = null;
+  private sessionId: string | null = null;
   private serverUrl: string = process.env.NEXT_PUBLIC_AERONYX_SERVER_URL || 'wss://aeronyx-server.example.com';
+  private connectionListeners: Set<() => void> = new Set();
+  private pendingMessages: Array<{type: string, data: any}> = [];
   
-  constructor() {
+  // Reconnection configuration with exponential backoff
+  private reconnectionConfig: ReconnectionConfig = {
+    initialDelay: 1000, // Start with 1 second delay
+    maxDelay: 30000,    // Max delay of 30 seconds
+    maxAttempts: 10,    // Max 10 reconnection attempts
+    jitter: true        // Add randomness to prevent thundering herd
+  };
+  
+  constructor(config?: Partial<ReconnectionConfig>) {
     super();
+    
+    // Override default reconnection config if provided
+    if (config) {
+      this.reconnectionConfig = {
+        ...this.reconnectionConfig,
+        ...config
+      };
+    }
+    
+    // Set max listeners to avoid memory leaks
+    this.setMaxListeners(20);
   }
   
-  // Connect to AeroNyx server
+  /**
+   * Connect to AeroNyx server with retry logic and connection timeout
+   * @param chatId Chat room ID
+   * @param publicKey User's public key
+   */
   async connect(chatId: string, publicKey: string): Promise<void> {
     if (this.socket && this.isConnected) {
       return;
@@ -29,12 +66,16 @@ export class AeroNyxSocket extends EventEmitter {
     this.publicKey = publicKey;
     this.connecting = true;
     
+    // Reset reconnection attempts when manually connecting
+    this.reconnectAttempts = 0;
+    
     return new Promise((resolve, reject) => {
       try {
         // Use environment variable for server URL if available
         const serverUrl = `${this.serverUrl}/chat/${chatId}`;
         
         console.log(`Connecting to WebSocket server at: ${serverUrl}`);
+        this.emit('connectionStatus', 'connecting');
         
         this.socket = new WebSocket(serverUrl);
         
@@ -52,10 +93,16 @@ export class AeroNyxSocket extends EventEmitter {
             
             if (this.socket) {
               this.socket.close();
+              this.socket = null;
             }
             
             this.connecting = false;
             reject(timeoutError);
+            
+            // Auto-retry on timeout if not max attempts
+            if (this.reconnectAttempts < this.reconnectionConfig.maxAttempts) {
+              this.scheduleReconnect();
+            }
           }
         }, 10000); // 10 second timeout
         
@@ -98,8 +145,10 @@ export class AeroNyxSocket extends EventEmitter {
             this.connecting = false;
           }
           
-          // Attempt to reconnect automatically for certain error codes
-          if (event.code === 1001 || event.code === 1006 || event.code === 1012 || event.code === 1013) {
+          // Attempt to reconnect automatically for common error codes
+          const reconnectCodes = [1000, 1001, 1006, 1012, 1013];
+          if (reconnectCodes.includes(event.code) && 
+              this.reconnectAttempts < this.reconnectionConfig.maxAttempts) {
             this.scheduleReconnect();
           }
         };
@@ -137,11 +186,18 @@ export class AeroNyxSocket extends EventEmitter {
         });
         
         reject(error);
+        
+        // Attempt to reconnect if initialization fails
+        if (this.reconnectAttempts < this.reconnectionConfig.maxAttempts) {
+          this.scheduleReconnect();
+        }
       }
     });
   }
   
-  // Send authentication message to the server
+  /**
+   * Send authentication message to the server
+   */
   private sendAuthMessage() {
     if (!this.socket || !this.publicKey) return;
     
@@ -153,10 +209,22 @@ export class AeroNyxSocket extends EventEmitter {
       nonce: Date.now().toString(),
     };
     
-    this.socket.send(JSON.stringify(authMessage));
+    try {
+      this.socket.send(JSON.stringify(authMessage));
+    } catch (error) {
+      console.error('Error sending auth message:', error);
+      this.emit('error', {
+        type: 'auth',
+        message: 'Failed to send authentication message',
+        code: 'AUTH_ERROR',
+        retry: true
+      });
+    }
   }
   
-  // Handle messages from the server
+  /**
+   * Handle messages from the server
+   */
   private handleServerMessage(data: string | ArrayBuffer | Blob) {
     try {
       // Parse JSON data
@@ -168,8 +236,12 @@ export class AeroNyxSocket extends EventEmitter {
         const reader = new FileReader();
         reader.onload = () => {
           const result = reader.result as string;
-          const parsedMessage = JSON.parse(result);
-          this.processMessage(parsedMessage);
+          try {
+            const parsedMessage = JSON.parse(result);
+            this.processMessage(parsedMessage);
+          } catch (error) {
+            console.error('Error parsing Blob message:', error);
+          }
         };
         reader.readAsText(data);
         return;
@@ -182,11 +254,24 @@ export class AeroNyxSocket extends EventEmitter {
       this.processMessage(message);
     } catch (error) {
       console.error('Error handling server message:', error);
+      this.emit('error', {
+        type: 'message',
+        message: 'Failed to parse server message',
+        code: 'PARSE_ERROR',
+        retry: false
+      });
     }
   }
   
-  // Process parsed message
+  /**
+   * Process parsed message
+   */
   private processMessage(message: any) {
+    if (!message || !message.type) {
+      console.warn('Received message with no type', message);
+      return;
+    }
+    
     switch (message.type) {
       case 'Challenge':
         this.handleChallenge(message);
@@ -217,7 +302,9 @@ export class AeroNyxSocket extends EventEmitter {
     }
   }
   
-  // Handle challenge message
+  /**
+   * Handle authentication challenge
+   */
   private async handleChallenge(message: { id: string, data: number[] | string }) {
     try {
       // Convert challenge data to Uint8Array
@@ -225,7 +312,7 @@ export class AeroNyxSocket extends EventEmitter {
       if (Array.isArray(message.data)) {
         challengeData = new Uint8Array(message.data);
       } else if (typeof message.data === 'string') {
-        // Assuming base64 or base58 encoded string
+        // Try to parse as base58 or base64
         try {
           // Try to parse as base58
           const bs58 = await import('bs58');
@@ -242,13 +329,13 @@ export class AeroNyxSocket extends EventEmitter {
       // Get keypair from localStorage
       const storedKeypair = localStorage.getItem('aero-keypair');
       if (!storedKeypair) {
-        throw new Error('No keypair found');
+        throw new Error('No keypair found for authentication');
       }
       
       const keypair = JSON.parse(storedKeypair);
       const secretKey = await import('bs58').then(bs58 => bs58.decode(keypair.secretKey));
       
-      // Sign challenge with real signature
+      // Sign challenge with proper signature
       const signature = await signChallenge(challengeData, secretKey);
       
       // Send challenge response
@@ -259,18 +346,35 @@ export class AeroNyxSocket extends EventEmitter {
         challenge_id: message.id,
       };
       
-      if (this.socket) {
+      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
         this.socket.send(JSON.stringify(response));
+      } else {
+        console.error('Socket not open when trying to send challenge response');
+        throw new Error('Socket connection not available');
       }
     } catch (error) {
       console.error('Error handling challenge:', error);
-      this.emit('error', error);
+      this.emit('error', {
+        type: 'auth',
+        message: 'Failed to authenticate with server',
+        code: 'AUTH_CHALLENGE_ERROR',
+        details: error instanceof Error ? error.message : 'Unknown error',
+        retry: true
+      });
+      
+      // Attempt reconnection
+      this.scheduleReconnect();
     }
   }
   
-  // Handle IP assignment message
+  /**
+   * Handle IP assignment message after successful authentication
+   */
   private handleIpAssign(message: { ip_address: string, session_id: string, session_key?: string, key_nonce?: string }) {
     try {
+      // Store the session ID
+      this.sessionId = message.session_id;
+      
       // In a real implementation, we would decrypt the session key
       // For now, generate a random session key for testing
       if (message.session_key) {
@@ -296,16 +400,35 @@ export class AeroNyxSocket extends EventEmitter {
         ip: message.ip_address,
         sessionId: message.session_id,
       });
+      
+      // Send any messages that were queued while disconnected
+      this.processPendingMessages();
+      
+      // Notify all waiting connection listeners
+      this.connectionListeners.forEach(listener => listener());
+      this.connectionListeners.clear();
     } catch (error) {
       console.error('Error handling IP assignment:', error);
-      this.emit('error', error);
+      this.emit('error', {
+        type: 'connection',
+        message: 'Failed to complete connection setup',
+        code: 'IP_ASSIGN_ERROR',
+        details: error instanceof Error ? error.message : 'Unknown error',
+        retry: true
+      });
+      
+      this.scheduleReconnect();
     }
   }
   
-  // Handle data packet
+  /**
+   * Handle encrypted data packet
+   */
   private handleDataPacket(message: { encrypted: string, nonce: string, counter: number }) {
     try {
-      if (!this.sessionKey) return;
+      if (!this.sessionKey) {
+        throw new Error('No session key available to decrypt message');
+      }
       
       // Decrypt the message using our session key
       try {
@@ -329,12 +452,14 @@ export class AeroNyxSocket extends EventEmitter {
         } else if (decryptedData.type === 'webrtc-signal') {
           this.emit('webrtcSignal', decryptedData);
         }
-      } catch (error) {
-        console.error('Failed to decrypt data packet:', error);
+      } catch (decryptError) {
+        console.error('Failed to decrypt data packet:', decryptError);
         
         // For development/testing, still emit some data even if decryption fails
         if (process.env.NODE_ENV === 'development') {
           this.simulateDataReceived(message);
+        } else {
+          throw decryptError;
         }
       }
       
@@ -342,10 +467,19 @@ export class AeroNyxSocket extends EventEmitter {
       this.emit('data', message);
     } catch (error) {
       console.error('Error handling data packet:', error);
+      this.emit('error', {
+        type: 'data',
+        message: 'Failed to process data packet',
+        code: 'DATA_ERROR',
+        details: error instanceof Error ? error.message : 'Unknown error',
+        retry: false
+      });
     }
   }
   
-  // Handle ping message
+  /**
+   * Handle server ping message
+   */
   private handlePing(message: { timestamp: number, sequence: number }) {
     try {
       // Send pong response
@@ -364,13 +498,27 @@ export class AeroNyxSocket extends EventEmitter {
     }
   }
   
-  // Handle error message
+  /**
+   * Handle error message from server
+   */
   private handleError(message: { message: string, code?: number }) {
-    console.error('Server error:', message.message);
-    this.emit('error', new Error(message.message));
+    console.error('Server error:', message.message, message.code);
+    this.emit('error', {
+      type: 'server',
+      message: message.message,
+      code: message.code ? `SERVER_${message.code}` : 'SERVER_ERROR',
+      retry: message.code ? message.code < 5000 : true // Retry for non-fatal errors
+    });
+    
+    // For certain error codes, we might want to reconnect
+    if (message.code && [1001, 1002, 1003].includes(message.code)) {
+      this.scheduleReconnect();
+    }
   }
   
-  // Handle disconnect message
+  /**
+   * Handle disconnect message from server
+   */
   private handleDisconnect(message: { reason: number, message: string }) {
     this.isConnected = false;
     this.emit('disconnected', message.reason, message.message);
@@ -378,10 +526,18 @@ export class AeroNyxSocket extends EventEmitter {
     
     if (this.socket) {
       this.socket.close();
+      this.socket = null;
+    }
+    
+    // If reason is non-fatal, attempt to reconnect
+    if (message.reason < 4000) { // Non-fatal error codes
+      this.scheduleReconnect();
     }
   }
   
-  // Start ping interval to keep connection alive
+  /**
+   * Start ping interval to keep connection alive
+   */
   private startPingInterval() {
     this.stopPingInterval();
     
@@ -390,7 +546,9 @@ export class AeroNyxSocket extends EventEmitter {
     }, 30000); // Send ping every 30 seconds
   }
   
-  // Stop ping interval
+  /**
+   * Stop ping interval
+   */
   private stopPingInterval() {
     if (this.pingInterval) {
       clearInterval(this.pingInterval);
@@ -398,38 +556,111 @@ export class AeroNyxSocket extends EventEmitter {
     }
   }
   
-  // Send ping to keep connection alive
+  /**
+   * Send ping to keep connection alive
+   */
   private sendPing() {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
     
-    const ping = {
-      type: 'Ping',
-      timestamp: Date.now(),
-      sequence: this.messageCounter++,
-    };
-    
-    this.socket.send(JSON.stringify(ping));
+    try {
+      const ping = {
+        type: 'Ping',
+        timestamp: Date.now(),
+        sequence: this.messageCounter++,
+      };
+      
+      this.socket.send(JSON.stringify(ping));
+    } catch (error) {
+      console.error('Error sending ping:', error);
+      // If we can't send a ping, the connection might be dead
+      this.checkConnectionHealth();
+    }
   }
   
-  // Schedule reconnection attempt
+  /**
+   * Check if the connection is healthy
+   */
+  private checkConnectionHealth() {
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      // Connection appears fine
+      return;
+    }
+    
+    // Connection unhealthy, attempt to reconnect
+    this.isConnected = false;
+    this.emit('connectionStatus', 'disconnected');
+    
+    if (this.socket) {
+      try {
+        this.socket.close();
+      } catch (e) {
+        // Ignore errors when closing an already broken socket
+      }
+      this.socket = null;
+    }
+    
+    this.scheduleReconnect();
+  }
+  
+  /**
+   * Schedule reconnection attempt with exponential backoff
+   */
   private scheduleReconnect() {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
     }
     
-    const delay = Math.min(30000, 1000 * Math.pow(2, this.reconnectAttempts));
+    // Don't reconnect if we've reached max attempts
+    if (this.reconnectAttempts >= this.reconnectionConfig.maxAttempts) {
+      console.log(`Max reconnection attempts (${this.reconnectionConfig.maxAttempts}) reached`);
+      this.emit('error', {
+        type: 'connection',
+        message: `Failed to reconnect after ${this.reconnectionConfig.maxAttempts} attempts`,
+        code: 'MAX_RECONNECT',
+        retry: false
+      });
+      return;
+    }
+    
+    // Calculate backoff delay with exponential increase
+    const baseDelay = Math.min(
+      this.reconnectionConfig.maxDelay,
+      this.reconnectionConfig.initialDelay * Math.pow(2, this.reconnectAttempts)
+    );
+    
+    // Add jitter to prevent thundering herd
+    const jitter = this.reconnectionConfig.jitter ? 
+      (Math.random() * 0.3 + 0.85) : // 0.85-1.15 randomization factor
+      1;
+    
+    const delay = Math.floor(baseDelay * jitter);
+    
+    console.log(`Scheduling reconnection attempt ${this.reconnectAttempts + 1} in ${delay}ms`);
+    
+    this.emit('reconnecting', {
+      attempt: this.reconnectAttempts + 1,
+      maxAttempts: this.reconnectionConfig.maxAttempts,
+      delay
+    });
     
     this.reconnectTimeout = setTimeout(() => {
       if (this.chatId && this.publicKey) {
         this.reconnectAttempts++;
-        this.connect(this.chatId, this.publicKey).catch(console.error);
+        this.connect(this.chatId, this.publicKey).catch(error => {
+          console.error('Reconnection attempt failed:', error);
+        });
       }
     }, delay);
   }
   
-  // Send a message to the chat
+  /**
+   * Send a message to the chat
+   * @returns Promise that resolves when the message is sent (or queued if offline)
+   */
   async sendMessage(message: MessageType): Promise<boolean> {
+    // If not connected, queue message and return false
     if (!this.socket || !this.isConnected || !this.sessionKey) {
+      this.queueMessage('message', message);
       return false;
     }
     
@@ -460,13 +691,69 @@ export class AeroNyxSocket extends EventEmitter {
       return true;
     } catch (error) {
       console.error('Error sending message:', error);
+      
+      // Queue message for retry
+      this.queueMessage('message', message);
+      
+      this.emit('error', {
+        type: 'message',
+        message: 'Failed to send message',
+        code: 'SEND_ERROR',
+        retry: true,
+        originalError: error
+      });
+      
       return false;
     }
   }
   
-  // Send arbitrary data
-  send(data: any): boolean {
+  /**
+   * Queue a message to be sent when connection is restored
+   */
+  private queueMessage(type: string, data: any) {
+    this.pendingMessages.push({ type, data });
+    
+    // Limit queue size to prevent memory issues
+    if (this.pendingMessages.length > 100) {
+      this.pendingMessages.shift(); // Remove oldest message
+    }
+    
+    console.log(`Message queued. Total pending messages: ${this.pendingMessages.length}`);
+  }
+  
+  /**
+   * Process any pending messages
+   */
+  private processPendingMessages() {
+    if (this.pendingMessages.length === 0) return;
+    
+    console.log(`Processing ${this.pendingMessages.length} pending messages`);
+    
+    // Create a copy and clear the queue to prevent requeuing the same messages
+    const messagesToSend = [...this.pendingMessages];
+    this.pendingMessages = [];
+    
+    // Send each message
+    messagesToSend.forEach(async ({ type, data }) => {
+      try {
+        if (type === 'message') {
+          await this.sendMessage(data);
+        } else if (type === 'data') {
+          await this.send(data);
+        }
+      } catch (error) {
+        console.error('Error sending queued message:', error);
+      }
+    });
+  }
+  
+  /**
+   * Send arbitrary data
+   * @returns Promise that resolves when the data is sent
+   */
+  async send(data: any): Promise<boolean> {
     if (!this.socket || !this.isConnected || !this.sessionKey) {
+      this.queueMessage('data', data);
       return false;
     }
     
@@ -487,16 +774,71 @@ export class AeroNyxSocket extends EventEmitter {
       return true;
     } catch (error) {
       console.error('Error sending data:', error);
+      
+      this.queueMessage('data', data);
+      
+      this.emit('error', {
+        type: 'data',
+        message: 'Failed to send data',
+        code: 'SEND_DATA_ERROR',
+        retry: true,
+        originalError: error
+      });
+      
       return false;
     }
   }
   
-  // Request chat information
-  async requestChatInfo(): Promise<void> {
+  /**
+   * Wait for connection to be established
+   * @param timeoutMs Timeout in milliseconds (default 10000 - 10 seconds)
+   * @returns Promise that resolves when connected or rejects on timeout
+   */
+  waitForConnection(timeoutMs: number = 10000): Promise<void> {
     return new Promise((resolve, reject) => {
-      if (!this.socket || !this.isConnected) {
-        reject(new Error('Not connected'));
+      // If already connected, resolve immediately
+      if (this.isConnected) {
+        resolve();
         return;
+      }
+      
+      // Add listener for connection
+      const connectionListener = () => {
+        resolve();
+      };
+      
+      this.connectionListeners.add(connectionListener);
+      
+      // Add timeout
+      const timeout = setTimeout(() => {
+        this.connectionListeners.delete(connectionListener);
+        reject(new Error('Timed out waiting for connection'));
+      }, timeoutMs);
+      
+      // Also listen for the 'connected' event directly
+      const connectedHandler = () => {
+        clearTimeout(timeout);
+        this.connectionListeners.delete(connectionListener);
+        this.off('connected', connectedHandler);
+        resolve();
+      };
+      
+      this.once('connected', connectedHandler);
+    });
+  }
+  
+  /**
+   * Request chat information
+   */
+  async requestChatInfo(): Promise<void> {
+    return new Promise(async (resolve, reject) => {
+      if (!this.isConnected) {
+        try {
+          await this.waitForConnection();
+        } catch (error) {
+          reject(new Error('Not connected when requesting chat info'));
+          return;
+        }
       }
       
       // Set up one-time listener for chatInfo
@@ -514,7 +856,7 @@ export class AeroNyxSocket extends EventEmitter {
       }, 5000);
       
       // Send request
-      const success = this.send({ type: 'request-chat-info' });
+      const success = await this.send({ type: 'request-chat-info' });
       
       if (!success) {
         clearTimeout(timeout);
@@ -524,12 +866,18 @@ export class AeroNyxSocket extends EventEmitter {
     });
   }
   
-  // Request participants list
+  /**
+   * Request participants list
+   */
   async requestParticipants(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket || !this.isConnected) {
-        reject(new Error('Not connected'));
-        return;
+    return new Promise(async (resolve, reject) => {
+      if (!this.isConnected) {
+        try {
+          await this.waitForConnection();
+        } catch (error) {
+          reject(new Error('Not connected when requesting participants'));
+          return;
+        }
       }
       
       // Set up one-time listener for participants
@@ -547,7 +895,7 @@ export class AeroNyxSocket extends EventEmitter {
       }, 5000);
       
       // Send request
-      const success = this.send({ type: 'request-participants' });
+      const success = await this.send({ type: 'request-participants' });
       
       if (!success) {
         clearTimeout(timeout);
@@ -557,31 +905,44 @@ export class AeroNyxSocket extends EventEmitter {
     });
   }
   
-  // Leave the chat
+  /**
+   * Leave the chat gracefully
+   */
   async leaveChat(): Promise<void> {
     if (!this.socket || !this.isConnected) {
       return;
     }
     
-    const leaveMessage = {
-      type: 'Disconnect',
-      reason: 0, // User initiated
-      message: 'User left the chat',
-    };
-    
-    this.socket.send(JSON.stringify(leaveMessage));
-    this.disconnect();
+    try {
+      const leaveMessage = {
+        type: 'Disconnect',
+        reason: 0, // User initiated
+        message: 'User left the chat',
+      };
+      
+      // Send disconnect message if socket is open
+      if (this.socket.readyState === WebSocket.OPEN) {
+        this.socket.send(JSON.stringify(leaveMessage));
+      }
+    } catch (error) {
+      console.error('Error sending leave message:', error);
+    } finally {
+      // Always clean up resources
+      this.disconnect();
+    }
   }
   
-  // Delete the chat (if creator)
+  /**
+   * Delete the chat (if creator)
+   */
   async deleteChat(): Promise<void> {
     if (!this.socket || !this.isConnected) {
       throw new Error('Not connected');
     }
     
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       try {
-        const success = this.send({ type: 'delete-chat' });
+        const success = await this.send({ type: 'delete-chat' });
         if (success) {
           resolve();
         } else {
@@ -593,7 +954,9 @@ export class AeroNyxSocket extends EventEmitter {
     });
   }
   
-  // Disconnect from the server
+  /**
+   * Disconnect from the server
+   */
   disconnect() {
     this.isConnected = false;
     this.stopPingInterval();
@@ -604,19 +967,43 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     if (this.socket) {
-      this.socket.close();
+      // Only try to close if the socket is not already closed
+      if (this.socket.readyState !== WebSocket.CLOSED && 
+          this.socket.readyState !== WebSocket.CLOSING) {
+        try {
+          this.socket.close(1000, "Normal closure");
+        } catch (e) {
+          console.error('Error closing socket:', e);
+        }
+      }
       this.socket = null;
     }
     
+    this.sessionKey = null;
     this.emit('connectionStatus', 'disconnected');
   }
   
-  // Check if connected
+  /**
+   * Check if connected
+   */
   isActive(): boolean {
-    return this.isConnected && !!this.socket;
+    return this.isConnected && 
+           !!this.socket && 
+           this.socket.readyState === WebSocket.OPEN;
   }
   
-  // For development and testing: simulate connection (mock server)
+  /**
+   * Get connection status
+   */
+  getConnectionState(): 'connected' | 'connecting' | 'disconnected' {
+    if (this.isConnected) return 'connected';
+    if (this.connecting) return 'connecting';
+    return 'disconnected';
+  }
+  
+  /**
+   * For development and testing: simulate connection (mock server)
+   */
   private simulateConnection() {
     // Mock successful connection
     setTimeout(() => {
@@ -665,11 +1052,20 @@ export class AeroNyxSocket extends EventEmitter {
       
       // Start ping interval (just for simulation)
       this.startPingInterval();
+      
+      // Notify all waiting connection listeners
+      this.connectionListeners.forEach(listener => listener());
+      this.connectionListeners.clear();
     }, 500);
   }
   
-  // For development and testing: simulate receiving data
+  /**
+   * For development and testing: simulate receiving data
+   */
   private simulateDataReceived(message: any) {
+    // Only simulate in development mode
+    if (process.env.NODE_ENV !== 'development') return;
+    
     // Mock message based on counter for variety
     const mockContent = `This is a simulated message #${message.counter || 0}`;
     const mockSenderId = message.counter % 2 === 0 ? 'mock-user-1' : this.publicKey || 'unknown';
