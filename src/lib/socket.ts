@@ -713,35 +713,56 @@ export class AeroNyxSocket extends EventEmitter {
         const secretKey = bs58.decode(keypair.secretKey);
         const serverPublicKey = bs58.decode(this.serverPublicKey);
         
-        // For Ed25519 secret keys, we need to use the first 32 bytes for X25519
-        const secretKeyX25519 = secretKey.slice(0, 32);
-        
-        // Compute shared secret using scalar multiplication (ECDH)
-        const sharedSecret = nacl.scalarMult(secretKeyX25519, serverPublicKey);
-        
-        // Decode the encrypted session key and nonce
-        const encryptedSessionKey = bs58.decode(message.session_key);
-        const keyNonce = bs58.decode(message.key_nonce);
-        
-        // Decrypt the session key using the shared secret
-        const decryptedSessionKey = nacl.secretbox.open(
-          encryptedSessionKey,
-          keyNonce,
-          sharedSecret
-        );
-        
-        if (!decryptedSessionKey) {
-          throw new Error('Failed to decrypt session key');
+        try {
+          // For Ed25519 secret keys, we need to use the first 32 bytes for X25519
+          const secretKeyX25519 = secretKey.slice(0, 32);
+          
+          // Compute shared secret using scalar multiplication (ECDH)
+          const sharedSecret = nacl.scalarMult(secretKeyX25519, serverPublicKey);
+          
+          // Decode the encrypted session key and nonce
+          const encryptedSessionKey = bs58.decode(message.session_key);
+          const keyNonce = bs58.decode(message.key_nonce);
+          
+          // Log key sizes for debugging
+          console.log('[Socket] Session key exchange details:', {
+            encryptedKeyLength: encryptedSessionKey.length,
+            nonceLength: keyNonce.length,
+            sharedSecretLength: sharedSecret.length,
+          });
+          
+          // Create a padded nonce if needed (server sends 12 bytes, TweetNaCl expects 24)
+          let keyNonceForDecryption = keyNonce;
+          if (keyNonce.length === 12) {
+            const paddedKeyNonce = new Uint8Array(24);
+            paddedKeyNonce.set(keyNonce);
+            keyNonceForDecryption = paddedKeyNonce;
+          }
+          
+          // Decrypt the session key using the shared secret
+          const decryptedSessionKey = nacl.secretbox.open(
+            encryptedSessionKey,
+            keyNonceForDecryption,
+            sharedSecret
+          );
+          
+          if (!decryptedSessionKey) {
+            throw new Error('Failed to decrypt session key - authentication failed');
+          }
+          
+          // Store the session key for encrypting/decrypting messages
+          this.sessionKey = decryptedSessionKey;
+          console.log('[Socket] Successfully decrypted session key, length:', decryptedSessionKey.length);
+        } catch (error) {
+          console.error('[Socket] Error decrypting session key:', error);
+          throw error; // Re-throw after logging
         }
-        
-        // Store the session key for encrypting/decrypting messages
-        this.sessionKey = decryptedSessionKey;
-        console.log('[Socket] Successfully decrypted session key');
       } else {
         // If session key is missing, generate a random one for development
-        // or when server doesn't provide a proper key
         console.warn('[Socket] No session key or nonce provided by server, generating random key');
-        this.sessionKey = generateSessionKey();
+        this.sessionKey = nacl.randomBytes(32); // Use 32 bytes (256 bits) for the session key
+        
+        console.log('[Socket] Generated random session key of length:', this.sessionKey.length);
       }
       
       this.isConnected = true;
@@ -801,9 +822,7 @@ export class AeroNyxSocket extends EventEmitter {
     const encoder = new TextEncoder();
     const messageUint8 = encoder.encode(jsonData);
     
-    // Generate random nonce - IMPORTANT: Use 12 bytes for ChaCha20-Poly1305 as expected by server
-    // NOTE: nacl.secretbox uses XSalsa20-Poly1305 which typically requires 24-byte nonce,
-    // but our server expects 12 bytes for ChaCha20-Poly1305
+    // Generate a 12-byte nonce as required by the server's ChaCha20-Poly1305 implementation
     const nonce = new Uint8Array(12);
     if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
       window.crypto.getRandomValues(nonce);
@@ -814,29 +833,26 @@ export class AeroNyxSocket extends EventEmitter {
       }
     }
     
-    // For this special case, we need to adapt our encryption to work with 12-byte nonces
-    // We'll use a modified version of secretbox that works with 12-byte nonces
-    // This is a bit of a hack but necessary for compatibility with the server
     try {
-      // Adapt the key and nonce for nacl.secretbox
-      // We'll use the first 32 bytes of our key (which should be 32 bytes already)
-      const adaptedKey = this.sessionKey.length > 32 
-        ? this.sessionKey.slice(0, 32) 
-        : this.sessionKey;
+      // Create a 24-byte nonce for TweetNaCl by padding the original 12-byte nonce with zeros
+      const paddedNonce = new Uint8Array(nacl.secretbox.nonceLength);
+      paddedNonce.set(nonce); // Copy the first 12 bytes, leaving the rest as zeros
       
-      // Create a 24-byte nonce by padding our 12-byte nonce
-      const paddedNonce = new Uint8Array(24);
-      paddedNonce.set(nonce);  // This puts the 12-byte nonce at the beginning
+      // Use the session key for encryption (ensuring it's 32 bytes for TweetNaCl)
+      const key = this.sessionKey.length === 32 ? 
+        this.sessionKey : 
+        (this.sessionKey.length > 32 ? 
+          this.sessionKey.slice(0, 32) : 
+          new Uint8Array(32).set(this.sessionKey));
       
-      // Encrypt with nacl.secretbox using the padded nonce
-      const encrypted = nacl.secretbox(messageUint8, paddedNonce, adaptedKey);
+      // Encrypt the data using TweetNaCl's secretbox
+      const encrypted = nacl.secretbox(messageUint8, paddedNonce, key);
       
       if (!encrypted) {
-        throw new Error('Encryption failed');
+        throw new Error('Encryption failed - could not produce ciphertext');
       }
       
-      // Return the encrypted data with the ORIGINAL 12-byte nonce
-      // This is what the server expects to receive
+      // Return the encrypted data and the ORIGINAL 12-byte nonce for the server
       return {
         encrypted,
         nonce
@@ -859,20 +875,46 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     try {
-      // Adapt the nonce size for nacl.secretbox.open which expects 24 bytes
-      // but our server sends 12 bytes
-      const paddedNonce = new Uint8Array(24);
-      paddedNonce.set(nonce); // This puts the 12-byte nonce at the beginning
+      // Validate the nonce size - server should be sending 12-byte nonces
+      if (nonce.length !== 12) {
+        console.warn(`[Socket] Unexpected nonce length from server: ${nonce.length} bytes (expected 12)`);
+        // If the nonce is not 12 bytes but is 24 bytes, we might try to use only the first 12 bytes
+        if (nonce.length === 24) {
+          nonce = nonce.slice(0, 12);
+        } else {
+          throw new Error(`Invalid nonce length: ${nonce.length} (expected 12 bytes)`);
+        }
+      }
       
-      // Adapt the key (ensure it's 32 bytes)
-      const adaptedKey = this.sessionKey.length > 32 
-        ? this.sessionKey.slice(0, 32) 
-        : this.sessionKey;
+      // Create a 24-byte nonce for TweetNaCl by padding the original 12-byte nonce with zeros
+      const paddedNonce = new Uint8Array(nacl.secretbox.nonceLength);
+      paddedNonce.set(nonce); // Copy the 12-byte nonce, leaving the rest as zeros
       
-      // Decrypt the data with session key using the padded nonce
-      const decrypted = nacl.secretbox.open(encrypted, paddedNonce, adaptedKey);
+      // Ensure the key is the right size for TweetNaCl (32 bytes)
+      const key = this.sessionKey.length === 32 ? 
+        this.sessionKey : 
+        (this.sessionKey.length > 32 ? 
+          this.sessionKey.slice(0, 32) : 
+          (() => {
+            const fullKey = new Uint8Array(32);
+            fullKey.set(this.sessionKey);
+            return fullKey;
+          })());
+      
+      // Decrypt using TweetNaCl's secretbox
+      const decrypted = nacl.secretbox.open(encrypted, paddedNonce, key);
       
       if (!decrypted) {
+        // Log details for debugging
+        console.error('[Socket] Decryption failed - authentication tag mismatch or corrupted data');
+        console.debug('[Socket] Decryption details:', {
+          encryptedLength: encrypted.length,
+          nonceLength: nonce.length,
+          paddedNonceLength: paddedNonce.length,
+          keyLength: key.length,
+          // Don't log the actual key or nonce values for security reasons
+        });
+        
         throw new Error('Decryption failed - data may be corrupted or tampered with');
       }
       
@@ -1305,6 +1347,14 @@ export class AeroNyxSocket extends EventEmitter {
       // Encrypt the data with session key
       const { encrypted, nonce } = await this.encryptData(data);
       
+      // Log details of packet being sent (excluding sensitive data)
+      console.debug('[Socket] Sending encrypted packet:', {
+        dataType: data.type,
+        encryptedSize: encrypted.length,
+        nonceSize: nonce.length,
+        counter: this.messageCounter,
+      });
+      
       // Create data packet with the correct format
       const dataPacket = {
         type: 'Data',
@@ -1313,6 +1363,13 @@ export class AeroNyxSocket extends EventEmitter {
         counter: this.messageCounter++,
         padding: null // Optional padding for length concealment
       };
+      
+      // Check socket is still connected
+      if (this.socket.readyState !== WebSocket.OPEN) {
+        console.error('[Socket] Socket closed while preparing to send data');
+        this.queueMessage('data', data);
+        return false;
+      }
       
       // Send the packet
       this.socket.send(JSON.stringify(dataPacket));
@@ -1332,6 +1389,14 @@ export class AeroNyxSocket extends EventEmitter {
         originalError: error
       });
       
+      // Check if the socket is still valid - if not, try to reconnect
+      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+        console.warn('[Socket] Socket no longer open, will attempt reconnection');
+        if (this.autoReconnect) {
+          this.reconnect();
+        }
+      }
+      
       return false;
     }
   }
@@ -1343,8 +1408,14 @@ export class AeroNyxSocket extends EventEmitter {
    */
   async sendMessage(message: MessageType): Promise<boolean> {
     // If not connected, queue message and return false
-    if (!this.socket || !this.isConnected || !this.sessionKey) {
-      console.log('[Socket] Not connected or missing session key, queueing message');
+    if (!this.socket || !this.isConnected) {
+      console.log('[Socket] Not connected, queueing message');
+      this.queueMessage('message', message);
+      return false;
+    }
+    
+    if (!this.sessionKey) {
+      console.error('[Socket] Cannot send message: missing session key');
       this.queueMessage('message', message);
       return false;
     }
@@ -1361,7 +1432,14 @@ export class AeroNyxSocket extends EventEmitter {
       };
       
       // Use our encryption method
-      return await this.send(messageData);
+      const success = await this.send(messageData);
+      
+      // If send was successful, log it
+      if (success) {
+        console.log('[Socket] Message sent successfully');
+      }
+      
+      return success;
     } catch (error) {
       console.error('[Socket] Error sending message:', error);
       
