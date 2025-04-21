@@ -361,6 +361,8 @@ export class AeroNyxSocket extends EventEmitter {
     server_public_key?: string // Server may send its public key for ECDH
   }): Promise<void> {
     try {
+      console.log('Received authentication challenge, ID:', message.id);
+      
       // Store server public key for later ECDH key exchange
       if (message.server_public_key) {
         this.serverPublicKey = message.server_public_key;
@@ -371,19 +373,29 @@ export class AeroNyxSocket extends EventEmitter {
       let challengeData: Uint8Array;
       if (Array.isArray(message.data)) {
         challengeData = new Uint8Array(message.data);
+        console.log('Challenge data is array, length:', challengeData.length);
       } else if (typeof message.data === 'string') {
         // Try to parse as base58 or base64
         try {
           // Try to parse as base58
           challengeData = bs58.decode(message.data);
+          console.log('Challenge data decoded as base58, length:', challengeData.length);
         } catch {
           // Fallback to base64
           const buffer = Buffer.from(message.data, 'base64');
           challengeData = new Uint8Array(buffer);
+          console.log('Challenge data decoded as base64, length:', challengeData.length);
         }
       } else {
         throw new Error('Invalid challenge data format');
       }
+      
+      // Detailed challenge data logging
+      console.log('Challenge data (first 16 bytes):', 
+        Array.from(challengeData.slice(0, 16))
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join(' ')
+      );
       
       // Get keypair from localStorage
       const storedKeypair = localStorage.getItem('aero-keypair');
@@ -392,10 +404,22 @@ export class AeroNyxSocket extends EventEmitter {
       }
       
       const keypair = JSON.parse(storedKeypair);
+      console.log('Using keypair with public key:', keypair.publicKey.substring(0, 10) + '...');
+      
+      // Decode the secret key
       const secretKey = bs58.decode(keypair.secretKey);
+      console.log('Secret key length:', secretKey.length);
+      
+      // For debugging, check first few bytes of the secret key
+      console.log('Secret key (first 8 bytes):', 
+        Array.from(secretKey.slice(0, 8))
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join(' ')
+      );
       
       // Sign challenge with proper signature
       const signature = await signChallenge(challengeData, secretKey);
+      console.log('Generated signature (base58, first part):', signature.substring(0, 15) + '...');
       
       // Send challenge response
       const response = {
@@ -407,6 +431,7 @@ export class AeroNyxSocket extends EventEmitter {
       
       if (this.socket && this.socket.readyState === WebSocket.OPEN) {
         this.socket.send(JSON.stringify(response));
+        console.log('Challenge response sent successfully');
       } else {
         console.error('Socket not open when trying to send challenge response');
         throw new Error('Socket connection not available');
@@ -424,7 +449,7 @@ export class AeroNyxSocket extends EventEmitter {
       // Attempt reconnection
       this.scheduleReconnect();
     }
-  }
+}
   
   /**
    * Handle IP assignment message after successful authentication
