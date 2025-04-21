@@ -146,15 +146,17 @@ const nextConfig = {
     ];
   },
   
-  // Experimental features - enabled selectively
+  // Experimental features - updated to use valid options for Next.js 13.5.11
   experimental: {
     // Enable modern JavaScript features
     esmExternals: true,
-    // Optimize font loading
-    optimizeFonts: true,
     // Enable scroll restoration for maintaining scroll position
     scrollRestoration: true,
+    // Remove optimizeFonts as it's now moved to the main config
   },
+  
+  // Optimize font loading (moved from experimental)
+  optimizeFonts: true,
   
   // Power of 10 incremental builds to improve performance
   poweredByHeader: false,
