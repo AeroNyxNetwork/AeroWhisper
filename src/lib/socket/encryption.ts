@@ -617,13 +617,55 @@ export async function decryptData(
  */
 export async function signChallenge(challenge: Uint8Array, secretKey: Uint8Array): Promise<string> {
     try {
+        // Detailed logging to help debug the challenge and signature process
+        console.log('[Socket] Challenge signing details:', {
+            challengeLength: challenge.length,
+            challengePrefix: Array.from(challenge.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''),
+            secretKeyLength: secretKey.length
+        });
+
+        // Ensure we have a valid challenge and secret key
+        if (challenge.length === 0) {
+            throw new Error('Empty challenge data');
+        }
+
+        if (secretKey.length !== 64) {
+            throw new Error(`Invalid Ed25519 secret key length: ${secretKey.length} (expected 64 bytes)`);
+        }
+
         // Sign the challenge using Ed25519
+        // Make sure we're using the correct format for the secret key that TweetNaCl expects
         const signature = nacl.sign.detached(challenge, secretKey);
         
         // Convert signature to base58 string for transmission
-        return bs58.encode(signature);
+        const signatureBase58 = bs58.encode(signature);
+
+        console.log('[Socket] Generated signature:', {
+            signatureLength: signature.length,
+            signatureBase58Length: signatureBase58.length,
+            signatureBase58Prefix: signatureBase58.substring(0, 10)
+        });
+
+        return signatureBase58;
     } catch (error) {
         console.error('[Socket] Error signing challenge:', error);
+        
+        // More detailed error reporting with available data
+        if (challenge) {
+            console.debug('[Socket] Challenge data:', {
+                type: challenge.constructor.name,
+                length: challenge.length,
+                sample: challenge.length > 0 ? Array.from(challenge.slice(0, Math.min(10, challenge.length))) : 'empty'
+            });
+        }
+        
+        if (secretKey) {
+            console.debug('[Socket] Secret key info:', {
+                type: secretKey.constructor.name,
+                length: secretKey.length
+            });
+        }
+        
         throw error;
     }
 }
@@ -639,15 +681,45 @@ export async function generateSessionKey(
     clientSecretKey: Uint8Array
 ): Promise<Uint8Array> {
     try {
+        // Enhanced logging for ECDH key exchange debugging
+        console.log('[Socket] Generating session key with ECDH:', {
+            serverPublicKeyLength: serverPublicKey.length,
+            clientSecretKeyLength: clientSecretKey.length
+        });
+
         // For Ed25519 secret keys, we need to use the first 32 bytes for X25519
         const secretKeyX25519 = clientSecretKey.slice(0, 32);
         
         // Perform X25519 key exchange to derive shared secret
         const sharedSecret = nacl.scalarMult(secretKeyX25519, serverPublicKey);
         
+        console.log('[Socket] Generated shared secret:', {
+            sharedSecretLength: sharedSecret.length,
+            sharedSecretPrefix: Array.from(sharedSecret.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('')
+        });
+        
         return sharedSecret;
     } catch (error) {
         console.error('[Socket] Error generating session key:', error);
+        
+        // More detailed error reporting
+        if (serverPublicKey) {
+            console.debug('[Socket] Server public key info:', {
+                type: serverPublicKey.constructor.name,
+                length: serverPublicKey.length,
+                sample: serverPublicKey.length > 0 ? 
+                    Array.from(serverPublicKey.slice(0, Math.min(4, serverPublicKey.length)))
+                        .map(b => b.toString(16).padStart(2, '0')).join('') : 'empty'
+            });
+        }
+        
+        if (clientSecretKey) {
+            console.debug('[Socket] Client secret key info:', {
+                type: clientSecretKey.constructor.name,
+                length: clientSecretKey.length
+            });
+        }
+        
         throw error;
     }
 }
