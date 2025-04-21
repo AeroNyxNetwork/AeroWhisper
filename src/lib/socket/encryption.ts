@@ -1,7 +1,7 @@
 import * as nacl from 'tweetnacl';
 import * as bs58 from 'bs58';
 // Import the ChaCha20-Poly1305 implementation
-import { chacha20poly1305, xchacha20poly1305 } from '@noble/ciphers/chacha';
+import { chacha20poly1305 } from '@noble/ciphers/chacha';
 
 /**
  * ChaCha20-Poly1305 encryption function compatible with Rust's chacha20poly1305 crate
@@ -11,12 +11,12 @@ import { chacha20poly1305, xchacha20poly1305 } from '@noble/ciphers/chacha';
  * @returns Encrypted data (ciphertext + auth tag)
  */
 function chacha20poly1305Encrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8Array): Uint8Array {
-  // According to @noble/ciphers docs, we need to provide the key and possibly additional options
-  const chacha = chacha20poly1305(key, {});
+  // Create a ChaCha20-Poly1305 instance with the key
+  const cipher = chacha20poly1305(key);
   
   // Encrypt the data with the nonce
   // Note: @noble/ciphers follows the RFC 8439 standard which is compatible with Rust's implementation
-  return chacha.seal(nonce, data);
+  return cipher.seal(nonce, data);
 }
 
 /**
@@ -29,11 +29,11 @@ function chacha20poly1305Encrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8
 function chacha20poly1305Decrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8Array): Uint8Array | null {
   try {
     // Create a ChaCha20-Poly1305 instance with the key
-    const chacha = chacha20poly1305(key, {});
+    const cipher = chacha20poly1305(key);
     
     // Decrypt and verify the data
     // This will throw an error if the authentication tag doesn't match
-    return chacha.open(nonce, data);
+    return cipher.open(nonce, data);
   } catch (error) {
     console.error('[Socket] ChaCha20-Poly1305 authentication failed:', error);
     return null;
