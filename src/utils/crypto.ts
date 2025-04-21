@@ -76,10 +76,11 @@ class CryptoHelper {
     password: string, 
     salt: Uint8Array
   ): Promise<Uint8Array> {
+    const encoder = new TextEncoder();
+    
     if (this.webCryptoSupported) {
       try {
         // Convert password to bytes
-        const encoder = new TextEncoder();
         const passwordBytes = encoder.encode(password);
         
         // Import the password as a key
@@ -116,7 +117,6 @@ class CryptoHelper {
       }
     } else {
       // Use TweetNaCl
-      const encoder = new TextEncoder();
       const hashKey = nacl.hash(new Uint8Array([...encoder.encode(password), ...salt]));
       return hashKey.slice(0, nacl.secretbox.keyLength);
     }
