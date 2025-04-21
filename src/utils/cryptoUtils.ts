@@ -50,13 +50,11 @@ export function generateNonce(): Uint8Array {
  * Encrypts data using AES-GCM
  * @param data Data to encrypt (string or Uint8Array)
  * @param key AES-GCM key (32 bytes)
- * @param aad Optional additional authenticated data
  * @returns Promise resolving to object containing encrypted data and nonce
  */
 export async function encryptWithAesGcm(
   data: string | Uint8Array,
-  key: Uint8Array,
-  aad?: Uint8Array
+  key: Uint8Array
 ): Promise<{ ciphertext: Uint8Array; nonce: Uint8Array }> {
   if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
     throw new Error('Web Crypto API not available');
@@ -84,17 +82,12 @@ export async function encryptWithAesGcm(
       ['encrypt']
     );
     
-    // Create encryption params without additionalData by default
+    // Encrypt the data without additional authenticated data
     const encryptParams: AesGcmParams = {
       name: 'AES-GCM',
       iv: nonce,
       tagLength: 128 // 16 bytes authentication tag
     };
-    
-    // Only add additionalData if it's provided and valid
-    if (aad && aad instanceof Uint8Array && aad.byteLength > 0) {
-      encryptParams.additionalData = aad;
-    }
     
     // Encrypt the data
     const encryptedBuffer = await window.crypto.subtle.encrypt(
@@ -118,7 +111,6 @@ export async function encryptWithAesGcm(
  * @param ciphertext Encrypted data
  * @param nonce Nonce used for encryption (12 bytes)
  * @param key AES-GCM key (32 bytes)
- * @param aad Optional additional authenticated data
  * @param outputType Whether to return result as 'string' or 'binary'
  * @returns Promise resolving to decrypted data
  */
@@ -126,7 +118,6 @@ export async function decryptWithAesGcm(
   ciphertext: Uint8Array,
   nonce: Uint8Array,
   key: Uint8Array,
-  aad?: Uint8Array,
   outputType: 'string' | 'binary' = 'binary'
 ): Promise<Uint8Array | string> {
   if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
@@ -151,17 +142,12 @@ export async function decryptWithAesGcm(
       ['decrypt']
     );
     
-    // Create decryption params without additionalData by default
+    // Decrypt without additional authenticated data
     const decryptParams: AesGcmParams = {
       name: 'AES-GCM',
       iv: nonce,
       tagLength: 128 // 16 bytes authentication tag
     };
-    
-    // Only add additionalData if it's provided and valid
-    if (aad && aad instanceof Uint8Array && aad.byteLength > 0) {
-      decryptParams.additionalData = aad;
-    }
     
     // Decrypt the data
     const decryptedBuffer = await window.crypto.subtle.decrypt(
