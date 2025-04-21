@@ -1,7 +1,6 @@
 import * as nacl from 'tweetnacl';
 import * as bs58 from 'bs58';
-// Import the ChaCha20-Poly1305 implementation
-import { chacha20poly1305 } from '@noble/ciphers/chacha';
+import crypto from 'crypto';
 
 /**
  * ChaCha20-Poly1305 encryption function compatible with Rust's chacha20poly1305 crate
@@ -11,12 +10,26 @@ import { chacha20poly1305 } from '@noble/ciphers/chacha';
  * @returns Encrypted data (ciphertext + auth tag)
  */
 function chacha20poly1305Encrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8Array): Uint8Array {
-  // Create a ChaCha20-Poly1305 instance with the key
-  const cipher = chacha20poly1305(key);
-  
-  // Encrypt the data with the nonce
-  // Note: @noble/ciphers follows the RFC 8439 standard which is compatible with Rust's implementation
-  return cipher.seal(nonce, data);
+  try {
+    // Convert Uint8Array to Buffer for Node.js crypto
+    const keyBuffer = Buffer.from(key);
+    const nonceBuffer = Buffer.from(nonce);
+    const dataBuffer = Buffer.from(data);
+
+    // Use Node.js crypto API
+    const cipher = crypto.createCipheriv('chacha20-poly1305', keyBuffer, nonceBuffer, {
+      authTagLength: 16
+    });
+    
+    const ciphertext = Buffer.concat([cipher.update(dataBuffer), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    
+    // Combine ciphertext and tag for compatibility with Rust implementation
+    return new Uint8Array(Buffer.concat([ciphertext, tag]));
+  } catch (error) {
+    console.error('[Socket] Error in chacha20poly1305Encrypt:', error);
+    throw error;
+  }
 }
 
 /**
@@ -28,12 +41,26 @@ function chacha20poly1305Encrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8
  */
 function chacha20poly1305Decrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8Array): Uint8Array | null {
   try {
-    // Create a ChaCha20-Poly1305 instance with the key
-    const cipher = chacha20poly1305(key);
+    // Convert to Buffer for Node.js crypto
+    const keyBuffer = Buffer.from(key);
+    const nonceBuffer = Buffer.from(nonce);
+    const dataBuffer = Buffer.from(data);
     
-    // Decrypt and verify the data
-    // This will throw an error if the authentication tag doesn't match
-    return cipher.open(nonce, data);
+    // The last 16 bytes should be the auth tag
+    const ciphertextLength = dataBuffer.length - 16;
+    const ciphertext = dataBuffer.slice(0, ciphertextLength);
+    const tag = dataBuffer.slice(ciphertextLength);
+    
+    // Create decipher
+    const decipher = crypto.createDecipheriv('chacha20-poly1305', keyBuffer, nonceBuffer, {
+      authTagLength: 16
+    });
+    
+    // Set auth tag and decrypt
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    
+    return new Uint8Array(decrypted);
   } catch (error) {
     console.error('[Socket] ChaCha20-Poly1305 authentication failed:', error);
     return null;
@@ -100,11 +127,11 @@ export async function encryptData(
       console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 encryption');
     } catch (webCryptoError) {
       // Web Crypto API failed or doesn't support ChaCha20-Poly1305
-      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, using @noble/ciphers implementation', webCryptoError);
+      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, using Node.js crypto implementation', webCryptoError);
       
-      // Use @noble/ciphers ChaCha20-Poly1305 implementation which is compatible with Rust's chacha20poly1305
+      // Use Node.js crypto implementation
       encrypted = chacha20poly1305Encrypt(sessionKey, nonce, messageUint8);
-      console.log('[Socket] Successfully used @noble/ciphers ChaCha20-Poly1305 for encryption');
+      console.log('[Socket] Successfully used Node.js crypto for ChaCha20-Poly1305 encryption');
     }
     
     if (!encrypted) {
@@ -176,16 +203,16 @@ export async function decryptData(
       console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 decryption');
     } catch (webCryptoError) {
       // Web Crypto API failed or doesn't support ChaCha20-Poly1305
-      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305 decryption, using @noble/ciphers implementation', webCryptoError);
+      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305 decryption, using Node.js crypto implementation', webCryptoError);
       
-      // Use @noble/ciphers ChaCha20-Poly1305 implementation which is compatible with Rust's chacha20poly1305
+      // Use Node.js crypto implementation
       decryptedData = chacha20poly1305Decrypt(sessionKey, nonce, encrypted);
       
       if (!decryptedData) {
         throw new Error('Decryption failed - authentication tag mismatch or corrupted data');
       }
       
-      console.log('[Socket] Successfully used @noble/ciphers ChaCha20-Poly1305 for decryption');
+      console.log('[Socket] Successfully used Node.js crypto for ChaCha20-Poly1305 decryption');
     }
     
     if (!decryptedData) {
