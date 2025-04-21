@@ -458,32 +458,41 @@ export async function encryptData(
     }
     
     try {
+        // IMPORTANT CHANGE: We'll use AES-GCM instead of ChaCha20-Poly1305 when Web Crypto is available
+        // AES-GCM is much more widely supported in browsers
         let encrypted: Uint8Array;
         
-        // Strategy 1: Try Web Crypto API with ChaCha20-Poly1305 if available
+        // Strategy 1: Try Web Crypto API with AES-GCM if available
         try {
-            const cryptoKey = await window.crypto.subtle.importKey(
-                'raw', 
-                sessionKey, 
-                { name: 'ChaCha20-Poly1305' },
-                false, 
-                ['encrypt']
-            );
-            
-            const encryptedBuffer = await window.crypto.subtle.encrypt(
-                {
-                    name: 'ChaCha20-Poly1305',
-                    iv: nonce
-                },
-                cryptoKey,
-                plaintext
-            );
-            
-            encrypted = new Uint8Array(encryptedBuffer);
-            console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 encryption');
+            if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+                // Use AES-GCM which is broadly supported
+                // Create a key from the session key
+                const cryptoKey = await window.crypto.subtle.importKey(
+                    'raw', 
+                    sessionKey, 
+                    { name: 'AES-GCM' },
+                    false, 
+                    ['encrypt']
+                );
+                
+                const encryptedBuffer = await window.crypto.subtle.encrypt(
+                    {
+                        name: 'AES-GCM',
+                        iv: nonce, // 12 bytes is perfect for AES-GCM too
+                        tagLength: 128 // 16 bytes tag, same as ChaCha20-Poly1305
+                    },
+                    cryptoKey,
+                    plaintext
+                );
+                
+                encrypted = new Uint8Array(encryptedBuffer);
+                console.log('[Socket] Successfully used Web Crypto API with AES-GCM for encryption');
+            } else {
+                throw new Error('Web Crypto API not available');
+            }
         } catch (webCryptoError) {
-            // Strategy 2: Use our pure JS implementation
-            console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, using pure JS implementation:', webCryptoError);
+            // Strategy 2: Use our pure JS implementation of ChaCha20-Poly1305
+            console.warn('[Socket] Web Crypto API not available, using pure JS implementation:', webCryptoError);
             
             console.time('ChaCha20-Poly1305 Encryption');
             encrypted = chacha20poly1305Encrypt(sessionKey, nonce, plaintext);
@@ -552,30 +561,36 @@ export async function decryptData(
         
         let decryptedData: Uint8Array | null = null;
         
-        // Strategy 1: Try Web Crypto API with ChaCha20-Poly1305 if available
+        // Strategy 1: Try Web Crypto API with AES-GCM (not ChaCha20-Poly1305)
         try {
-            const cryptoKey = await window.crypto.subtle.importKey(
-                'raw',
-                sessionKey,
-                { name: 'ChaCha20-Poly1305' },
-                false,
-                ['decrypt']
-            );
-            
-            const decryptedBuffer = await window.crypto.subtle.decrypt(
-                {
-                    name: 'ChaCha20-Poly1305',
-                    iv: nonce
-                },
-                cryptoKey,
-                encrypted
-            );
-            
-            decryptedData = new Uint8Array(decryptedBuffer);
-            console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 decryption');
+            if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+                // Use AES-GCM which is broadly supported
+                const cryptoKey = await window.crypto.subtle.importKey(
+                    'raw',
+                    sessionKey,
+                    { name: 'AES-GCM' },
+                    false,
+                    ['decrypt']
+                );
+                
+                const decryptedBuffer = await window.crypto.subtle.decrypt(
+                    {
+                        name: 'AES-GCM',
+                        iv: nonce,
+                        tagLength: 128 // 16 bytes tag
+                    },
+                    cryptoKey,
+                    encrypted
+                );
+                
+                decryptedData = new Uint8Array(decryptedBuffer);
+                console.log('[Socket] Successfully used Web Crypto API with AES-GCM for decryption');
+            } else {
+                throw new Error('Web Crypto API not available');
+            }
         } catch (webCryptoError) {
             // Strategy 2: Use our pure JS implementation
-            console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305 decryption, using pure JS implementation:', webCryptoError);
+            console.warn('[Socket] Web Crypto API decryption failed, using pure JS implementation:', webCryptoError);
             
             console.time('ChaCha20-Poly1305 Decryption');
             decryptedData = chacha20poly1305Decrypt(sessionKey, nonce, encrypted);
