@@ -1,30 +1,59 @@
 import { EventEmitter } from 'events';
 import { MessageType } from '../types/chat';
-import { encryptPacket, decryptPacket, signChallenge, generateSessionKey } from '../utils/crypto';
 import * as bs58 from 'bs58';
 import * as nacl from 'tweetnacl';
 
-/**
- * Configuration for reconnection strategy
- */
-interface ReconnectionConfig {
-  initialDelay: number;
-  maxDelay: number;
-  maxAttempts: number;
-  jitter: boolean;
-}
+// Import from utility modules
+import { 
+  ReconnectionConfig, 
+  SocketError,
+  ConnectionStatus,
+  PendingMessage,
+  QueuedMessage,
+  ChallengeMessage,
+  IpAssignMessage,
+  PingMessage,
+  PongMessage,
+  ErrorMessage,
+  DisconnectMessage
+} from './socket/types';
 
-/**
- * Types of errors that can occur during socket operations
- */
-interface SocketError {
-  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message';
-  message: string;
-  code: string;
-  details?: string;
-  retry: boolean;
-  originalError?: any;
-}
+import {
+  encryptData,
+  decryptData,
+  signChallenge,
+  generateSessionKey
+} from './socket/encryption';
+
+import {
+  DEFAULT_RECONNECTION_CONFIG,
+  calculateBackoffDelay,
+  shouldAttemptReconnect,
+  canRetry,
+  createReconnectionEvent
+} from './socket/reconnection';
+
+import {
+  isSocketOpen,
+  getSocketStateText,
+  calculateLatency,
+  createWebSocketUrl,
+  createDisconnectMessage,
+  createAuthMessage,
+  needsHealthCheck,
+  isConnectionDead
+} from './socket/networking';
+
+import {
+  parseMessage,
+  createChallengeResponse,
+  processIpAssign,
+  createSocketError,
+  handlePingMessage,
+  getPongLatency,
+  processErrorMessage,
+  shouldReconnectAfterDisconnect
+} from './socket/messageHandlers';
 
 /**
  * AeroNyx Socket - Manages WebSocket connections with error handling,
@@ -44,8 +73,8 @@ export class AeroNyxSocket extends EventEmitter {
   private sessionId: string | null = null;
   private serverUrl: string = process.env.NEXT_PUBLIC_AERONYX_SERVER_URL || 'wss://aeronyx-server.example.com';
   private connectionListeners: Set<() => void> = new Set();
-  private pendingMessages: Array<{type: string, data: any}> = [];
-  private messageQueue: Array<{data: any, attempts: number}> = [];
+  private pendingMessages: Array<PendingMessage> = [];
+  private messageQueue: Array<QueuedMessage> = [];
   private maxQueueSize: number = 100;
   private keepAliveInterval: NodeJS.Timeout | null = null;
   private lastMessageTime: number = Date.now();
@@ -60,12 +89,7 @@ export class AeroNyxSocket extends EventEmitter {
   /**
    * Reconnection configuration with exponential backoff
    */
-  private reconnectionConfig: ReconnectionConfig = {
-    initialDelay: 1000, // Start with 1 second delay
-    maxDelay: 30000,    // Max delay of 30 seconds
-    maxAttempts: 10,    // Max 10 reconnection attempts
-    jitter: true        // Add randomness to prevent thundering herd
-  };
+  private reconnectionConfig: ReconnectionConfig = DEFAULT_RECONNECTION_CONFIG;
   
   /**
    * Create a new AeroNyx socket
@@ -132,11 +156,7 @@ export class AeroNyxSocket extends EventEmitter {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       try {
         // Use a synchronous approach for beforeunload
-        const disconnectMsg = JSON.stringify({
-          type: 'Disconnect',
-          reason: 0,
-          message: 'User left the page',
-        });
+        const disconnectMsg = JSON.stringify(createDisconnectMessage(0, 'User left the page'));
         this.socket.send(disconnectMsg);
       } catch (e) {
         // Ignore errors during page unload
@@ -210,8 +230,8 @@ export class AeroNyxSocket extends EventEmitter {
         // Clean up any existing connection
         this.cleanupConnection(false);
         
-        // Use environment variable for server URL if available
-        const serverUrl = `${this.serverUrl}/chat/${chatId}`;
+        // Create WebSocket URL
+        const serverUrl = createWebSocketUrl(this.serverUrl, chatId);
         
         console.log(`[Socket] Connecting to WebSocket server at: ${serverUrl}`);
         this.emit('connectionStatus', 'connecting');
@@ -227,12 +247,13 @@ export class AeroNyxSocket extends EventEmitter {
           if (this.connecting) {
             const timeoutError = new Error('WebSocket connection timed out');
             console.error('[Socket] Connection timeout:', timeoutError);
-            this.emit('error', {
-              type: 'connection',
-              message: 'Connection to secure chat server timed out. This might be due to network issues or server unavailability.',
-              code: 'TIMEOUT',
-              retry: true
-            });
+            this.emit('error', createSocketError(
+              'connection',
+              'Connection to secure chat server timed out. This might be due to network issues or server unavailability.',
+              'TIMEOUT',
+              undefined,
+              true
+            ));
             
             if (this.socket) {
               this.socket.close();
@@ -243,7 +264,7 @@ export class AeroNyxSocket extends EventEmitter {
             reject(timeoutError);
             
             // Auto-retry on timeout if not max attempts
-            if (this.autoReconnect && this.reconnectAttempts < this.reconnectionConfig.maxAttempts) {
+            if (this.autoReconnect && canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
               this.scheduleReconnect();
             }
           }
@@ -260,10 +281,10 @@ export class AeroNyxSocket extends EventEmitter {
           this.startHeartbeat();
         };
         
-        this.socket.onmessage = (event) => {
+        this.socket.onmessage = async (event) => {
           this.clearConnectionTimeout();
           this.lastMessageTime = Date.now();
-          this.handleServerMessage(event.data);
+          await this.handleServerMessage(event.data);
         };
         
         this.socket.onclose = (event) => {
@@ -279,13 +300,13 @@ export class AeroNyxSocket extends EventEmitter {
             const errorMsg = 'Connection closed due to security issues. This might be related to a certificate problem.';
             console.error(`[Socket] ${errorMsg}`);
             
-            this.emit('error', {
-              type: 'connection',
-              message: errorMsg,
-              code: `WS_CLOSED_${event.code}`,
-              details: `You might need to visit ${this.serverUrl.replace('wss://', 'https://')} directly in your browser and accept the certificate.`,
-              retry: false
-            });
+            this.emit('error', createSocketError(
+              'connection',
+              errorMsg,
+              `WS_CLOSED_${event.code}`,
+              `You might need to visit ${this.serverUrl.replace('wss://', 'https://')} directly in your browser and accept the certificate.`,
+              false
+            ));
           }
           
           if (this.connecting) {
@@ -295,10 +316,9 @@ export class AeroNyxSocket extends EventEmitter {
           }
           
           // Attempt to reconnect automatically for common error codes or server reset
-          const reconnectCodes = [1000, 1001, 1006, 1012, 1013];
           if (this.autoReconnect && 
-              (reconnectCodes.includes(event.code) || this.forceReconnect) && 
-              this.reconnectAttempts < this.reconnectionConfig.maxAttempts) {
+              (shouldAttemptReconnect(event.code) || this.forceReconnect) && 
+              canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
             this.scheduleReconnect();
           }
         };
@@ -307,16 +327,14 @@ export class AeroNyxSocket extends EventEmitter {
           this.clearConnectionTimeout();
           console.error('[Socket] WebSocket error:', error);
           
-          const errorDetails: SocketError = {
-            type: 'connection',
-            message: 'Failed to establish a secure connection to the chat server.',
-            code: 'WS_ERROR',
-            details: 'This might be due to network issues, server unavailability, or certificate problems.',
-            retry: true,
-            originalError: error
-          };
-          
-          this.emit('error', errorDetails);
+          this.emit('error', createSocketError(
+            'connection',
+            'Failed to establish a secure connection to the chat server.',
+            'WS_ERROR',
+            'This might be due to network issues, server unavailability, or certificate problems.',
+            true,
+            error
+          ));
           
           if (this.connecting) {
             reject(new Error('WebSocket connection error'));
@@ -328,18 +346,18 @@ export class AeroNyxSocket extends EventEmitter {
         console.error('[Socket] Error creating WebSocket connection:', error);
         this.connecting = false;
         
-        this.emit('error', {
-          type: 'connection',
-          message: 'Failed to initiate connection to the secure chat server.',
-          code: 'INIT_ERROR',
-          details: error instanceof Error ? error.message : 'Unknown error',
-          retry: true
-        });
+        this.emit('error', createSocketError(
+          'connection',
+          'Failed to initiate connection to the secure chat server.',
+          'INIT_ERROR',
+          error instanceof Error ? error.message : 'Unknown error',
+          true
+        ));
         
         reject(error);
         
         // Attempt to reconnect if initialization fails
-        if (this.autoReconnect && this.reconnectAttempts < this.reconnectionConfig.maxAttempts) {
+        if (this.autoReconnect && canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
           this.scheduleReconnect();
         }
       }
@@ -395,25 +413,20 @@ export class AeroNyxSocket extends EventEmitter {
   private sendAuthMessage(): void {
     if (!this.socket || !this.publicKey) return;
     
-    const authMessage = {
-      type: 'Auth',
-      public_key: this.publicKey,
-      version: '1.0.0',
-      features: ['chacha20poly1305', 'webrtc'],
-      nonce: Date.now().toString(),
-    };
+    const authMessage = createAuthMessage(this.publicKey);
     
     try {
       this.socket.send(JSON.stringify(authMessage));
       console.log('[Socket] Auth message sent successfully');
     } catch (error) {
       console.error('[Socket] Error sending auth message:', error);
-      this.emit('error', {
-        type: 'auth',
-        message: 'Failed to send authentication message',
-        code: 'AUTH_ERROR',
-        retry: true
-      });
+      this.emit('error', createSocketError(
+        'auth',
+        'Failed to send authentication message',
+        'AUTH_ERROR',
+        undefined,
+        true
+      ));
     }
   }
   
@@ -425,7 +438,7 @@ export class AeroNyxSocket extends EventEmitter {
     
     this.heartbeatInterval = setInterval(() => {
       // If socket is not connected, don't try to send heartbeat
-      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      if (!isSocketOpen(this.socket)) {
         console.warn('[Socket] Cannot send heartbeat: Socket not open');
         return;
       }
@@ -444,12 +457,13 @@ export class AeroNyxSocket extends EventEmitter {
           
           // Update UI to show connection issues
           this.emit('connectionStatus', 'connecting');
-          this.emit('error', {
-            type: 'connection',
-            message: 'Connection appears to be unresponsive',
-            code: 'CONNECTION_UNRESPONSIVE',
-            retry: true
-          });
+          this.emit('error', createSocketError(
+            'connection',
+            'Connection appears to be unresponsive',
+            'CONNECTION_UNRESPONSIVE',
+            undefined,
+            true
+          ));
           
           // Try to immediately reconnect
           if (timeSinceLastMessage > 30000) {
@@ -500,38 +514,21 @@ export class AeroNyxSocket extends EventEmitter {
    */
   private async handleServerMessage(data: string | ArrayBuffer | Blob): Promise<void> {
     try {
-      // Parse JSON data
-      let message: any;
-      if (typeof data === 'string') {
-        message = JSON.parse(data);
-      } else if (data instanceof Blob) {
-        // Handle Blob data (for binary WebSocket messages)
-        const reader = new FileReader();
-        
-        // Convert Blob to text using Promise
-        const text = await new Promise<string>((resolve, reject) => {
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsText(data);
-        });
-        
-        message = JSON.parse(text);
-      } else {
-        // Handle ArrayBuffer
-        const decoder = new TextDecoder();
-        message = JSON.parse(decoder.decode(data));
-      }
+      // Parse the message
+      const message = await parseMessage(data);
       
+      // Process the parsed message
       await this.processMessage(message);
     } catch (error) {
       console.error('[Socket] Error handling server message:', error);
-      this.emit('error', {
-        type: 'message',
-        message: 'Failed to parse server message',
-        code: 'PARSE_ERROR',
-        retry: false,
-        originalError: error
-      });
+      this.emit('error', createSocketError(
+        'message',
+        'Failed to parse server message',
+        'PARSE_ERROR',
+        undefined,
+        false,
+        error
+      ));
     }
   }
   
@@ -580,14 +577,14 @@ export class AeroNyxSocket extends EventEmitter {
       }
     } catch (error) {
       console.error(`[Socket] Error processing message of type ${message.type}:`, error);
-      this.emit('error', {
-        type: 'message',
-        message: `Error processing ${message.type} message`,
-        code: 'PROCESS_ERROR',
-        details: error instanceof Error ? error.message : String(error),
-        retry: false,
-        originalError: error
-      });
+      this.emit('error', createSocketError(
+        'message',
+        `Error processing ${message.type} message`,
+        'PROCESS_ERROR',
+        error instanceof Error ? error.message : String(error),
+        false,
+        error
+      ));
     }
   }
   
@@ -595,11 +592,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle authentication challenge
    * @param message Challenge message
    */
-  private async handleChallenge(message: { 
-    id: string, 
-    data: number[] | string,
-    server_public_key?: string // Server may send its public key for ECDH
-  }): Promise<void> {
+  private async handleChallenge(message: ChallengeMessage): Promise<void> {
     try {
       console.log('[Socket] Received authentication challenge, ID:', message.id);
       
@@ -609,51 +602,15 @@ export class AeroNyxSocket extends EventEmitter {
         console.log('[Socket] Received server public key for ECDH');
       }
       
-      // Convert challenge data to Uint8Array
-      let challengeData: Uint8Array;
-      if (Array.isArray(message.data)) {
-        challengeData = new Uint8Array(message.data);
-        console.log('[Socket] Challenge data is array, length:', challengeData.length);
-      } else if (typeof message.data === 'string') {
-        // Try to parse as base58 or base64
-        try {
-          // Try to parse as base58
-          challengeData = bs58.decode(message.data);
-          console.log('[Socket] Challenge data decoded as base58, length:', challengeData.length);
-        } catch {
-          // Fallback to base64
-          const buffer = Buffer.from(message.data, 'base64');
-          challengeData = new Uint8Array(buffer);
-          console.log('[Socket] Challenge data decoded as base64, length:', challengeData.length);
-        }
-      } else {
-        throw new Error('Invalid challenge data format');
+      if (!this.publicKey) {
+        throw new Error('No public key available for challenge response');
       }
       
-      // Get keypair from localStorage
-      const storedKeypair = localStorage.getItem('aero-keypair');
-      if (!storedKeypair) {
-        throw new Error('No keypair found for authentication');
-      }
+      // Create challenge response
+      const response = await createChallengeResponse(message, this.publicKey);
       
-      const keypair = JSON.parse(storedKeypair);
-      console.log('[Socket] Using keypair with public key:', keypair.publicKey.substring(0, 10) + '...');
-      
-      // Decode the secret key
-      const secretKey = bs58.decode(keypair.secretKey);
-      
-      // Sign challenge with proper signature
-      const signature = await signChallenge(challengeData, secretKey);
-      
-      // Send challenge response
-      const response = {
-        type: 'ChallengeResponse',
-        signature,
-        public_key: this.publicKey,
-        challenge_id: message.id,
-      };
-      
-      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      // Send the response
+      if (isSocketOpen(this.socket)) {
         this.socket.send(JSON.stringify(response));
         console.log('[Socket] Challenge response sent successfully');
       } else {
@@ -662,14 +619,14 @@ export class AeroNyxSocket extends EventEmitter {
       }
     } catch (error) {
       console.error('[Socket] Error handling challenge:', error);
-      this.emit('error', {
-        type: 'auth',
-        message: 'Failed to authenticate with server',
-        code: 'AUTH_CHALLENGE_ERROR',
-        details: error instanceof Error ? error.message : 'Unknown error',
-        retry: true,
-        originalError: error
-      });
+      this.emit('error', createSocketError(
+        'auth',
+        'Failed to authenticate with server',
+        'AUTH_CHALLENGE_ERROR',
+        error instanceof Error ? error.message : 'Unknown error',
+        true,
+        error
+      ));
       
       // Attempt reconnection
       if (this.autoReconnect) {
@@ -682,13 +639,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle IP assignment message after successful authentication
    * @param message IP assignment message
    */
-  private async handleIpAssign(message: { 
-    ip_address: string, 
-    session_id: string, 
-    session_key?: string, 
-    key_nonce?: string,
-    server_public_key?: string 
-  }): Promise<void> {
+  private async handleIpAssign(message: IpAssignMessage): Promise<void> {
     try {
       // Store the session ID
       this.sessionId = message.session_id;
@@ -701,119 +652,22 @@ export class AeroNyxSocket extends EventEmitter {
         this.serverPublicKey = message.server_public_key;
       }
       
-      // Handle session key - crucial for encryption
-      if (message.session_key && message.key_nonce && this.serverPublicKey) {
-        // Get keypair from localStorage
-        const storedKeypair = localStorage.getItem('aero-keypair');
-        if (!storedKeypair) {
-          throw new Error('No keypair found for decrypting session key');
+      // Process the session key
+      try {
+        this.sessionKey = await processIpAssign(message, this.serverPublicKey);
+        console.log('[Socket] Session key stored, length:', this.sessionKey.length);
+      } catch (keyError) {
+        console.error('[Socket] Error processing session key:', keyError);
+        
+        // Generate random key as fallback
+        if (window.crypto && window.crypto.getRandomValues) {
+          this.sessionKey = new Uint8Array(32);
+          window.crypto.getRandomValues(this.sessionKey);
+        } else {
+          this.sessionKey = nacl.randomBytes(32);
         }
         
-        const keypair = JSON.parse(storedKeypair);
-        const secretKey = bs58.decode(keypair.secretKey);
-        const serverPublicKey = bs58.decode(this.serverPublicKey);
-        
-        try {
-          // For Ed25519 secret keys, we need to use the first 32 bytes for X25519
-          const secretKeyX25519 = secretKey.slice(0, 32);
-          
-          // Compute shared secret using scalar multiplication (ECDH)
-          const sharedSecret = nacl.scalarMult(secretKeyX25519, serverPublicKey);
-          
-          // Decode the encrypted session key and nonce
-          const encryptedSessionKey = bs58.decode(message.session_key);
-          const keyNonce = bs58.decode(message.key_nonce);
-          
-          // Log key sizes for debugging
-          console.log('[Socket] Session key exchange details:', {
-            encryptedKeyLength: encryptedSessionKey.length,
-            nonceLength: keyNonce.length,
-            sharedSecretLength: sharedSecret.length,
-          });
-          
-          // Try Web Crypto API first if available
-          let decryptedSessionKey: Uint8Array | null = null;
-          
-          try {
-            if (keyNonce.length === 12) {
-              // Import shared secret as CryptoKey
-              const cryptoKey = await window.crypto.subtle.importKey(
-                'raw',
-                sharedSecret,
-                { name: 'ChaCha20-Poly1305' },
-                false,
-                ['decrypt']
-              );
-              
-              // Decrypt session key
-              const decryptedBuffer = await window.crypto.subtle.decrypt(
-                {
-                  name: 'ChaCha20-Poly1305',
-                  iv: keyNonce
-                },
-                cryptoKey,
-                encryptedSessionKey
-              );
-              
-              decryptedSessionKey = new Uint8Array(decryptedBuffer);
-              console.log('[Socket] Successfully decrypted session key with Web Crypto API');
-            }
-          } catch (webCryptoError) {
-            console.warn('[Socket] Failed to decrypt session key with Web Crypto API:', webCryptoError);
-            // We'll fall back to TweetNaCl
-          }
-          
-          // If Web Crypto API failed or wasn't available, try TweetNaCl
-          if (!decryptedSessionKey) {
-            // Create a padded nonce if needed (server sends 12 bytes, TweetNaCl expects 24)
-            let keyNonceForDecryption = keyNonce;
-            if (keyNonce.length === 12) {
-              const paddedKeyNonce = new Uint8Array(24);
-              paddedKeyNonce.set(keyNonce);
-              keyNonceForDecryption = paddedKeyNonce;
-            }
-            
-            // Decrypt the session key using the shared secret
-            decryptedSessionKey = nacl.secretbox.open(
-              encryptedSessionKey,
-              keyNonceForDecryption,
-              sharedSecret
-            );
-            
-            if (!decryptedSessionKey) {
-              throw new Error('Failed to decrypt session key - authentication failed');
-            }
-            
-            console.log('[Socket] Successfully decrypted session key with TweetNaCl');
-          }
-          
-          // Store the session key for encrypting/decrypting messages
-          this.sessionKey = decryptedSessionKey;
-          console.log('[Socket] Session key stored, length:', decryptedSessionKey.length);
-        } catch (error) {
-          console.error('[Socket] Error decrypting session key:', error);
-          throw error; // Re-throw after logging
-        }
-      } else {
-        // If session key is missing, generate a random one for development
-        console.warn('[Socket] No session key or nonce provided by server, generating random key');
-        
-        try {
-          // Try to use WebCrypto for key generation if available
-          if (window.crypto && window.crypto.getRandomValues) {
-            this.sessionKey = new Uint8Array(32);
-            window.crypto.getRandomValues(this.sessionKey);
-          } else {
-            // Fall back to TweetNaCl
-            this.sessionKey = nacl.randomBytes(32);
-          }
-          
-          console.log('[Socket] Generated random session key of length:', this.sessionKey.length);
-        } catch (error) {
-          console.error('[Socket] Error generating random session key:', error);
-          // Last resort fallback
-          this.sessionKey = new Uint8Array(32).fill(1); // Not secure, but prevents crashes
-        }
+        console.log('[Socket] Generated fallback session key of length:', this.sessionKey.length);
       }
       
       this.isConnected = true;
@@ -841,220 +695,18 @@ export class AeroNyxSocket extends EventEmitter {
       this.connectionListeners.clear();
     } catch (error) {
       console.error('[Socket] Error handling IP assignment:', error);
-      this.emit('error', {
-        type: 'connection',
-        message: 'Failed to complete connection setup',
-        code: 'IP_ASSIGN_ERROR',
-        details: error instanceof Error ? error.message : 'Unknown error',
-        retry: true,
-        originalError: error
-      });
+      this.emit('error', createSocketError(
+        'connection',
+        'Failed to complete connection setup',
+        'IP_ASSIGN_ERROR',
+        error instanceof Error ? error.message : 'Unknown error',
+        true,
+        error
+      ));
       
       if (this.autoReconnect) {
         this.scheduleReconnect();
       }
-    }
-  }
-  
-  /**
-   * Encrypt a data packet for secure transmission
-   * @param data The data to encrypt
-   * @returns Promise with encrypted data and nonce
-   */
-  private async encryptData(data: any): Promise<{encrypted: Uint8Array, nonce: Uint8Array}> {
-    if (!this.sessionKey) {
-      throw new Error('No session key available for encryption');
-    }
-    
-    // Convert data to JSON string
-    const jsonData = JSON.stringify(data);
-    
-    // Convert string to Uint8Array for encryption
-    const encoder = new TextEncoder();
-    const messageUint8 = encoder.encode(jsonData);
-    
-    // Generate a 12-byte nonce as required by the server's ChaCha20-Poly1305 implementation
-    const nonce = new Uint8Array(12);
-    if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
-      window.crypto.getRandomValues(nonce);
-    } else {
-      // Fallback for environments without crypto.getRandomValues
-      for (let i = 0; i < 12; i++) {
-        nonce[i] = Math.floor(Math.random() * 256);
-      }
-    }
-    
-    try {
-      // Using Web Crypto API for ChaCha20-Poly1305 encryption
-      // First, check if we can use WebCrypto with ChaCha20-Poly1305
-      let encrypted: Uint8Array;
-      
-      try {
-        // Import key
-        const cryptoKey = await window.crypto.subtle.importKey(
-          'raw', 
-          this.sessionKey, 
-          { name: 'ChaCha20-Poly1305' },
-          false, 
-          ['encrypt']
-        );
-        
-        // Encrypt data
-        const encryptedBuffer = await window.crypto.subtle.encrypt(
-          {
-            name: 'ChaCha20-Poly1305',
-            iv: nonce
-          },
-          cryptoKey,
-          messageUint8
-        );
-        
-        encrypted = new Uint8Array(encryptedBuffer);
-        console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 encryption');
-      } catch (webCryptoError) {
-        // If Web Crypto API fails or doesn't support ChaCha20-Poly1305, fall back to TweetNaCl
-        console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, falling back to TweetNaCl', webCryptoError);
-        
-        // For fallback, we'll use TweetNaCl but note that this isn't compatible with server
-        // This is just a fallback to avoid completely breaking
-        // Create a 24-byte nonce for TweetNaCl by padding the original 12-byte nonce with zeros
-        const paddedNonce = new Uint8Array(nacl.secretbox.nonceLength);
-        paddedNonce.set(nonce); // Copy the first 12 bytes, leaving the rest as zeros
-        
-        // Use the session key for encryption (ensuring it's 32 bytes for TweetNaCl)
-        const key = this.sessionKey.length === 32 ? 
-          this.sessionKey : 
-          (this.sessionKey.length > 32 ? 
-            this.sessionKey.slice(0, 32) : 
-            (() => {
-              const fullKey = new Uint8Array(32);
-              fullKey.set(this.sessionKey);
-              return fullKey;
-            })());
-        
-        // Encrypt with TweetNaCl's secretbox (but this won't be compatible with server)
-        encrypted = nacl.secretbox(messageUint8, paddedNonce, key);
-      }
-      
-      if (!encrypted) {
-        throw new Error('Encryption failed - could not produce ciphertext');
-      }
-      
-      return {
-        encrypted,
-        nonce
-      };
-    } catch (error) {
-      console.error('[Socket] Encryption error:', error);
-      throw new Error(`Encryption failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  
-  /**
-   * Decrypt a data packet
-   * @param encrypted The encrypted data
-   * @param nonce The nonce used for encryption
-   * @returns Promise with decrypted data
-   */
-  private async decryptData(encrypted: Uint8Array, nonce: Uint8Array): Promise<any> {
-    if (!this.sessionKey) {
-      throw new Error('No session key available for decryption');
-    }
-    
-    try {
-      // Validate the nonce size - server should be sending 12-byte nonces
-      if (nonce.length !== 12) {
-        console.warn(`[Socket] Unexpected nonce length from server: ${nonce.length} bytes (expected 12)`);
-        // If the nonce is not 12 bytes but is 24 bytes, we might try to use only the first 12 bytes
-        if (nonce.length === 24) {
-          nonce = nonce.slice(0, 12);
-        } else {
-          throw new Error(`Invalid nonce length: ${nonce.length} (expected 12 bytes)`);
-        }
-      }
-      
-      // First try WebCrypto API with ChaCha20-Poly1305
-      try {
-        // Import key
-        const cryptoKey = await window.crypto.subtle.importKey(
-          'raw',
-          this.sessionKey,
-          { name: 'ChaCha20-Poly1305' },
-          false,
-          ['decrypt']
-        );
-        
-        // Decrypt data
-        const decryptedBuffer = await window.crypto.subtle.decrypt(
-          {
-            name: 'ChaCha20-Poly1305',
-            iv: nonce
-          },
-          cryptoKey,
-          encrypted
-        );
-        
-        // Convert decrypted data to string
-        const decoder = new TextDecoder();
-        const jsonString = decoder.decode(new Uint8Array(decryptedBuffer));
-        
-        console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 decryption');
-        
-        // Parse JSON data
-        try {
-          return JSON.parse(jsonString);
-        } catch (jsonError) {
-          console.error('[Socket] Error parsing decrypted JSON:', jsonError);
-          throw new Error('Invalid JSON in decrypted message');
-        }
-      } catch (webCryptoError) {
-        // If Web Crypto API fails or doesn't support ChaCha20-Poly1305, fall back to TweetNaCl
-        console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, falling back to TweetNaCl', webCryptoError);
-        
-        // Create a 24-byte nonce for TweetNaCl by padding the original 12-byte nonce with zeros
-        const paddedNonce = new Uint8Array(nacl.secretbox.nonceLength);
-        paddedNonce.set(nonce); // Copy the 12-byte nonce, leaving the rest as zeros
-        
-        // Ensure the key is the right size for TweetNaCl (32 bytes)
-        const key = this.sessionKey.length === 32 ? 
-          this.sessionKey : 
-          (this.sessionKey.length > 32 ? 
-            this.sessionKey.slice(0, 32) : 
-            (() => {
-              const fullKey = new Uint8Array(32);
-              fullKey.set(this.sessionKey);
-              return fullKey;
-            })());
-        
-        // Try to decrypt with TweetNaCl (but this will likely fail for server-encrypted data)
-        const decrypted = nacl.secretbox.open(encrypted, paddedNonce, key);
-        
-        if (!decrypted) {
-          throw new Error('Decryption failed - authentication tag mismatch or corrupted data');
-        }
-        
-        // Convert binary data to string
-        const decoder = new TextDecoder();
-        const jsonString = decoder.decode(decrypted);
-        
-        try {
-          return JSON.parse(jsonString);
-        } catch (jsonError) {
-          console.error('[Socket] Error parsing decrypted JSON:', jsonError);
-          throw new Error('Invalid JSON in decrypted message');
-        }
-      }
-    } catch (error) {
-      console.error('[Socket] Decryption error:', error);
-      // Log details for debugging
-      console.debug('[Socket] Decryption details:', {
-        encryptedLength: encrypted.length,
-        nonceLength: nonce.length,
-        keyLength: this.sessionKey.length,
-        // Don't log the actual key or nonce values for security reasons
-      });
-      
-      throw new Error(`Decryption failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
@@ -1081,7 +733,7 @@ export class AeroNyxSocket extends EventEmitter {
       
       try {
         // Decrypt the data
-        const decryptedData = await this.decryptData(encryptedUint8, nonceUint8);
+        const decryptedData = await decryptData(encryptedUint8, nonceUint8, this.sessionKey);
         
         // Check for message replay attempts
         if (decryptedData.id && this.processedMessageIds.has(decryptedData.id)) {
@@ -1137,14 +789,14 @@ export class AeroNyxSocket extends EventEmitter {
       this.emit('data', message);
     } catch (error) {
       console.error('[Socket] Error handling data packet:', error);
-      this.emit('error', {
-        type: 'data',
-        message: 'Failed to process data packet',
-        code: 'DATA_ERROR',
-        details: error instanceof Error ? error.message : 'Unknown error',
-        retry: false,
-        originalError: error
-      });
+      this.emit('error', createSocketError(
+        'data',
+        'Failed to process data packet',
+        'DATA_ERROR',
+        error instanceof Error ? error.message : 'Unknown error',
+        false,
+        error
+      ));
     }
   }
   
@@ -1152,17 +804,11 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle server ping message
    * @param message Ping message
    */
-  private async handlePing(message: { timestamp: number, sequence: number }): Promise<void> {
+  private async handlePing(message: PingMessage): Promise<void> {
     try {
       // Send pong response
-      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-        const pong = {
-          type: 'Pong',
-          echo_timestamp: message.timestamp,
-          server_timestamp: Date.now(),
-          sequence: message.sequence,
-        };
-        
+      if (isSocketOpen(this.socket)) {
+        const pong = handlePingMessage(message);
         this.socket.send(JSON.stringify(pong));
         console.log(`[Socket] Responding to ping: ${message.sequence}`);
       }
@@ -1175,7 +821,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle server pong message
    * @param message Pong message
    */
-  private handlePong(message: { echo_timestamp: number, sequence: number }): void {
+  private handlePong(message: PongMessage): void {
     try {
       const now = Date.now();
       const latency = now - message.echo_timestamp;
@@ -1198,14 +844,15 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle error message from server
    * @param message Error message
    */
-  private handleError(message: { message: string, code?: number }): void {
+  private handleError(message: ErrorMessage): void {
     console.error('[Socket] Server error:', message.message, message.code);
-    this.emit('error', {
-      type: 'server',
-      message: message.message,
-      code: message.code ? `SERVER_${message.code}` : 'SERVER_ERROR',
-      retry: message.code ? message.code < 5000 : true // Retry for non-fatal errors
-    });
+    this.emit('error', createSocketError(
+      'server',
+      message.message,
+      message.code ? `SERVER_${message.code}` : 'SERVER_ERROR',
+      undefined,
+      message.code ? message.code < 5000 : true // Retry for non-fatal errors
+    ));
     
     // For certain error codes, we might want to reconnect
     if (this.autoReconnect && message.code && [1001, 1002, 1003].includes(message.code)) {
@@ -1217,7 +864,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle disconnect message from server
    * @param message Disconnect message
    */
-  private handleDisconnect(message: { reason: number, message: string }): void {
+  private handleDisconnect(message: DisconnectMessage): void {
     this.isConnected = false;
     this.emit('disconnected', message.reason, message.message);
     this.stopPingInterval();
@@ -1230,7 +877,7 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     // If reason is non-fatal, attempt to reconnect
-    if (this.autoReconnect && message.reason < 4000) { // Non-fatal error codes
+    if (this.autoReconnect && shouldReconnectAfterDisconnect(message)) {
       this.scheduleReconnect();
     }
   }
@@ -1271,7 +918,7 @@ export class AeroNyxSocket extends EventEmitter {
       if (timeSinceLastMessage > 90000) {
         console.warn(`[Socket] No messages received for ${Math.round(timeSinceLastMessage/1000)}s, checking connection health`);
         this.checkConnectionHealth();
-      } else if (timeSinceLastMessage > 15000 && this.socket && this.socket.readyState === WebSocket.OPEN) {
+      } else if (timeSinceLastMessage > 15000 && isSocketOpen(this.socket)) {
         // If it's been over 15 seconds since last message, send a keep-alive ping
         console.log('[Socket] Sending keep-alive ping');
         this.sendPing();
@@ -1279,7 +926,7 @@ export class AeroNyxSocket extends EventEmitter {
       
       // Actively detect disconnected state
       if (!this.isConnected && !this.connecting && this.autoReconnect && 
-          this.reconnectAttempts < this.reconnectionConfig.maxAttempts) {
+          canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
         console.log('[Socket] Detected disconnected state, initiating reconnect');
         this.scheduleReconnect();
       }
@@ -1300,7 +947,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Send ping to keep connection alive
    */
   private sendPing(): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    if (!isSocketOpen(this.socket)) return;
     
     try {
       const sequenceId = this.messageCounter++;
@@ -1332,7 +979,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Check if the connection is healthy
    */
   private checkConnectionHealth(): void {
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+    if (isSocketOpen(this.socket)) {
       // Send a ping to check if connection is alive
       try {
         // Clear any existing ping timeouts first
@@ -1372,12 +1019,13 @@ export class AeroNyxSocket extends EventEmitter {
     this.emit('connectionStatus', 'disconnected');
     
     // Also notify users about the connection issue
-    this.emit('error', {
-      type: 'connection',
-      message: 'Connection to the server was lost. Attempting to reconnect...',
-      code: 'CONNECTION_LOST',
-      retry: true
-    });
+    this.emit('error', createSocketError(
+      'connection',
+      'Connection to the server was lost. Attempting to reconnect...',
+      'CONNECTION_LOST',
+      undefined,
+      true
+    ));
     
     // Clean up existing socket
     if (this.socket) {
@@ -1404,37 +1052,28 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     // Don't reconnect if we've reached max attempts
-    if (this.reconnectAttempts >= this.reconnectionConfig.maxAttempts) {
+    if (!canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
       console.log(`[Socket] Max reconnection attempts (${this.reconnectionConfig.maxAttempts}) reached`);
-      this.emit('error', {
-        type: 'connection',
-        message: `Failed to reconnect after ${this.reconnectionConfig.maxAttempts} attempts`,
-        code: 'MAX_RECONNECT',
-        retry: false
-      });
+      this.emit('error', createSocketError(
+        'connection',
+        `Failed to reconnect after ${this.reconnectionConfig.maxAttempts} attempts`,
+        'MAX_RECONNECT',
+        undefined,
+        false
+      ));
       return;
     }
     
     // Calculate backoff delay with exponential increase
-    const baseDelay = Math.min(
-      this.reconnectionConfig.maxDelay,
-      this.reconnectionConfig.initialDelay * Math.pow(2, this.reconnectAttempts)
-    );
-    
-    // Add jitter to prevent thundering herd
-    const jitter = this.reconnectionConfig.jitter ? 
-      (Math.random() * 0.3 + 0.85) : // 0.85-1.15 randomization factor
-      1;
-    
-    const delay = Math.floor(baseDelay * jitter);
+    const delay = calculateBackoffDelay(this.reconnectAttempts, this.reconnectionConfig);
     
     console.log(`[Socket] Scheduling reconnection attempt ${this.reconnectAttempts + 1} in ${delay}ms`);
     
-    this.emit('reconnecting', {
-      attempt: this.reconnectAttempts + 1,
-      maxAttempts: this.reconnectionConfig.maxAttempts,
+    this.emit('reconnecting', createReconnectionEvent(
+      this.reconnectAttempts + 1,
+      this.reconnectionConfig.maxAttempts,
       delay
-    });
+    ));
     
     this.reconnectTimeout = setTimeout(async () => {
       if (this.chatId && this.publicKey) {
@@ -1449,7 +1088,7 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   /**
-   * Send arbitrary data with encryption
+   * Encrypt and send data packet
    * @param data The data to send
    * @returns Promise resolving to true if sent successfully
    */
@@ -1468,7 +1107,7 @@ export class AeroNyxSocket extends EventEmitter {
     
     try {
       // Encrypt the data with session key
-      const { encrypted, nonce } = await this.encryptData(data);
+      const { encrypted, nonce } = await encryptData(data, this.sessionKey);
       
       // Log details of packet being sent (excluding sensitive data)
       console.debug('[Socket] Sending encrypted packet:', {
@@ -1488,7 +1127,7 @@ export class AeroNyxSocket extends EventEmitter {
       };
       
       // Check socket is still connected
-      if (this.socket.readyState !== WebSocket.OPEN) {
+      if (!isSocketOpen(this.socket)) {
         console.error('[Socket] Socket closed while preparing to send data');
         this.queueMessage('data', data);
         return false;
@@ -1503,17 +1142,17 @@ export class AeroNyxSocket extends EventEmitter {
       // Queue message for retry
       this.queueMessage('data', data);
       
-      this.emit('error', {
-        type: 'data',
-        message: 'Failed to send encrypted data',
-        code: 'ENCRYPTION_ERROR',
-        details: error instanceof Error ? error.message : String(error),
-        retry: true,
-        originalError: error
-      });
+      this.emit('error', createSocketError(
+        'data',
+        'Failed to send encrypted data',
+        'ENCRYPTION_ERROR',
+        error instanceof Error ? error.message : String(error),
+        true,
+        error
+      ));
       
       // Check if the socket is still valid - if not, try to reconnect
-      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      if (!isSocketOpen(this.socket)) {
         console.warn('[Socket] Socket no longer open, will attempt reconnection');
         if (this.autoReconnect) {
           this.reconnect();
@@ -1569,13 +1208,14 @@ export class AeroNyxSocket extends EventEmitter {
       // Queue message for retry
       this.queueMessage('message', message);
       
-      this.emit('error', {
-        type: 'message',
-        message: 'Failed to send message',
-        code: 'SEND_ERROR',
-        retry: true,
-        originalError: error
-      });
+      this.emit('error', createSocketError(
+        'message',
+        'Failed to send message',
+        'SEND_ERROR',
+        undefined,
+        true,
+        error
+      ));
       
       return false;
     }
@@ -1656,12 +1296,13 @@ export class AeroNyxSocket extends EventEmitter {
         this.connectionListeners.delete(connectionListener);
         
         // Update UI to show connection timeout
-        this.emit('error', {
-          type: 'connection',
-          message: 'Connection attempt timed out. The server may be unavailable.',
-          code: 'CONNECTION_TIMEOUT',
-          retry: true
-        });
+        this.emit('error', createSocketError(
+          'connection',
+          'Connection attempt timed out. The server may be unavailable.',
+          'CONNECTION_TIMEOUT',
+          undefined,
+          true
+        ));
         
         reject(new Error('Timed out waiting for connection'));
       }, timeoutMs);
@@ -1782,14 +1423,10 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     try {
-      const leaveMessage = {
-        type: 'Disconnect',
-        reason: 0, // User initiated
-        message: 'User left the chat',
-      };
+      const leaveMessage = createDisconnectMessage(0, 'User left the chat');
       
       // Send disconnect message if socket is open
-      if (this.socket.readyState === WebSocket.OPEN) {
+      if (isSocketOpen(this.socket)) {
         this.socket.send(JSON.stringify(leaveMessage));
       }
     } catch (error) {
@@ -1873,16 +1510,14 @@ export class AeroNyxSocket extends EventEmitter {
    * @returns True if connected, false otherwise
    */
   isActive(): boolean {
-    return this.isConnected && 
-           !!this.socket && 
-           this.socket.readyState === WebSocket.OPEN;
+    return this.isConnected && isSocketOpen(this.socket);
   }
   
   /**
    * Get connection status
    * @returns Connection status string
    */
-  getConnectionState(): 'connected' | 'connecting' | 'disconnected' {
+  getConnectionState(): ConnectionStatus {
     if (this.isConnected) return 'connected';
     if (this.connecting) return 'connecting';
     return 'disconnected';
@@ -1893,7 +1528,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Useful for debugging and displaying to users
    */
   getConnectionInfo(): {
-    state: 'connected' | 'connecting' | 'disconnected',
+    state: ConnectionStatus,
     socketState: number | null,
     socketStateText: string,
     lastMessageTime: number,
@@ -1903,12 +1538,7 @@ export class AeroNyxSocket extends EventEmitter {
     pendingMessages: number
   } {
     const socketState = this.socket ? this.socket.readyState : null;
-    let socketStateText = 'Unknown';
-    
-    if (socketState === WebSocket.CONNECTING) socketStateText = 'CONNECTING';
-    else if (socketState === WebSocket.OPEN) socketStateText = 'OPEN';
-    else if (socketState === WebSocket.CLOSING) socketStateText = 'CLOSING';
-    else if (socketState === WebSocket.CLOSED) socketStateText = 'CLOSED';
+    const socketStateText = getSocketStateText(socketState);
     
     return {
       state: this.getConnectionState(),
