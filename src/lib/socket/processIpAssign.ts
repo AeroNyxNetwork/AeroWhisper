@@ -36,16 +36,16 @@ export async function processIpAssign(
         const encryptedSessionKey = bs58.decode(message.session_key);
         const keyNonce = bs58.decode(message.key_nonce);
         
-        // Try Web Crypto API first if available
+        // Try Web Crypto API first if available, but use AES-GCM instead of ChaCha20-Poly1305
         let decryptedSessionKey: Uint8Array | null = null;
         
         try {
-          if (keyNonce.length === 12) {
-            // Import shared secret as CryptoKey
+          if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle && keyNonce.length === 12) {
+            // Import shared secret as CryptoKey for AES-GCM (widely supported)
             const cryptoKey = await window.crypto.subtle.importKey(
               'raw',
               sharedSecret,
-              { name: 'ChaCha20-Poly1305' },
+              { name: 'AES-GCM' },
               false,
               ['decrypt']
             );
@@ -53,14 +53,18 @@ export async function processIpAssign(
             // Decrypt session key
             const decryptedBuffer = await window.crypto.subtle.decrypt(
               {
-                name: 'ChaCha20-Poly1305',
-                iv: keyNonce
+                name: 'AES-GCM',
+                iv: keyNonce,
+                tagLength: 128
               },
               cryptoKey,
               encryptedSessionKey
             );
             
             decryptedSessionKey = new Uint8Array(decryptedBuffer);
+            console.log('[Socket] Successfully decrypted session key with Web Crypto API using AES-GCM');
+          } else {
+            throw new Error('Web Crypto API not available or nonce size incompatible');
           }
         } catch (webCryptoError) {
           console.warn('[Socket] Failed to decrypt session key with Web Crypto API:', webCryptoError);
@@ -87,29 +91,28 @@ export async function processIpAssign(
           if (!decryptedSessionKey) {
             throw new Error('Failed to decrypt session key - authentication failed');
           }
+          
+          console.log('[Socket] Successfully decrypted session key with TweetNaCl');
         }
         
         return decryptedSessionKey;
-      } catch (error) {
-        console.error('[Socket] Error decrypting session key:', error);
-        throw error;
-      }
-    } else {
-      // If session key is missing, generate a random one for development
-      console.warn('[Socket] No session key or nonce provided by server, generating random key');
-      
-      // Try to use WebCrypto for key generation if available
-      if (window.crypto && window.crypto.getRandomValues) {
-        const randomKey = new Uint8Array(32);
-        window.crypto.getRandomValues(randomKey);
-        return randomKey;
       } else {
-        // Fall back to TweetNaCl
-        return nacl.randomBytes(32);
+        // If session key is missing, generate a random one for development
+        console.warn('[Socket] No session key or nonce provided by server, generating random key');
+        
+        // Try to use WebCrypto for key generation if available
+        if (window.crypto && window.crypto.getRandomValues) {
+          const randomKey = new Uint8Array(32);
+          window.crypto.getRandomValues(randomKey);
+          return randomKey;
+        } else {
+          // Fall back to TweetNaCl
+          return nacl.randomBytes(32);
+        }
       }
+    } catch (error) {
+      console.error('[Socket] Error processing IP assign message:', error);
+      throw error;
     }
-  } catch (error) {
-    console.error('[Socket] Error processing IP assign message:', error);
-    throw error;
   }
 }
