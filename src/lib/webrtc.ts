@@ -376,23 +376,35 @@ export class WebRTCManager extends EventEmitter {
     // Handle incoming messages
     this.dataChannel.onmessage = async (event) => {
       try {
-        // Handle encrypted message
-        if (this.sessionKey) {
-          // Parse encrypted message
-          const encryptedData = JSON.parse(event.data);
+        // Parse the incoming message
+        const message = JSON.parse(event.data);
+        
+        // Check if it's in the correct format
+        if (message.type === 'Data' && Array.isArray(message.encrypted) && Array.isArray(message.nonce)) {
+          // Convert arrays back to Uint8Arrays
+          const encryptedUint8 = new Uint8Array(message.encrypted);
+          const nonceUint8 = new Uint8Array(message.nonce);
           
-          if (encryptedData.ciphertext && encryptedData.nonce) {
-            // Decrypt the message
+          // Convert to base58 for our decryption function
+          const encryptedBase58 = bs58.encode(encryptedUint8);
+          const nonceBase58 = bs58.encode(nonceUint8);
+          
+          // Decrypt with session key
+          if (this.sessionKey) {
             try {
+              // Decrypt the inner payload
               const decryptedText = await decryptMessage(
-                encryptedData.ciphertext,
-                encryptedData.nonce,
+                encryptedBase58,
+                nonceBase58,
                 this.sessionKey
               );
               
-              // Parse decrypted message
-              const message = JSON.parse(decryptedText);
-              this.emit('message', message);
+              // Parse the decrypted JSON
+              const parsedData = JSON.parse(decryptedText);
+              
+              // Process the data based on its type
+              this.processDecryptedMessage(parsedData);
+              
             } catch (decryptError) {
               console.error('[WebRTC] Failed to decrypt P2P message:', decryptError);
               
@@ -403,28 +415,41 @@ export class WebRTCManager extends EventEmitter {
                 recoverable: true
               });
               
-              // For development/testing, still emit the message even if decryption fails
+              // For development/testing only
               if (process.env.NODE_ENV === 'development') {
+                console.warn('[WebRTC] Development mode: Processing message despite decryption failure');
                 try {
-                  const fallbackMessage = JSON.parse(event.data);
-                  this.emit('message', fallbackMessage);
+                  // Try to treat the payload as plaintext JSON for dev purposes
+                  if (typeof message.encrypted === 'string') {
+                    const fallbackData = JSON.parse(message.encrypted);
+                    this.processDecryptedMessage(fallbackData);
+                  }
                 } catch (parseError) {
-                  console.error('[WebRTC] Failed to parse P2P message:', parseError);
+                  console.error('[WebRTC] Failed to parse fallback message:', parseError);
                 }
               }
             }
           } else {
-            // Fallback for unencrypted messages
-            const message = JSON.parse(event.data);
-            this.emit('message', message);
+            // No session key, but still try to handle format correctly
+            console.warn('[WebRTC] No session key available for decryption');
+            this.emit('error', {
+              type: 'crypto',
+              message: 'No session key available for decryption',
+              details: 'Connection may not be secure',
+              recoverable: false
+            });
           }
         } else {
-          // No session key, just parse as JSON
-          const message = JSON.parse(event.data);
-          this.emit('message', message);
+          // Legacy format or invalid - this is just for backward compatibility
+          console.warn('[WebRTC] Received message in incorrect format:', message);
+          
+          // Try to handle it anyway if possible
+          if (typeof message === 'object' && message !== null) {
+            this.processDecryptedMessage(message);
+          }
         }
       } catch (error) {
-        console.error('[WebRTC] Error parsing message:', error);
+        console.error('[WebRTC] Error processing message:', error);
         this.emit('error', {
           type: 'parsing',
           message: 'Failed to parse received message',
@@ -444,33 +469,41 @@ export class WebRTCManager extends EventEmitter {
   /**
    * Handle the closure of a data channel
    */
-  private handleDataChannelClose(): void {
-    // If we're already reconnecting, don't start another attempt
-    if (this.isReconnecting) return;
+  private processDecryptedMessage(data: any): void {
+    // Check for message ID to prevent replay attacks
+    if (data.id && this.processedMessageIds.has(data.id)) {
+      console.warn('[WebRTC] Detected message replay attempt, ignoring');
+      return;
+    }
     
-    // If peer connection is still active, try to reopen the data channel
-    if (this.peerConnection && 
-        this.peerConnection.connectionState === 'connected' &&
-        this.remotePeerId) {
+    // Store message ID to prevent replay attacks
+    if (data.id) {
+      this.processedMessageIds.add(data.id);
       
-      console.log('[WebRTC] Attempting to reopen data channel');
-      
-      try {
-        // Create a new data channel
-        this.dataChannel = this.peerConnection.createDataChannel(
-          this.channelLabel, 
-          this.config.dataChannelOptions
-        );
-        this.setupDataChannel();
-      } catch (error) {
-        console.error('[WebRTC] Failed to reopen data channel:', error);
-        
-        // If we can't reopen the data channel, the connection might be broken
-        this.handleConnectionFailure();
+      // Limit the size of the set
+      if (this.processedMessageIds.size > 10000) {
+        const oldestId = this.processedMessageIds.values().next().value;
+        this.processedMessageIds.delete(oldestId);
       }
+    }
+    
+    // Emit event based on message type
+    if (data.type === 'message') {
+      this.emit('message', {
+        id: data.id || `p2p-msg-${Date.now()}`,
+        content: data.content,
+        senderId: data.senderId,
+        senderName: data.senderName || 'Unknown',
+        timestamp: data.timestamp || new Date().toISOString(),
+        isEncrypted: true,
+        metaData: {
+          encryptionType: 'P2P',
+          isP2P: true
+        }
+      });
     } else {
-      // If peer connection is gone, mark as disconnected
-      this.setConnectionState('disconnected');
+      // For other types, just forward the data
+      this.emit('data', data);
     }
   }
   
@@ -829,48 +862,79 @@ export class WebRTCManager extends EventEmitter {
    */
   async sendMessage(message: any, maxAttempts: number = 3): Promise<boolean> {
   // If not connected, queue message and return false
-      if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-        // Queue the message for later
-        this.queueMessage(message, maxAttempts);
-        return false;
-      }
-      
-      try {
-        if (this.sessionKey) {
-          // Encrypt the message with the session key
-          const messageString = JSON.stringify(message);
-          const { ciphertext, nonce } = await encryptMessage(messageString, this.sessionKey);
-          
-          // Send encrypted message
-          const encryptedMessage = JSON.stringify({
-            ciphertext,
-            nonce,
-          });
-          
-          this.dataChannel.send(encryptedMessage);
-        } else {
-          // Fallback to sending unencrypted messages
-          const messageString = JSON.stringify(message);
-          this.dataChannel.send(messageString);
-        }
-        return true;
-      } catch (error) {
-        console.error('[WebRTC] Error sending message:', error);
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      // Queue the message for later
+      this.queueMessage(message, maxAttempts);
+      return false;
+    }
+    
+    try {
+      if (this.sessionKey) {
+        // Encrypt the message with the session key
+        const messageString = JSON.stringify(message);
+        const { ciphertext, nonce } = await encryptMessage(messageString, this.sessionKey);
         
-        // Queue for retry if appropriate
-        if (maxAttempts > 0) {
-          this.queueMessage(message, maxAttempts);
-        }
+        // Important: For WebRTC we need the same message structure as the WebSocket
+        // Convert base58 encoded strings back to Uint8Arrays
+        const encryptedBytes = bs58.decode(ciphertext);
+        const nonceBytes = bs58.decode(nonce);
         
-        this.emit('error', {
-          type: 'messaging',
-          message: 'Failed to send message',
-          details: error instanceof Error ? error.message : String(error),
-          recoverable: true
+        // Create packet in the format expected by the server
+        const encryptedMessage = JSON.stringify({
+          type: 'Data',
+          encrypted: Array.from(encryptedBytes),  // Convert to regular array
+          nonce: Array.from(nonceBytes),          // Convert to regular array
+          counter: this.messageCounter++,
+          padding: null  // Optional padding
         });
         
-        return false;
+        // Debug log to verify format
+        console.debug('Sending WebRTC message with structure:', {
+          type: 'Data',
+          encrypted: `[${encryptedBytes.length} bytes]`,
+          nonce: `[${nonceBytes.length} bytes]`,
+          counter: this.messageCounter - 1
+        });
+        
+        this.dataChannel.send(encryptedMessage);
+      } else {
+        // Fallback to sending unencrypted messages (but still in the correct format)
+        // This should be avoided in production
+        const textEncoder = new TextEncoder();
+        const dataBytes = textEncoder.encode(JSON.stringify(message));
+        
+        // Create a random nonce
+        const nonce = new Uint8Array(12);
+        window.crypto.getRandomValues(nonce);
+        
+        const dataPacket = {
+          type: 'Data',
+          encrypted: Array.from(dataBytes),
+          nonce: Array.from(nonce),
+          counter: this.messageCounter++,
+          padding: null
+        };
+        
+        this.dataChannel.send(JSON.stringify(dataPacket));
       }
+      return true;
+    } catch (error) {
+      console.error('[WebRTC] Error sending message:', error);
+      
+      // Queue for retry if appropriate
+      if (maxAttempts > 0) {
+        this.queueMessage(message, maxAttempts);
+      }
+      
+      this.emit('error', {
+        type: 'messaging',
+        message: 'Failed to send message',
+        details: error instanceof Error ? error.message : String(error),
+        recoverable: true
+      });
+      
+      return false;
+    }
   }
   
   /**
