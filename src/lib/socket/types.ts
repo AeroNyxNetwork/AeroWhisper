@@ -76,6 +76,7 @@ export interface IpAssignMessage {
   session_key?: string;
   key_nonce?: string;
   server_public_key?: string;
+  encryption_algorithm?: string;
 }
 
 /**
