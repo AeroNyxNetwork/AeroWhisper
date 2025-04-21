@@ -1,6 +1,49 @@
 import * as nacl from 'tweetnacl';
 import * as bs58 from 'bs58';
 
+// Add ChaCha20-Poly1305 polyfill implementation
+// This is a placeholder where you'd import a compatible implementation
+// NOTE: You'll need to add a compatible library to your project
+
+/**
+ * ChaCha20-Poly1305 IETF implementation that is compatible with Rust's chacha20poly1305 crate
+ * 
+ * !!! IMPORTANT: This is a placeholder. You MUST replace this with a proper implementation !!!
+ * 
+ * Recommendation: Use a library like '@noble/ciphers' that provides IETF standard ChaCha20-Poly1305
+ * with 12-byte nonce support to ensure compatibility with your Rust server.
+ * 
+ * @param key 32-byte key as Uint8Array
+ * @param nonce 12-byte nonce as Uint8Array
+ * @param data Data to encrypt
+ * @returns Encrypted data (ciphertext + auth tag)
+ */
+function chacha20poly1305Encrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8Array): Uint8Array {
+  // THIS IS A PLACEHOLDER - Replace with actual implementation using a proper library
+  // Example using hypothetical library:
+  // return chacha20poly1305.encrypt(key, nonce, data);
+  
+  throw new Error('PLACEHOLDER: You must implement proper ChaCha20-Poly1305 encryption');
+}
+
+/**
+ * ChaCha20-Poly1305 IETF implementation that is compatible with Rust's chacha20poly1305 crate
+ * 
+ * !!! IMPORTANT: This is a placeholder. You MUST replace this with a proper implementation !!!
+ * 
+ * @param key 32-byte key as Uint8Array
+ * @param nonce 12-byte nonce as Uint8Array
+ * @param data Encrypted data to decrypt (ciphertext + auth tag)
+ * @returns Decrypted data or null if authentication fails
+ */
+function chacha20poly1305Decrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8Array): Uint8Array | null {
+  // THIS IS A PLACEHOLDER - Replace with actual implementation using a proper library
+  // Example using hypothetical library:
+  // return chacha20poly1305.decrypt(key, nonce, data);
+  
+  throw new Error('PLACEHOLDER: You must implement proper ChaCha20-Poly1305 decryption');
+}
+
 /**
  * Encrypt data using the session key
  * @param data Data to encrypt
@@ -34,15 +77,15 @@ export async function encryptData(
   }
   
   try {
-    // Using Web Crypto API for ChaCha20-Poly1305 encryption
-    // First, check if we can use WebCrypto with ChaCha20-Poly1305
     let encrypted: Uint8Array;
     
+    // First, try to use Web Crypto API with ChaCha20-Poly1305
     try {
       // Import key
       const cryptoKey = await window.crypto.subtle.importKey(
         'raw', 
         sessionKey, 
+        // Try different algorithm identifiers if needed
         { name: 'ChaCha20-Poly1305' },
         false, 
         ['encrypt']
@@ -61,28 +104,18 @@ export async function encryptData(
       encrypted = new Uint8Array(encryptedBuffer);
       console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 encryption');
     } catch (webCryptoError) {
-      // If Web Crypto API fails or doesn't support ChaCha20-Poly1305, fall back to TweetNaCl
-      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, falling back to TweetNaCl', webCryptoError);
+      // Web Crypto API didn't work - use compatible polyfill implementation
+      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, using polyfill', webCryptoError);
       
-      // For fallback, we'll use TweetNaCl but note that this isn't compatible with server
-      // This is just a fallback to avoid completely breaking
-      // Create a 24-byte nonce for TweetNaCl by padding the original 12-byte nonce with zeros
-      const paddedNonce = new Uint8Array(nacl.secretbox.nonceLength);
-      paddedNonce.set(nonce); // Copy the first 12 bytes, leaving the rest as zeros
-      
-      // Use the session key for encryption (ensuring it's 32 bytes for TweetNaCl)
-      const key = sessionKey.length === 32 ? 
-        sessionKey : 
-        (sessionKey.length > 32 ? 
-          sessionKey.slice(0, 32) : 
-          (() => {
-            const fullKey = new Uint8Array(32);
-            fullKey.set(sessionKey);
-            return fullKey;
-          })());
-      
-      // Encrypt with TweetNaCl's secretbox (but this won't be compatible with server)
-      encrypted = nacl.secretbox(messageUint8, paddedNonce, key);
+      // CRITICAL FIX: Use ChaCha20-Poly1305 polyfill that's compatible with the server
+      // instead of falling back to incompatible nacl.secretbox (XSalsa20-Poly1305)
+      try {
+        encrypted = chacha20poly1305Encrypt(sessionKey, nonce, messageUint8);
+        console.log('[Socket] Successfully used ChaCha20-Poly1305 polyfill for encryption');
+      } catch (polyfillError) {
+        console.error('[Socket] ChaCha20-Poly1305 polyfill failed:', polyfillError);
+        throw new Error('Encryption failed - ChaCha20-Poly1305 implementation required');
+      }
     }
     
     if (!encrypted) {
@@ -119,13 +152,15 @@ export async function decryptData(
     // Validate the nonce size - server should be sending 12-byte nonces
     if (nonce.length !== 12) {
       console.warn(`[Socket] Unexpected nonce length from server: ${nonce.length} bytes (expected 12)`);
-      // If the nonce is not 12 bytes but is 24 bytes, we might try to use only the first 12 bytes
+      // If the nonce is not 12 bytes but is 24 bytes, try to use only the first 12 bytes
       if (nonce.length === 24) {
         nonce = nonce.slice(0, 12);
       } else {
         throw new Error(`Invalid nonce length: ${nonce.length} (expected 12 bytes)`);
       }
     }
+    
+    let decryptedData: Uint8Array | null = null;
     
     // First try WebCrypto API with ChaCha20-Poly1305
     try {
@@ -148,55 +183,41 @@ export async function decryptData(
         encrypted
       );
       
-      // Convert decrypted data to string
-      const decoder = new TextDecoder();
-      const jsonString = decoder.decode(new Uint8Array(decryptedBuffer));
-      
+      decryptedData = new Uint8Array(decryptedBuffer);
       console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 decryption');
-      
-      // Parse JSON data
-      try {
-        return JSON.parse(jsonString);
-      } catch (jsonError) {
-        console.error('[Socket] Error parsing decrypted JSON:', jsonError);
-        throw new Error('Invalid JSON in decrypted message');
-      }
     } catch (webCryptoError) {
-      // If Web Crypto API fails or doesn't support ChaCha20-Poly1305, fall back to TweetNaCl
-      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, falling back to TweetNaCl', webCryptoError);
+      // Web Crypto API failed - use compatible polyfill implementation
+      console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305 decryption, using polyfill', webCryptoError);
       
-      // Create a 24-byte nonce for TweetNaCl by padding the original 12-byte nonce with zeros
-      const paddedNonce = new Uint8Array(nacl.secretbox.nonceLength);
-      paddedNonce.set(nonce); // Copy the 12-byte nonce, leaving the rest as zeros
-      
-      // Ensure the key is the right size for TweetNaCl (32 bytes)
-      const key = sessionKey.length === 32 ? 
-        sessionKey : 
-        (sessionKey.length > 32 ? 
-          sessionKey.slice(0, 32) : 
-          (() => {
-            const fullKey = new Uint8Array(32);
-            fullKey.set(sessionKey);
-            return fullKey;
-          })());
-      
-      // Try to decrypt with TweetNaCl (but this will likely fail for server-encrypted data)
-      const decrypted = nacl.secretbox.open(encrypted, paddedNonce, key);
-      
-      if (!decrypted) {
-        throw new Error('Decryption failed - authentication tag mismatch or corrupted data');
-      }
-      
-      // Convert binary data to string
-      const decoder = new TextDecoder();
-      const jsonString = decoder.decode(decrypted);
-      
+      // CRITICAL FIX: Use ChaCha20-Poly1305 polyfill that's compatible with the server
+      // instead of falling back to incompatible nacl.secretbox.open (XSalsa20-Poly1305)
       try {
-        return JSON.parse(jsonString);
-      } catch (jsonError) {
-        console.error('[Socket] Error parsing decrypted JSON:', jsonError);
-        throw new Error('Invalid JSON in decrypted message');
+        decryptedData = chacha20poly1305Decrypt(sessionKey, nonce, encrypted);
+        
+        if (!decryptedData) {
+          throw new Error('Decryption failed - authentication tag mismatch or corrupted data');
+        }
+        
+        console.log('[Socket] Successfully used ChaCha20-Poly1305 polyfill for decryption');
+      } catch (polyfillError) {
+        console.error('[Socket] ChaCha20-Poly1305 polyfill failed:', polyfillError);
+        throw new Error('Decryption failed - ChaCha20-Poly1305 implementation required');
       }
+    }
+    
+    if (!decryptedData) {
+      throw new Error('Decryption failed - no decrypted data produced');
+    }
+    
+    // Convert binary data to string
+    const decoder = new TextDecoder();
+    const jsonString = decoder.decode(decryptedData);
+    
+    try {
+      return JSON.parse(jsonString);
+    } catch (jsonError) {
+      console.error('[Socket] Error parsing decrypted JSON:', jsonError);
+      throw new Error('Invalid JSON in decrypted message');
     }
   } catch (error) {
     console.error('[Socket] Decryption error:', error);
