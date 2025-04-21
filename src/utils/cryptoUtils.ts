@@ -84,14 +84,21 @@ export async function encryptWithAesGcm(
       ['encrypt']
     );
     
+    // Create encryption params without additionalData by default
+    const encryptParams: AesGcmParams = {
+      name: 'AES-GCM',
+      iv: nonce,
+      tagLength: 128 // 16 bytes authentication tag
+    };
+    
+    // Only add additionalData if it's provided and valid
+    if (aad && aad instanceof Uint8Array && aad.byteLength > 0) {
+      encryptParams.additionalData = aad;
+    }
+    
     // Encrypt the data
     const encryptedBuffer = await window.crypto.subtle.encrypt(
-      {
-        name: 'AES-GCM',
-        iv: nonce,
-        tagLength: 128, // 16 bytes authentication tag
-        additionalData: aad // Optional AAD
-      },
+      encryptParams,
       cryptoKey,
       dataBytes
     );
@@ -144,14 +151,21 @@ export async function decryptWithAesGcm(
       ['decrypt']
     );
     
+    // Create decryption params without additionalData by default
+    const decryptParams: AesGcmParams = {
+      name: 'AES-GCM',
+      iv: nonce,
+      tagLength: 128 // 16 bytes authentication tag
+    };
+    
+    // Only add additionalData if it's provided and valid
+    if (aad && aad instanceof Uint8Array && aad.byteLength > 0) {
+      decryptParams.additionalData = aad;
+    }
+    
     // Decrypt the data
     const decryptedBuffer = await window.crypto.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: nonce,
-        tagLength: 128, // 16 bytes authentication tag
-        additionalData: aad // Optional AAD
-      },
+      decryptParams,
       cryptoKey,
       ciphertext
     );
