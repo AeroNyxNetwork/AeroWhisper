@@ -4,29 +4,35 @@ import * as bs58 from 'bs58';
 import { chacha20poly1305 } from '@noble/ciphers/chacha';
 
 /**
- * Encrypt data using ChaCha20-Poly1305 IETF standard (RFC 8439)
- * This is compatible with Rust's chacha20poly1305 crate
- * @param key 32-byte key
- * @param nonce 12-byte nonce
+ * ChaCha20-Poly1305 encryption function compatible with Rust's chacha20poly1305 crate
+ * @param key 32-byte key as Uint8Array
+ * @param nonce 12-byte nonce as Uint8Array
  * @param data Data to encrypt
  * @returns Encrypted data (ciphertext + auth tag)
  */
 function chacha20poly1305Encrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8Array): Uint8Array {
+  // Create a ChaCha20-Poly1305 instance with the key
   const chacha = chacha20poly1305(key);
+  
+  // Encrypt the data with the nonce
+  // Note: @noble/ciphers follows the RFC 8439 standard which is compatible with Rust's implementation
   return chacha.seal(nonce, data);
 }
 
 /**
- * Decrypt data using ChaCha20-Poly1305 IETF standard (RFC 8439)
- * This is compatible with Rust's chacha20poly1305 crate
- * @param key 32-byte key
- * @param nonce 12-byte nonce
- * @param data Encrypted data (ciphertext + auth tag)
+ * ChaCha20-Poly1305 decryption function compatible with Rust's chacha20poly1305 crate
+ * @param key 32-byte key as Uint8Array
+ * @param nonce 12-byte nonce as Uint8Array
+ * @param data Encrypted data to decrypt (ciphertext + auth tag)
  * @returns Decrypted data or null if authentication fails
  */
 function chacha20poly1305Decrypt(key: Uint8Array, nonce: Uint8Array, data: Uint8Array): Uint8Array | null {
   try {
+    // Create a ChaCha20-Poly1305 instance with the key
     const chacha = chacha20poly1305(key);
+    
+    // Decrypt and verify the data
+    // This will throw an error if the authentication tag doesn't match
     return chacha.open(nonce, data);
   } catch (error) {
     console.error('[Socket] ChaCha20-Poly1305 authentication failed:', error);
