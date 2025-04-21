@@ -22,6 +22,10 @@ import {
   useToast,
   Divider,
   Badge,
+  Alert,
+  AlertIcon,
+  AlertTitle,
+  AlertDescription,
 } from '@chakra-ui/react';
 import {
   FaLock,
@@ -32,6 +36,7 @@ import {
   FaExclamationTriangle,
   FaInfoCircle,
   FaEraser,
+  FaCheck,
 } from 'react-icons/fa';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -46,7 +51,7 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({ onSave }) =>
   
   // Security settings state
   const [settings, setSettings] = useState({
-    encryptionLevel: 'high', // standard, high, maximum
+    encryptionAlgorithm: 'aes-gcm', // Changed default from 'high' to 'aes-gcm'
     autoDeleteMessages: true,
     autoDeleteDelay: 24, // hours
     messageRetention: 7, // days, 0 = forever
@@ -76,6 +81,9 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({ onSave }) =>
     try {
       // In a real implementation, this would call an API endpoint
       await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
+      
+      // Save to localStorage
+      localStorage.setItem('aero-security-settings', JSON.stringify(settings));
       
       toast({
         title: "Settings saved",
@@ -194,9 +202,9 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({ onSave }) =>
           <VStack spacing={5} align="stretch">
             <FormControl>
               <FormLabel display="flex" alignItems="center">
-                <Text mr={2}>Encryption Level</Text>
+                <Text mr={2}>Encryption Method</Text>
                 <Tooltip
-                  label="Higher levels provide stronger security but may use more device resources"
+                  label="Choose the encryption algorithm used for your messages"
                   placement="top"
                 >
                   <Icon as={FaInfoCircle} color="gray.500" />
@@ -204,19 +212,36 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({ onSave }) =>
               </FormLabel>
               
               <Select
-                value={settings.encryptionLevel}
-                onChange={handleSelectChange('encryptionLevel')}
+                value={settings.encryptionAlgorithm}
+                onChange={handleSelectChange('encryptionAlgorithm')}
               >
-                <option value="standard">Standard (AES-256)</option>
-                <option value="high">High (ChaCha20-Poly1305)</option>
-                <option value="maximum">Maximum (Dual Encryption + Forward Secrecy)</option>
+                <option value="aes-gcm">AES-GCM (Recommended)</option>
+                <option value="standard">AES-256-CBC with HMAC</option>
+                <option value="chacha20poly1305">ChaCha20-Poly1305 (Limited Browser Support)</option>
               </Select>
               
-              {settings.encryptionLevel === 'maximum' && (
-                <Text fontSize="sm" color={colorMode === 'dark' ? 'yellow.300' : 'yellow.600'} mt={2}>
-                  <Icon as={FaExclamationTriangle} mr={1} />
-                  Maximum encryption may impact performance on older devices.
-                </Text>
+              {settings.encryptionAlgorithm === 'aes-gcm' && (
+                <Alert status="success" mt={2} borderRadius="md" size="sm">
+                  <AlertIcon as={FaCheck} />
+                  <Box>
+                    <AlertTitle fontSize="sm">Recommended</AlertTitle>
+                    <AlertDescription fontSize="xs">
+                      AES-GCM provides strong security and is widely supported by all browsers
+                    </AlertDescription>
+                  </Box>
+                </Alert>
+              )}
+              
+              {settings.encryptionAlgorithm === 'chacha20poly1305' && (
+                <Alert status="warning" mt={2} borderRadius="md" size="sm">
+                  <AlertIcon as={FaExclamationTriangle} />
+                  <Box>
+                    <AlertTitle fontSize="sm">Limited Browser Support</AlertTitle>
+                    <AlertDescription fontSize="xs">
+                      ChaCha20-Poly1305 is not supported by all browsers and may cause connection issues
+                    </AlertDescription>
+                  </Box>
+                </Alert>
               )}
             </FormControl>
             
