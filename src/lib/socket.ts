@@ -59,6 +59,9 @@ import {
   parseChallengeData
 } from './socket/handleChallenge';
 
+// Import IP assignment processor
+import { processIpAssign } from './socket/processIpAssign';
+
 /**
  * AeroNyx Socket - Manages WebSocket connections with error handling,
  * reconnection logic, and secure messaging
