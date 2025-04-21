@@ -394,13 +394,14 @@ export class AeroNyxSocket extends EventEmitter {
       type: 'Auth',
       public_key: this.publicKey,
       version: '1.0.0',
-      features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], // Add aes-gcm as first priority
+      features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], 
+      encryption_algorithm: 'aes-gcm', 
       nonce: Date.now().toString(),
     };
     
     try {
       this.socket.send(JSON.stringify(authMessage));
-      console.log('[Socket] Auth message sent successfully with AES-GCM support');
+      console.log('[Socket] Auth message sent successfully with AES-GCM preference');
     } catch (error) {
       console.error('[Socket] Error sending auth message:', error);
       this.emit('error', this.createSocketError(
@@ -735,6 +736,24 @@ export class AeroNyxSocket extends EventEmitter {
       // Log successful connection
       console.log(`[Socket] IP assigned: ${message.ip_address}, Session ID: ${message.session_id}`);
       
+      // New: Store encryption algorithm info if provided
+      if (message.encryption_algorithm) {
+        console.log(`[Socket] Server selected encryption algorithm: ${message.encryption_algorithm}`);
+        this.encryptionAlgorithm = message.encryption_algorithm;
+      } else {
+        // Default to AES-GCM if not specified
+        this.encryptionAlgorithm = 'aes-gcm';
+        console.log(`[Socket] Using default encryption algorithm: ${this.encryptionAlgorithm}`);
+      }
+      
+      // Log session key information
+      console.debug('[Socket] Session key info from server:', {
+        hasSessionKey: !!message.session_key,
+        hasKeyNonce: !!message.key_nonce,
+        hasServerPublicKey: !!message.server_public_key,
+        encryptionAlgorithm: this.encryptionAlgorithm
+      });
+      
       // If server_public_key wasn't provided in Challenge, it might be here
       if (message.server_public_key && !this.serverPublicKey) {
         this.serverPublicKey = message.server_public_key;
@@ -746,7 +765,8 @@ export class AeroNyxSocket extends EventEmitter {
           // In a real implementation, this would properly decrypt the key
           // For simplicity, we'll just store it directly
           this.sessionKey = bs58.decode(message.session_key);
-          console.log('[Socket] Session key stored, length:', this.sessionKey.length);
+          console.debug('[Socket] Session key received and decoded, length:', this.sessionKey.length);
+          console.debug('[Socket] Session key prefix:', Array.from(this.sessionKey.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''));
         } catch (keyError) {
           console.error('[Socket] Error processing session key:', keyError);
           
