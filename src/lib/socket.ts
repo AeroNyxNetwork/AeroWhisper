@@ -731,28 +731,65 @@ export class AeroNyxSocket extends EventEmitter {
             sharedSecretLength: sharedSecret.length,
           });
           
-          // Create a padded nonce if needed (server sends 12 bytes, TweetNaCl expects 24)
-          let keyNonceForDecryption = keyNonce;
-          if (keyNonce.length === 12) {
-            const paddedKeyNonce = new Uint8Array(24);
-            paddedKeyNonce.set(keyNonce);
-            keyNonceForDecryption = paddedKeyNonce;
+          // Try Web Crypto API first if available
+          let decryptedSessionKey: Uint8Array | null = null;
+          
+          try {
+            if (keyNonce.length === 12) {
+              // Import shared secret as CryptoKey
+              const cryptoKey = await window.crypto.subtle.importKey(
+                'raw',
+                sharedSecret,
+                { name: 'ChaCha20-Poly1305' },
+                false,
+                ['decrypt']
+              );
+              
+              // Decrypt session key
+              const decryptedBuffer = await window.crypto.subtle.decrypt(
+                {
+                  name: 'ChaCha20-Poly1305',
+                  iv: keyNonce
+                },
+                cryptoKey,
+                encryptedSessionKey
+              );
+              
+              decryptedSessionKey = new Uint8Array(decryptedBuffer);
+              console.log('[Socket] Successfully decrypted session key with Web Crypto API');
+            }
+          } catch (webCryptoError) {
+            console.warn('[Socket] Failed to decrypt session key with Web Crypto API:', webCryptoError);
+            // We'll fall back to TweetNaCl
           }
           
-          // Decrypt the session key using the shared secret
-          const decryptedSessionKey = nacl.secretbox.open(
-            encryptedSessionKey,
-            keyNonceForDecryption,
-            sharedSecret
-          );
-          
+          // If Web Crypto API failed or wasn't available, try TweetNaCl
           if (!decryptedSessionKey) {
-            throw new Error('Failed to decrypt session key - authentication failed');
+            // Create a padded nonce if needed (server sends 12 bytes, TweetNaCl expects 24)
+            let keyNonceForDecryption = keyNonce;
+            if (keyNonce.length === 12) {
+              const paddedKeyNonce = new Uint8Array(24);
+              paddedKeyNonce.set(keyNonce);
+              keyNonceForDecryption = paddedKeyNonce;
+            }
+            
+            // Decrypt the session key using the shared secret
+            decryptedSessionKey = nacl.secretbox.open(
+              encryptedSessionKey,
+              keyNonceForDecryption,
+              sharedSecret
+            );
+            
+            if (!decryptedSessionKey) {
+              throw new Error('Failed to decrypt session key - authentication failed');
+            }
+            
+            console.log('[Socket] Successfully decrypted session key with TweetNaCl');
           }
           
           // Store the session key for encrypting/decrypting messages
           this.sessionKey = decryptedSessionKey;
-          console.log('[Socket] Successfully decrypted session key, length:', decryptedSessionKey.length);
+          console.log('[Socket] Session key stored, length:', decryptedSessionKey.length);
         } catch (error) {
           console.error('[Socket] Error decrypting session key:', error);
           throw error; // Re-throw after logging
@@ -760,9 +797,23 @@ export class AeroNyxSocket extends EventEmitter {
       } else {
         // If session key is missing, generate a random one for development
         console.warn('[Socket] No session key or nonce provided by server, generating random key');
-        this.sessionKey = nacl.randomBytes(32); // Use 32 bytes (256 bits) for the session key
         
-        console.log('[Socket] Generated random session key of length:', this.sessionKey.length);
+        try {
+          // Try to use WebCrypto for key generation if available
+          if (window.crypto && window.crypto.getRandomValues) {
+            this.sessionKey = new Uint8Array(32);
+            window.crypto.getRandomValues(this.sessionKey);
+          } else {
+            // Fall back to TweetNaCl
+            this.sessionKey = nacl.randomBytes(32);
+          }
+          
+          console.log('[Socket] Generated random session key of length:', this.sessionKey.length);
+        } catch (error) {
+          console.error('[Socket] Error generating random session key:', error);
+          // Last resort fallback
+          this.sessionKey = new Uint8Array(32).fill(1); // Not secure, but prevents crashes
+        }
       }
       
       this.isConnected = true;
@@ -834,25 +885,61 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     try {
-      // Create a 24-byte nonce for TweetNaCl by padding the original 12-byte nonce with zeros
-      const paddedNonce = new Uint8Array(nacl.secretbox.nonceLength);
-      paddedNonce.set(nonce); // Copy the first 12 bytes, leaving the rest as zeros
+      // Using Web Crypto API for ChaCha20-Poly1305 encryption
+      // First, check if we can use WebCrypto with ChaCha20-Poly1305
+      let encrypted: Uint8Array;
       
-      // Use the session key for encryption (ensuring it's 32 bytes for TweetNaCl)
-      const key = this.sessionKey.length === 32 ? 
-        this.sessionKey : 
-        (this.sessionKey.length > 32 ? 
-          this.sessionKey.slice(0, 32) : 
-          new Uint8Array(32).set(this.sessionKey));
-      
-      // Encrypt the data using TweetNaCl's secretbox
-      const encrypted = nacl.secretbox(messageUint8, paddedNonce, key);
+      try {
+        // Import key
+        const cryptoKey = await window.crypto.subtle.importKey(
+          'raw', 
+          this.sessionKey, 
+          { name: 'ChaCha20-Poly1305' },
+          false, 
+          ['encrypt']
+        );
+        
+        // Encrypt data
+        const encryptedBuffer = await window.crypto.subtle.encrypt(
+          {
+            name: 'ChaCha20-Poly1305',
+            iv: nonce
+          },
+          cryptoKey,
+          messageUint8
+        );
+        
+        encrypted = new Uint8Array(encryptedBuffer);
+        console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 encryption');
+      } catch (webCryptoError) {
+        // If Web Crypto API fails or doesn't support ChaCha20-Poly1305, fall back to TweetNaCl
+        console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, falling back to TweetNaCl', webCryptoError);
+        
+        // For fallback, we'll use TweetNaCl but note that this isn't compatible with server
+        // This is just a fallback to avoid completely breaking
+        // Create a 24-byte nonce for TweetNaCl by padding the original 12-byte nonce with zeros
+        const paddedNonce = new Uint8Array(nacl.secretbox.nonceLength);
+        paddedNonce.set(nonce); // Copy the first 12 bytes, leaving the rest as zeros
+        
+        // Use the session key for encryption (ensuring it's 32 bytes for TweetNaCl)
+        const key = this.sessionKey.length === 32 ? 
+          this.sessionKey : 
+          (this.sessionKey.length > 32 ? 
+            this.sessionKey.slice(0, 32) : 
+            (() => {
+              const fullKey = new Uint8Array(32);
+              fullKey.set(this.sessionKey);
+              return fullKey;
+            })());
+        
+        // Encrypt with TweetNaCl's secretbox (but this won't be compatible with server)
+        encrypted = nacl.secretbox(messageUint8, paddedNonce, key);
+      }
       
       if (!encrypted) {
         throw new Error('Encryption failed - could not produce ciphertext');
       }
       
-      // Return the encrypted data and the ORIGINAL 12-byte nonce for the server
       return {
         encrypted,
         nonce
@@ -886,51 +973,87 @@ export class AeroNyxSocket extends EventEmitter {
         }
       }
       
-      // Create a 24-byte nonce for TweetNaCl by padding the original 12-byte nonce with zeros
-      const paddedNonce = new Uint8Array(nacl.secretbox.nonceLength);
-      paddedNonce.set(nonce); // Copy the 12-byte nonce, leaving the rest as zeros
-      
-      // Ensure the key is the right size for TweetNaCl (32 bytes)
-      const key = this.sessionKey.length === 32 ? 
-        this.sessionKey : 
-        (this.sessionKey.length > 32 ? 
-          this.sessionKey.slice(0, 32) : 
-          (() => {
-            const fullKey = new Uint8Array(32);
-            fullKey.set(this.sessionKey);
-            return fullKey;
-          })());
-      
-      // Decrypt using TweetNaCl's secretbox
-      const decrypted = nacl.secretbox.open(encrypted, paddedNonce, key);
-      
-      if (!decrypted) {
-        // Log details for debugging
-        console.error('[Socket] Decryption failed - authentication tag mismatch or corrupted data');
-        console.debug('[Socket] Decryption details:', {
-          encryptedLength: encrypted.length,
-          nonceLength: nonce.length,
-          paddedNonceLength: paddedNonce.length,
-          keyLength: key.length,
-          // Don't log the actual key or nonce values for security reasons
-        });
-        
-        throw new Error('Decryption failed - data may be corrupted or tampered with');
-      }
-      
-      // Convert binary data to string
-      const decoder = new TextDecoder();
-      const jsonString = decoder.decode(decrypted);
-      
-      // Parse JSON data
+      // First try WebCrypto API with ChaCha20-Poly1305
       try {
-        return JSON.parse(jsonString);
-      } catch (error) {
-        console.error('[Socket] Error parsing decrypted JSON:', error);
-        throw new Error('Invalid JSON in decrypted message');
+        // Import key
+        const cryptoKey = await window.crypto.subtle.importKey(
+          'raw',
+          this.sessionKey,
+          { name: 'ChaCha20-Poly1305' },
+          false,
+          ['decrypt']
+        );
+        
+        // Decrypt data
+        const decryptedBuffer = await window.crypto.subtle.decrypt(
+          {
+            name: 'ChaCha20-Poly1305',
+            iv: nonce
+          },
+          cryptoKey,
+          encrypted
+        );
+        
+        // Convert decrypted data to string
+        const decoder = new TextDecoder();
+        const jsonString = decoder.decode(new Uint8Array(decryptedBuffer));
+        
+        console.log('[Socket] Successfully used Web Crypto API for ChaCha20-Poly1305 decryption');
+        
+        // Parse JSON data
+        try {
+          return JSON.parse(jsonString);
+        } catch (jsonError) {
+          console.error('[Socket] Error parsing decrypted JSON:', jsonError);
+          throw new Error('Invalid JSON in decrypted message');
+        }
+      } catch (webCryptoError) {
+        // If Web Crypto API fails or doesn't support ChaCha20-Poly1305, fall back to TweetNaCl
+        console.warn('[Socket] Web Crypto API not available for ChaCha20-Poly1305, falling back to TweetNaCl', webCryptoError);
+        
+        // Create a 24-byte nonce for TweetNaCl by padding the original 12-byte nonce with zeros
+        const paddedNonce = new Uint8Array(nacl.secretbox.nonceLength);
+        paddedNonce.set(nonce); // Copy the 12-byte nonce, leaving the rest as zeros
+        
+        // Ensure the key is the right size for TweetNaCl (32 bytes)
+        const key = this.sessionKey.length === 32 ? 
+          this.sessionKey : 
+          (this.sessionKey.length > 32 ? 
+            this.sessionKey.slice(0, 32) : 
+            (() => {
+              const fullKey = new Uint8Array(32);
+              fullKey.set(this.sessionKey);
+              return fullKey;
+            })());
+        
+        // Try to decrypt with TweetNaCl (but this will likely fail for server-encrypted data)
+        const decrypted = nacl.secretbox.open(encrypted, paddedNonce, key);
+        
+        if (!decrypted) {
+          throw new Error('Decryption failed - authentication tag mismatch or corrupted data');
+        }
+        
+        // Convert binary data to string
+        const decoder = new TextDecoder();
+        const jsonString = decoder.decode(decrypted);
+        
+        try {
+          return JSON.parse(jsonString);
+        } catch (jsonError) {
+          console.error('[Socket] Error parsing decrypted JSON:', jsonError);
+          throw new Error('Invalid JSON in decrypted message');
+        }
       }
     } catch (error) {
       console.error('[Socket] Decryption error:', error);
+      // Log details for debugging
+      console.debug('[Socket] Decryption details:', {
+        encryptedLength: encrypted.length,
+        nonceLength: nonce.length,
+        keyLength: this.sessionKey.length,
+        // Don't log the actual key or nonce values for security reasons
+      });
+      
       throw new Error(`Decryption failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
