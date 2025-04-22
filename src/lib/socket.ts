@@ -396,7 +396,7 @@ export class AeroNyxSocket extends EventEmitter {
       public_key: this.publicKey,
       version: '1.0.0',
       features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], 
-      encryption_algorithm: 'aes-gcm', // Ensure this field is consistent
+      encryption_algorithm: 'aes-gcm', // Use the correct field name
       nonce: Date.now().toString(),
     };
     
@@ -1329,13 +1329,13 @@ export class AeroNyxSocket extends EventEmitter {
         algorithm: this.encryptionAlgorithm
       });
       
-      // Create data packet with the correct format
+      // Create data packet with the correct field name
       const dataPacket = {
         type: 'Data',
         encrypted: Array.from(ciphertext), // Convert Uint8Array to regular array for JSON
         nonce: Array.from(nonce),
         counter: this.messageCounter++,
-        encryption_algorithm: this.encryptionAlgorithm, // Use consistent field name
+        encryption_algorithm: this.encryptionAlgorithm, // Use the correct field name
         padding: null // Optional padding for length concealment
       };
       
