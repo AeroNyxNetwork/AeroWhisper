@@ -870,22 +870,21 @@ export class AeroNyxSocket extends EventEmitter {
         throw new Error('No session key available to decrypt message');
       }
       
-      // Convert array data to Uint8Array for decryption
-      const encryptedUint8 = new Uint8Array(message.encrypted);
-      const nonceUint8 = new Uint8Array(message.nonce);
+       const encryptedUint8 = new Uint8Array(message.encrypted);
+       const nonceUint8 = new Uint8Array(message.nonce);
       
       // Check if server specified an encryption algorithm
-      // Handle both field names for backward compatibility
-      const algorithm = message.encryption_algorithm || message.encryption || this.encryptionAlgorithm;
+      // Support both field names for backward compatibility
+       const algorithm = message.encryption_algorithm || message.encryption || this.encryptionAlgorithm;
       
       // Log packet details for debugging
-      console.debug('[Socket] Received encrypted data:', {
-        encryptedSize: encryptedUint8.length,
-        nonceSize: nonceUint8.length,
-        counter: message.counter,
-        algorithm: algorithm
-      });
-      
+        console.debug('[Socket] Received encrypted data:', {
+          encryptedSize: encryptedUint8.length,
+          nonceSize: nonceUint8.length,
+          counter: message.counter,
+          algorithm: algorithm
+        });
+        
       try {
         // Decrypt using AES-GCM
         const decryptedText = await decryptWithAesGcm(
@@ -1287,7 +1286,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @param data The data to send
    * @returns Promise resolving to true if sent successfully
    */
-  public async send(data: any): Promise<boolean> {
+  public async send(data: any): Promise {
     if (!this.socket || !this.isConnected) {
       console.error('[Socket] Cannot send data: not connected');
       this.queueMessage('data', data);
@@ -1301,41 +1300,18 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     try {
-      // Log session key details
-      console.debug('[Socket] Session key details:', {
-        length: this.sessionKey.length,
-        keyPrefix: Array.from(this.sessionKey.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''),
-        algorithm: this.encryptionAlgorithm
-      });
-      
       // Encrypt the data with session key using AES-GCM
       const messageString = JSON.stringify(data);
-      console.debug('[Socket] Message to encrypt:', {
-        dataType: data.type,
-        messageLength: messageString.length,
-        messageSample: messageString.substring(0, 50) + (messageString.length > 50 ? '...' : '')
-      });
       
       const { ciphertext, nonce } = await encryptWithAesGcm(messageString, this.sessionKey);
       
-      // Log details of packet being sent
-      console.debug('[Socket] Sending encrypted packet with AES-GCM:', {
-        dataType: data.type,
-        encryptedSize: ciphertext.length,
-        encryptedPrefix: Array.from(ciphertext.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
-        nonceSize: nonce.length,
-        nonce: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
-        counter: this.messageCounter,
-        algorithm: this.encryptionAlgorithm
-      });
-      
-      // Create data packet with the correct field name
+      // Create data packet with the correct format
       const dataPacket = {
         type: 'Data',
         encrypted: Array.from(ciphertext), // Convert Uint8Array to regular array for JSON
         nonce: Array.from(nonce),
         counter: this.messageCounter++,
-        encryption_algorithm: this.encryptionAlgorithm, // Use the correct field name
+        encryption_algorithm: this.encryptionAlgorithm, // Changed from 'encryption' to 'encryption_algorithm'
         padding: null // Optional padding for length concealment
       };
       
@@ -1365,14 +1341,6 @@ export class AeroNyxSocket extends EventEmitter {
         error
       ));
       
-      // Check if the socket is still valid - if not, try to reconnect
-      if (!this.isSocketOpen(this.socket)) {
-        console.warn('[Socket] Socket no longer open, will attempt reconnection');
-        if (this.autoReconnect) {
-          this.reconnect();
-        }
-      }
-      
       return false;
     }
   }
@@ -1382,8 +1350,8 @@ export class AeroNyxSocket extends EventEmitter {
    * @param message The message to send
    * @returns Promise resolving to true if sent successfully, false otherwise
    */
-  async sendMessage(message: MessageType): Promise<boolean> {
-    // If not connected, queue message and return false
+  async sendMessage(message: MessageType): Promise {
+  // If not connected, queue message and return false
     if (!this.socket || !this.isConnected) {
       console.log('[Socket] Not connected, queueing message');
       this.queueMessage('message', message);
@@ -1398,7 +1366,7 @@ export class AeroNyxSocket extends EventEmitter {
     
     try {
       // Create the message data object
-      onst messageData = {
+      const messageData = {  // Fixed: Changed "onst" to "const"
         type: 'message',
         id: message.id,
         content: message.content,
