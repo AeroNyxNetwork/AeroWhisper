@@ -44,7 +44,7 @@ export const EncryptionDiagnostics: React.FC<EncryptionDiagnosticsProps> = ({ on
   const [recommendedFix, setRecommendedFix] = useState<string | null>(null);
   
   useEffect(() => {
-  // Check AES-GCM support on mount
+    // Check AES-GCM support on mount
     const checkSupport = async () => {
       const supported = await isAesGcmSupported();
       setAesGcmSupported(supported);
@@ -53,7 +53,7 @@ export const EncryptionDiagnostics: React.FC<EncryptionDiagnosticsProps> = ({ on
     checkSupport();
   }, []);
   
- const runTests = async () => {
+  const runTests = async () => {
     setIsRunningTests(true);
     setTestResults(null);
     
