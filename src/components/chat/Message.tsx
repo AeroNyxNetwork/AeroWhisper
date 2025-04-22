@@ -17,6 +17,20 @@ export const Message: React.FC<MessageProps> = ({
   isOwnMessage = false, 
   showAvatar = true 
 }) => {
+
+  if (process.env.NODE_ENV === 'development') {
+    console.debug('[UI:Message] Rendering message:', {
+      id: message.id,
+      isOwnMessage,
+      contentLength: message.content?.length || 0,
+      contentPreview: message.content?.length > 30 ? message.content.substring(0, 30) + '...' : message.content,
+      sender: message.senderId,
+      senderName: message.senderName,
+      status: message.status,
+      isEncrypted: message.isEncrypted,
+      timestamp: message.timestamp
+    });
+  }
   const { colorMode } = useColorMode();
   const [showDetails, setShowDetails] = useState(false);
   
