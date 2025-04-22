@@ -1474,36 +1474,77 @@ export class AeroNyxSocket extends EventEmitter {
    * @returns Promise resolving to true if sent successfully
    */
   public async send(data: any): Promise<boolean> {
+  // ENHANCED LOGGING: Log detailed message sending attempt through socket
+    console.debug('[Socket:SEND] Sending data through socket:', {
+      socketState: this.socket ? (this.socket.readyState === WebSocket.OPEN ? 'OPEN' : 'NOT_OPEN') : 'NO_SOCKET',
+      isConnected: this.isConnected,
+      dataType: typeof data === 'object' ? data.type : 'unknown',
+      dataId: typeof data === 'object' ? data.id : 'unknown',
+      hasSessionKey: !!this.sessionKey,
+      sessionKeyLength: this.sessionKey?.length || 0,
+      content: typeof data === 'object' && data.content ? 
+                (data.content.length > 100 ? data.content.substring(0, 100) + '...' : data.content) : 
+                null,
+      messageSize: JSON.stringify(data).length
+    });
+  
     if (!this.socket || !this.isConnected) {
-      console.error('[Socket] Cannot send data: not connected');
+      console.error('[Socket:SEND] Cannot send data: not connected');
       this.queueMessage('data', data);
       return false;
     }
     
     if (!this.sessionKey) {
-      console.error('[Socket] Cannot send data: missing session key');
+      console.error('[Socket:SEND] Cannot send data: missing session key');
       this.queueMessage('data', data);
       return false;
     }
     
     try {
+      // ENHANCED LOGGING: Log details before creating encrypted packet
+      console.debug('[Socket:SEND] Creating encrypted packet:', {
+        dataType: typeof data === 'object' ? data.type : 'unknown',
+        dataKeys: typeof data === 'object' ? Object.keys(data) : 'N/A',
+        counter: this.messageCounter,
+        encryptionAlgorithm: this.encryptionAlgorithm
+      });
+      
       // Use our unified function to create an encrypted packet
-      // Internally uses 'AES-GCM' with Web Crypto API, but server expects 'aes256gcm'
       const dataPacket = await createEncryptedPacket(data, this.sessionKey, this.messageCounter++);
       
       // Check socket is still connected
       if (!this.isSocketOpen(this.socket)) {
-        console.error('[Socket] Socket closed while preparing to send data');
+        console.error('[Socket:SEND] Socket closed while preparing to send data');
         this.queueMessage('data', data);
         return false;
       }
       
+      // ENHANCED LOGGING: Log final packet details
+      const packetJson = JSON.stringify(dataPacket);
+      console.debug('[Socket:SEND] Sending packet to server:', {
+        packetType: dataPacket.type,
+        packetSize: packetJson.length,
+        encryptedLength: dataPacket.encrypted.length,
+        nonceLength: dataPacket.nonce.length,
+        algorithm: dataPacket.encryption_algorithm,
+        counter: dataPacket.counter
+      });
+      
       // Send the packet
-      this.socket.send(JSON.stringify(dataPacket));
-      console.debug('[Socket] Packet sent successfully');
+      this.socket.send(packetJson);
+      console.debug('[Socket:SEND] Packet sent successfully');
       return true;
     } catch (error) {
-      console.error('[Socket] Error sending encrypted data:', error);
+      console.error('[Socket:SEND] Error sending encrypted data:', error);
+      
+      // ENHANCED LOGGING: Log detailed error information
+      if (error instanceof Error) {
+        console.error('[Socket:SEND] Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+      }
       
       // Queue message for retry
       this.queueMessage('data', data);
@@ -1527,15 +1568,27 @@ export class AeroNyxSocket extends EventEmitter {
    * @returns Promise resolving to true if sent successfully, false otherwise
    */
   async sendMessage(message: MessageType): Promise<boolean> {
+  // ENHANCED LOGGING: Log message sending attempt
+    console.debug('[Socket:SEND:MESSAGE] Sending chat message:', {
+      messageId: message.id,
+      content: message.content ? (message.content.length > 100 ? message.content.substring(0, 100) + '...' : message.content) : 'empty',
+      senderId: message.senderId,
+      senderName: message.senderName,
+      timestamp: message.timestamp,
+      socketState: this.socket ? (this.socket.readyState === WebSocket.OPEN ? 'OPEN' : 'NOT_OPEN') : 'NO_SOCKET',
+      isConnected: this.isConnected,
+      hasSessionKey: !!this.sessionKey
+    });
+  
     // If not connected, queue message and return false
     if (!this.socket || !this.isConnected) {
-      console.log('[Socket] Not connected, queueing message');
+      console.log('[Socket:SEND:MESSAGE] Not connected, queueing message');
       this.queueMessage('message', message);
       return false;
     }
     
     if (!this.sessionKey) {
-      console.error('[Socket] Cannot send message: missing session key');
+      console.error('[Socket:SEND:MESSAGE] Cannot send message: missing session key');
       this.queueMessage('message', message);
       return false;
     }
@@ -1551,17 +1604,38 @@ export class AeroNyxSocket extends EventEmitter {
         timestamp: message.timestamp,
       };
       
+      // ENHANCED LOGGING: Log the message data being sent
+      console.debug('[Socket:SEND:MESSAGE] Prepared message data:', {
+        messageId: messageData.id,
+        contentLength: messageData.content.length,
+        contentPreview: messageData.content.length > 100 ? 
+                      messageData.content.substring(0, 100) + '...' : 
+                      messageData.content
+      });
+      
       // Use our encryption method
+      console.debug('[Socket:SEND:MESSAGE] Sending message through socket.send()');
       const success = await this.send(messageData);
       
       // If send was successful, log it
       if (success) {
-        console.log('[Socket] Message sent successfully');
+        console.log('[Socket:SEND:MESSAGE] Message sent successfully');
+      } else {
+        console.error('[Socket:SEND:MESSAGE] Failed to send message through socket');
       }
       
       return success;
     } catch (error) {
-      console.error('[Socket] Error sending message:', error);
+      console.error('[Socket:SEND:MESSAGE] Error sending message:', error);
+      
+      // ENHANCED LOGGING: Log detailed error information
+      if (error instanceof Error) {
+        console.error('[Socket:SEND:MESSAGE] Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+      }
       
       // Queue message for retry
       this.queueMessage('message', message);
