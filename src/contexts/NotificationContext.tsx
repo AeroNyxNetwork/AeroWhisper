@@ -160,6 +160,15 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }
   }, [isClient]);
   
+  // Helper to update favicon badge
+  const updateFaviconBadge = useCallback((count: number) => {
+    if (!isClient) return;
+    
+    // This would require a favicon badge library to implement
+    // For simplicity, we'll just implement the concept here
+    console.log(`Updating favicon badge: ${count}`);
+  }, [isClient]);
+  
   // Update unread count whenever unreadMessages changes
   useEffect(() => {
     if (!isClient) return;
@@ -179,17 +188,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     } else {
       document.title = 'AeroNyx';
     }
-  }, [unreadMessages, isClient]);
+  }, [unreadMessages, isClient, updateFaviconBadge]); // Fixed: Added updateFaviconBadge to dependency array
   
-  // Helper to update favicon with badge
-  const updateFaviconBadge = (count: number) => {
-    if (!isClient) return;
-    
-    // This would require a favicon badge library to implement
-    // For simplicity, we'll just implement the concept here
-    console.log(`Updating favicon badge: ${count}`);
-  };
-
   // Request notification permission
   const requestPermission = async (): Promise<boolean> => {
     if (!isClient || !notificationsSupported) return false;
