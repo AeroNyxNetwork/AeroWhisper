@@ -895,7 +895,7 @@ export class WebRTCManager extends EventEmitter {
         encrypted: Array.from(ciphertext),
         nonce: Array.from(nonce),
         counter: messageCounter,
-        encryption_algorithm: 'aes-gcm', // Use consistent field name 
+        encryption_algorithm: 'aes256gcm', // Use consistent field name 
         padding: null // Optional padding
       });
       
@@ -905,7 +905,7 @@ export class WebRTCManager extends EventEmitter {
         encryptedLength: ciphertext.length,
         nonceLength: nonce.length,
         counter: messageCounter,
-        encryption_algorithm: 'aes-gcm'
+        encryption_algorithm: 'aes256gcm'
       });
       
       // Send the message
@@ -954,7 +954,7 @@ export class WebRTCManager extends EventEmitter {
         algorithm = encryptedData.encryption;
         console.debug('[WebRTC] Using deprecated encryption field:', algorithm);
       } else {
-        algorithm = 'aes-gcm'; // Default
+        algorithm = 'aes256gcm'; // Default
         console.debug('[WebRTC] No algorithm field found, using default:', algorithm);
       }
       
