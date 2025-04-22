@@ -3,9 +3,11 @@ import {
   DisconnectMessage,
   PingMessage,
   PongMessage,
-  SocketError
+  SocketError,
+  DataPacket
 } from './types';
 import { createPongMessage } from './networking';
+import { decryptWithAesGcm } from '../utils/cryptoUtils';
 
 /**
  * Parse WebSocket message from different formats
@@ -111,4 +113,51 @@ export function processErrorMessage(message: ErrorMessage): SocketError {
 export function shouldReconnectAfterDisconnect(message: DisconnectMessage): boolean {
   // If reason is non-fatal (< 4000), attempt to reconnect
   return message.reason < 4000;
+}
+
+/**
+ * Process encrypted data packet with support for both field names
+ * @param packet The data packet to process
+ * @param sessionKey The session key for decryption
+ * @returns Decrypted data or null if decryption fails
+ */
+export async function processDataPacket(
+  packet: DataPacket,
+  sessionKey: Uint8Array
+): Promise<any | null> {
+  try {
+    if (!sessionKey) {
+      throw new Error('No session key available to decrypt message');
+    }
+    
+    // Convert array data to Uint8Array for decryption
+    const encryptedUint8 = new Uint8Array(packet.encrypted);
+    const nonceUint8 = new Uint8Array(packet.nonce);
+    
+    // Check if server specified an encryption algorithm
+    // Support both field names for backward compatibility
+    const algorithm = packet.encryption_algorithm || (packet as any).encryption || 'aes-gcm';
+    
+    // Log packet details for debugging
+    console.debug('[Socket] Processing encrypted data packet:', {
+      encryptedSize: encryptedUint8.length,
+      nonceSize: nonceUint8.length,
+      counter: packet.counter,
+      algorithm: algorithm
+    });
+    
+    // Decrypt using AES-GCM
+    const decryptedText = await decryptWithAesGcm(
+      encryptedUint8,
+      nonceUint8,
+      sessionKey,
+      'string'   // Output as string
+    ) as string;
+    
+    // Parse the decrypted JSON
+    return JSON.parse(decryptedText);
+  } catch (error) {
+    console.error('[Socket] Error processing data packet:', error);
+    return null;
+  }
 }
