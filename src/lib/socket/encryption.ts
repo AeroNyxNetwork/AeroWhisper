@@ -104,7 +104,7 @@ export async function createEncryptedPacket(
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes-gcm', // Use this field name consistently
+    encryption_algorithm: 'aes256gcm', // Updated from 'aes-gcm'
     padding: null // Optional padding for length concealment
   };
 }
