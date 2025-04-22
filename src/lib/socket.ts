@@ -1350,7 +1350,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @param message The message to send
    * @returns Promise resolving to true if sent successfully, false otherwise
    */
-  async sendMessage(message: MessageType): Promise {
+  async sendMessage(message: MessageType): Promise<boolean> {
   // If not connected, queue message and return false
     if (!this.socket || !this.isConnected) {
       console.log('[Socket] Not connected, queueing message');
@@ -1366,7 +1366,7 @@ export class AeroNyxSocket extends EventEmitter {
     
     try {
       // Create the message data object
-      const messageData = {  // Fixed: Changed "onst" to "const"
+      const messageData = {
         type: 'message',
         id: message.id,
         content: message.content,
