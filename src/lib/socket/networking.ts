@@ -1,5 +1,6 @@
 // src/lib/socket/networking.ts
-import { PingMessage, PongMessage } from './types';
+import { PingMessage, PongMessage, AuthMessage } from './types';
+import { generateNonce } from '../utils/cryptoUtils';
 
 /**
  * Create a ping message
@@ -94,15 +95,18 @@ export function createDisconnectMessage(reason: number, message: string) {
 
 /**
  * Create an auth message with AES-GCM support
+ * Updated to explicitly specify encryption_algorithm
+ * 
  * @param publicKey User's public key
  * @returns Auth message object
  */
-export function createAuthMessage(publicKey: string) {
+export function createAuthMessage(publicKey: string): AuthMessage {
   return {
     type: 'Auth',
     public_key: publicKey,
     version: '1.0.0',
-    features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], // Add aes-gcm as first priority
+    features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], // List aes-gcm first for preference
+    encryption_algorithm: 'aes-gcm', // Explicitly specify preferred algorithm with correct field name
     nonce: Date.now().toString(),
   };
 }
@@ -125,49 +129,4 @@ export function needsHealthCheck(lastMessageTime: number, checkInterval: number 
  */
 export function isConnectionDead(lastMessageTime: number, deadThreshold: number = 90000): boolean {
   return (Date.now() - lastMessageTime) > deadThreshold;
-}
-
-/**
- * Generate a nonce for encryption
- * @param length Length of nonce in bytes (default: 12 for AES-GCM)
- * @returns Nonce as Uint8Array
- */
-export function generateNonce(length: number = 12): Uint8Array {
-  const nonce = new Uint8Array(length);
-  if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
-    window.crypto.getRandomValues(nonce);
-  } else {
-    // Fallback for environments without crypto.getRandomValues
-    for (let i = 0; i < length; i++) {
-      nonce[i] = Math.floor(Math.random() * 256);
-    }
-  }
-  return nonce;
-}
-
-/**
- * Check if Web Crypto API is available with AES-GCM support
- * @returns True if Web Crypto API with AES-GCM is available
- */
-export function isAesGcmSupported(): boolean {
-  if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
-    return false;
-  }
-  
-  try {
-    // Try to create a simple AES-GCM key to test support
-    const promise = window.crypto.subtle.generateKey(
-      {
-        name: 'AES-GCM',
-        length: 256
-      },
-      false,
-      ['encrypt', 'decrypt']
-    );
-    
-    // If we got here without an exception, it's likely supported
-    return !!promise;
-  } catch (error) {
-    return false;
-  }
 }
