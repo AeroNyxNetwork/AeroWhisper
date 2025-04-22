@@ -101,7 +101,7 @@ class CryptoHelper {
             hash: 'SHA-256'
           },
           passwordKey,
-          { name: 'AES-GCM', length: 256 },
+          { name: 'aes256gcm', length: 256 },
           true,
           ['encrypt', 'decrypt']
         );
@@ -285,14 +285,14 @@ export const encryptMessage = async (
 };
 
 /**
- * Encrypt message using Web Crypto API (AES-GCM)
+ * Encrypt message using Web Crypto API (aes256gcm)
  */
 async function encryptMessageWebCrypto(
   message: string,
   key: Uint8Array
 ): Promise<{ ciphertext: string, nonce: string }> {
   try {
-    // Generate a random IV/nonce (12 bytes for AES-GCM)
+    // Generate a random IV/nonce (12 bytes for aes256gcm)
     const iv = new Uint8Array(12);
     window.crypto.getRandomValues(iv);
     
@@ -300,7 +300,7 @@ async function encryptMessageWebCrypto(
     const cryptoKey = await window.crypto.subtle.importKey(
       'raw',
       key,
-      { name: 'AES-GCM', length: 256 },
+      { name: 'aes256gcm', length: 256 },
       false,
       ['encrypt']
     );
@@ -312,7 +312,7 @@ async function encryptMessageWebCrypto(
     // Encrypt the message
     const ciphertext = await window.crypto.subtle.encrypt(
       {
-        name: 'AES-GCM',
+        name: 'aes256gcm',
         iv: iv,
         tagLength: 128 // 16 bytes authentication tag
       },
@@ -369,7 +369,7 @@ export const decryptMessage = async (
 };
 
 /**
- * Decrypt message using Web Crypto API (AES-GCM)
+ * Decrypt message using Web Crypto API (aes256gcm)
  */
 async function decryptMessageWebCrypto(
   ciphertext: string,
@@ -385,7 +385,7 @@ async function decryptMessageWebCrypto(
     const cryptoKey = await window.crypto.subtle.importKey(
       'raw',
       key,
-      { name: 'AES-GCM', length: 256 },
+      { name: 'aes256gcm', length: 256 },
       false,
       ['decrypt']
     );
@@ -393,7 +393,7 @@ async function decryptMessageWebCrypto(
     // Decrypt the message
     const decrypted = await window.crypto.subtle.decrypt(
       {
-        name: 'AES-GCM',
+        name: 'aes256gcm',
         iv: ivData,
         tagLength: 128 // 16 bytes authentication tag
       },
@@ -502,7 +502,7 @@ export const encryptSessionKey = async (
 ): Promise<{ encryptedKey: string, keyNonce: string }> => {
   try {
     if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-      // Generate a random IV/nonce (12 bytes for AES-GCM)
+      // Generate a random IV/nonce (12 bytes for aes256gcm)
       const iv = new Uint8Array(12);
       window.crypto.getRandomValues(iv);
       
@@ -510,7 +510,7 @@ export const encryptSessionKey = async (
       const cryptoKey = await window.crypto.subtle.importKey(
         'raw',
         sharedSecret,
-        { name: 'AES-GCM', length: 256 },
+        { name: 'aes256gcm', length: 256 },
         false,
         ['encrypt']
       );
@@ -518,7 +518,7 @@ export const encryptSessionKey = async (
       // Encrypt the session key
       const ciphertext = await window.crypto.subtle.encrypt(
         {
-          name: 'AES-GCM',
+          name: 'aes256gcm',
           iv: iv,
           tagLength: 128 // 16 bytes authentication tag
         },
@@ -564,7 +564,7 @@ export const decryptSessionKey = async (
       const cryptoKey = await window.crypto.subtle.importKey(
         'raw',
         sharedSecret,
-        { name: 'AES-GCM', length: 256 },
+        { name: 'aes256gcm', length: 256 },
         false,
         ['decrypt']
       );
@@ -572,7 +572,7 @@ export const decryptSessionKey = async (
       // Decrypt the session key
       const decrypted = await window.crypto.subtle.decrypt(
         {
-          name: 'AES-GCM',
+          name: 'aes256gcm',
           iv: ivData,
           tagLength: 128 // 16 bytes authentication tag
         },
