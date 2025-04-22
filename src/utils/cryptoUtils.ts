@@ -96,6 +96,14 @@ export async function encryptWithAesGcm(
       dataBytes
     );
     
+    // Log encryption details for debugging
+    console.debug('[Crypto] AES-GCM encryption succeeded:', {
+      plaintextLength: dataBytes.length,
+      ciphertextLength: encryptedBuffer.byteLength,
+      nonceLength: nonce.length,
+      keyLength: key.length
+    });
+    
     return {
       ciphertext: new Uint8Array(encryptedBuffer),
       nonce
@@ -133,6 +141,14 @@ export async function decryptWithAesGcm(
   }
   
   try {
+    // Log decryption attempt details for debugging
+    console.debug('[Crypto] Attempting AES-GCM decryption:', {
+      ciphertextLength: ciphertext.length,
+      nonceLength: nonce.length,
+      keyLength: key.length,
+      noncePrefix: Array.from(nonce.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('')
+    });
+    
     // Import the key
     const cryptoKey = await window.crypto.subtle.importKey(
       'raw',
@@ -157,6 +173,12 @@ export async function decryptWithAesGcm(
     );
     
     const decryptedBytes = new Uint8Array(decryptedBuffer);
+    
+    // Log successful decryption
+    console.debug('[Crypto] AES-GCM decryption succeeded:', {
+      ciphertextLength: ciphertext.length,
+      decryptedLength: decryptedBuffer.byteLength
+    });
     
     // Return as string or binary based on outputType
     return outputType === 'string'
@@ -221,13 +243,15 @@ export async function deriveKeyHkdf(
  * @param encrypted Encrypted data
  * @param nonce Nonce used for encryption
  * @param counter Message counter for replay protection
+ * @param algorithm Encryption algorithm used (default: 'aes-gcm')
  * @param padding Optional padding for traffic analysis protection
  * @returns JSON-safe object for transmission
  */
-export function prepareForTransmission(
+export function prepareEncryptedPacket(
   encrypted: Uint8Array, 
   nonce: Uint8Array, 
   counter: number,
+  algorithm: string = 'aes-gcm',
   padding?: Uint8Array
 ): any {
   return {
@@ -235,6 +259,7 @@ export function prepareForTransmission(
     encrypted: Array.from(encrypted),
     nonce: Array.from(nonce),
     counter,
+    encryption: algorithm, // Use 'encryption' field to match server expectations
     padding: padding ? Array.from(padding) : null
   };
 }
