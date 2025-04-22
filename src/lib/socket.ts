@@ -1334,7 +1334,7 @@ export class AeroNyxSocket extends EventEmitter {
         encrypted: Array.from(ciphertext), // Convert Uint8Array to regular array for JSON
         nonce: Array.from(nonce),
         counter: this.messageCounter++,
-        encryption: this.encryptionAlgorithm, // This field should match what the server expects
+        encryption_algorithm: 'aes-gcm', 
         padding: null // Optional padding for length concealment
       };
       
