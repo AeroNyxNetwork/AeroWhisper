@@ -892,7 +892,7 @@ export class WebRTCManager extends EventEmitter {
         encrypted: Array.from(ciphertext), // Convert to regular array for JSON
         nonce: Array.from(nonce),
         counter: messageCounter,
-        encryption: 'aes-gcm', // Ensure this field is correctly named to match server expectations
+        encryption_algorithm: 'aes-gcm', // Ensure this field is correctly named to match server expectations
         padding: null // Optional padding
       });
       
