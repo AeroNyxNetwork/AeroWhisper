@@ -889,7 +889,7 @@ export class WebRTCManager extends EventEmitter {
       // Create packet with the correct field naming
       const encryptedMessage = JSON.stringify({
         type: 'Data',
-        encrypted: Array.from(ciphertext), // Convert to regular array for JSON
+        encrypted: Array.from(ciphertext),
         nonce: Array.from(nonce),
         counter: messageCounter,
         encryption_algorithm: 'aes-gcm', // Use consistent field name expected by server
