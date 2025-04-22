@@ -1,10 +1,10 @@
 // src/lib/socket.ts
 
+// src/lib/socket.ts
 import { EventEmitter } from 'events';
 import { MessageType } from '../types/chat';
 import * as bs58 from 'bs58';
 import * as nacl from 'tweetnacl';
-
 // Import from utility modules
 import { 
   createEncryptedPacket, 
@@ -16,21 +16,17 @@ import {
   signChallenge,
   deriveSessionKey
 } from '../utils/cryptoUtils';
-
-mport { 
+import { 
   createChallengeResponse 
 } from './socket/handleChallenge';
-
 import {
   processIpAssign
 } from './socket/processIpAssign';
-
 import {
   parseMessage,
   createSocketError,
   processDataPacket
 } from './socket/messageHandlers';
-
 import {
   createWebSocketUrl,
   isSocketOpen,
@@ -40,7 +36,6 @@ import {
  * Connection status types for socket
  */
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
-
 /**
  * Types of errors that can occur during socket operations
  */
@@ -52,7 +47,6 @@ export interface SocketError {
   retry: boolean;
   originalError?: any;
 }
-
 /**
  * Configuration for reconnection strategy
  */
@@ -62,28 +56,22 @@ export interface ReconnectionConfig {
   maxAttempts: number;
   jitter: boolean;
 }
-
 // Pending message interface
 interface PendingMessage {
   type: string;
   data: any;
 }
-
 // Queued message interface
 interface QueuedMessage {
   data: any;
   attempts: number;
 }
-
 // Challenge message interface
 interface ChallengeMessage {
   id: string;
   data: number[] | string;
   server_public_key?: string;
 }
-
-
-
 // IP assignment message interface
 interface IpAssignMessage {
   ip_address: string;
@@ -93,14 +81,12 @@ interface IpAssignMessage {
   server_public_key?: string;
   encryption_algorithm?: string;
 }
-
 // Ping message interface
 interface PingMessage {
   type: 'Ping';
   timestamp: number;
   sequence: number;
 }
-
 // Pong message interface
 interface PongMessage {
   type: 'Pong';
@@ -108,21 +94,18 @@ interface PongMessage {
   server_timestamp: number;
   sequence: number;
 }
-
 // Error message interface
 interface ErrorMessage {
   type: 'Error';
   message: string;
   code?: number;
 }
-
 // Disconnect message interface
 interface DisconnectMessage {
   type: 'Disconnect';
   reason: number;
   message: string;
 }
-
 /**
  * Default reconnection configuration with exponential backoff
  */
@@ -132,7 +115,6 @@ const DEFAULT_RECONNECTION_CONFIG: ReconnectionConfig = {
   maxAttempts: 10,    // Max 10 reconnection attempts
   jitter: true        // Add randomness to prevent thundering herd
 };
-
 /**
  * AeroNyx Socket - Manages WebSocket connections with error handling,
  * reconnection logic, and secure messaging
