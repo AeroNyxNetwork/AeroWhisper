@@ -163,7 +163,18 @@ export const useChat = (chatId: string) => {
   
   // Send a message
   const sendMessage = useCallback(async (content: string): Promise<boolean> => {
+  // ENHANCED LOGGING: Log message sending request from UI
+    console.debug('[Chat:SEND] Message send request from UI:', {
+      chatId,
+      contentLength: content.length,
+      contentPreview: content.length > 100 ? content.substring(0, 100) + '...' : content,
+      hasUser: !!user,
+      hasSocket: !!socketRef.current,
+      connectionStatus
+    });
+    
     if (!user || !socketRef.current || !chatId || content.trim() === '') {
+      console.error('[Chat:SEND] Cannot send message: missing required data');
       return false;
     }
     
@@ -174,6 +185,7 @@ export const useChat = (chatId: string) => {
       
       // Generate a unique message ID
       messageId = uuid();
+      console.debug('[Chat:SEND] Generated message ID:', messageId);
       
       // Create message object
       const message: MessageType = {
@@ -186,12 +198,24 @@ export const useChat = (chatId: string) => {
         status: 'sending',
       };
       
+      // ENHANCED LOGGING: Log the message object being created
+      console.debug('[Chat:SEND] Created message object:', {
+        id: message.id,
+        senderId: message.senderId,
+        senderName: message.senderName,
+        contentLength: message.content.length,
+        contentPreview: message.content.length > 100 ? message.content.substring(0, 100) + '...' : message.content,
+        timestamp: message.timestamp
+      });
+      
       // Add message to local state immediately (optimistic UI)
       setMessages(prev => [...prev, message]);
       
       // Try to send via WebRTC if connected
       let sentViaP2P = false;
       if (webrtcRef.current && webrtcRef.current.isDirectlyConnected()) {
+        console.debug('[Chat:SEND] Attempting to send via WebRTC (P2P)');
+        
         const p2pMessage = {
           id: messageId,
           content,
@@ -200,15 +224,31 @@ export const useChat = (chatId: string) => {
           timestamp: new Date().toISOString(),
         };
         
-        sentViaP2P = await webrtcRef.current.sendMessage(p2pMessage);
+        try {
+          sentViaP2P = await webrtcRef.current.sendMessage(p2pMessage);
+          console.debug('[Chat:SEND] WebRTC send result:', sentViaP2P ? 'Success' : 'Failed');
+        } catch (p2pError) {
+          console.error('[Chat:SEND] WebRTC send error:', p2pError);
+          sentViaP2P = false;
+        }
+      } else {
+        console.debug('[Chat:SEND] WebRTC not connected, skipping P2P attempt');
       }
       
       // If not sent via P2P, send via server
       if (!sentViaP2P) {
-        await socketRef.current.sendMessage(message);
+        console.debug('[Chat:SEND] Sending via Socket (server)');
+        try {
+          await socketRef.current.sendMessage(message);
+          console.debug('[Chat:SEND] Socket send completed');
+        } catch (socketError) {
+          console.error('[Chat:SEND] Socket send error:', socketError);
+          throw socketError; // Rethrow to handle in the catch block below
+        }
       }
       
       // Update message status to sent
+      console.debug('[Chat:SEND] Updating message status to "sent"');
       setMessages(prev => 
         prev.map(m => 
           m.id === messageId 
@@ -217,9 +257,20 @@ export const useChat = (chatId: string) => {
         )
       );
       
+      console.debug('[Chat:SEND] Message sending process completed successfully');
       return true;
     } catch (error) {
-      console.error('Failed to send message:', error);
+      console.error('[Chat:SEND] Failed to send message:', error);
+      
+      // ENHANCED LOGGING: Log detailed error information
+      if (error instanceof Error) {
+        console.error('[Chat:SEND] Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+          messageId
+        });
+      }
       
       // Update message status to failed
       setMessages(prev => 
@@ -242,24 +293,6 @@ export const useChat = (chatId: string) => {
       setIsSendingMessage(false);
     }
   }, [user, chatId, toast]);
-  
-  // Leave the chat room
-  const leaveChat = useCallback(async () => {
-    try {
-      if (socketRef.current) {
-        await socketRef.current.leaveChat();
-      }
-      
-      if (webrtcRef.current) {
-        webrtcRef.current.disconnect();
-      }
-      
-      return true;
-    } catch (error) {
-      console.error('Failed to leave chat:', error);
-      return false;
-    }
-  }, []);
   
   // Delete the chat room (if creator)
   const deleteChat = useCallback(async () => {
