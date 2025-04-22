@@ -94,7 +94,7 @@ export function createDisconnectMessage(reason: number, message: string) {
 }
 
 /**
- * Create an auth message with AES-GCM support
+ * Create an auth message with aes256gcm support
  * Updated to explicitly specify encryption_algorithm
  * 
  * @param publicKey User's public key
@@ -105,7 +105,7 @@ export function createAuthMessage(publicKey: string): AuthMessage {
     type: 'Auth',
     public_key: publicKey,
     version: '1.0.0',
-    features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // List aes-gcm first for preference
+    features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // List aes256gcm first for preference
     encryption_algorithm: 'aes256gcm', // Explicitly specify preferred algorithm with correct field name
     nonce: Date.now().toString(),
   };
