@@ -14,10 +14,9 @@ export async function isAesGcmSupported(): Promise<boolean> {
   
   try {
     // Try to create a simple key to test AES-GCM support
-    // Web Crypto API requires 'AES-GCM' (with hyphen and capitalization)
     await window.crypto.subtle.generateKey(
       {
-        name: 'AES-GCM', // Web Crypto API name format
+        name: 'AES-GCM',
         length: 256
       },
       false,
@@ -48,13 +47,19 @@ export function generateNonce(length: number = 12): Uint8Array {
     }
   }
   
+  // Log the generated nonce for debugging
+  console.debug('[Crypto] Generated nonce:', {
+    nonceHex: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
+    nonceBytes: Array.from(nonce),
+    nonceLength: nonce.length
+  });
+  
   return nonce;
 }
 
 /**
  * Encrypt data using AES-GCM via Web Crypto API
  * This is a unified implementation that should be used throughout the application
- * NOTE: We use 'AES-GCM' for Web Crypto API but server expects 'aes256gcm'
  * 
  * @param plaintext Data to encrypt (string or Uint8Array)
  * @param key 32-byte encryption key
@@ -73,25 +78,36 @@ export async function encryptWithAesGcm(
     ? new TextEncoder().encode(plaintext)
     : plaintext;
   
+  // Log plaintext data for debugging
+  console.debug('[Crypto] Encrypting data:', {
+    plaintextType: typeof plaintext,
+    plaintextLength: plaintextData.length,
+    plaintextPreview: typeof plaintext === 'string' 
+      ? (plaintext.length > 100 ? plaintext.substring(0, 100) + '...' : plaintext)
+      : 'Binary data',
+    keyLength: key.length,
+    keyPrefix: Array.from(key.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+  });
+  
   // Generate a 12-byte nonce for AES-GCM
   const nonce = generateNonce(12);
   
   try {
     // Web Crypto API implementation
     if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-      // Import the raw key - IMPORTANT: Use 'AES-GCM' for Web Crypto API
+      // Import the raw key
       const cryptoKey = await window.crypto.subtle.importKey(
         'raw', 
         key, 
-        { name: 'AES-GCM' }, // Web Crypto API uses 'AES-GCM' (not 'aes256gcm')
+        { name: 'AES-GCM' },
         false, 
         ['encrypt']
       );
       
-      // Encrypt the data - IMPORTANT: Use 'AES-GCM' for Web Crypto API
+      // Encrypt the data
       const ciphertextBuffer = await window.crypto.subtle.encrypt(
         {
-          name: 'AES-GCM', // Web Crypto API uses 'AES-GCM' (not 'aes256gcm')
+          name: 'AES-GCM',
           iv: nonce,
           tagLength: 128 // 16 bytes tag, standard for AES-GCM
         },
@@ -101,10 +117,12 @@ export async function encryptWithAesGcm(
       
       const ciphertext = new Uint8Array(ciphertextBuffer);
       
-      console.debug('[Crypto] AES-GCM encryption successful:', {
-        plaintextLength: plaintextData.length,
+      // Log encryption result for debugging
+      console.debug('[Crypto] Encryption result:', {
         ciphertextLength: ciphertext.length,
-        nonceLength: nonce.length
+        ciphertextPrefix: Array.from(ciphertext.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(''),
+        nonceUsed: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
+        authTagPresent: ciphertext.length >= plaintextData.length + 16 ? 'Yes' : 'No'
       });
       
       return { ciphertext, nonce };
@@ -119,8 +137,6 @@ export async function encryptWithAesGcm(
 
 /**
  * Decrypt data using AES-GCM via Web Crypto API
- * This is a unified implementation that should be used throughout the application
- * NOTE: We use 'AES-GCM' for Web Crypto API but server expects 'aes256gcm'
  * 
  * @param ciphertext Encrypted data
  * @param nonce Nonce used for encryption
@@ -142,21 +158,29 @@ export async function decryptWithAesGcm(
     throw new Error(`Invalid nonce: length=${nonce?.length ?? 'null'} (expected 12 bytes for AES-GCM)`);
   }
   
+  // Log decryption attempt for debugging
+  console.debug('[Crypto] Decrypting data:', {
+    ciphertextLength: ciphertext.length,
+    ciphertextPrefix: Array.from(ciphertext.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(''),
+    nonceHex: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
+    keyPrefix: Array.from(key.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+  });
+  
   try {
     if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-      // Import the raw key - IMPORTANT: Use 'AES-GCM' for Web Crypto API
+      // Import the raw key
       const cryptoKey = await window.crypto.subtle.importKey(
         'raw',
         key,
-        { name: 'AES-GCM' }, // Web Crypto API uses 'AES-GCM' (not 'aes256gcm')
+        { name: 'AES-GCM' },
         false,
         ['decrypt']
       );
       
-      // Decrypt the data - IMPORTANT: Use 'AES-GCM' for Web Crypto API
+      // Decrypt the data
       const decryptedBuffer = await window.crypto.subtle.decrypt(
         {
-          name: 'AES-GCM', // Web Crypto API uses 'AES-GCM' (not 'aes256gcm')
+          name: 'AES-GCM',
           iv: nonce,
           tagLength: 128 // Must match encryption setting
         },
@@ -167,9 +191,25 @@ export async function decryptWithAesGcm(
       // Convert to requested output format
       if (outputType === 'string') {
         const decoder = new TextDecoder();
-        return decoder.decode(new Uint8Array(decryptedBuffer));
+        const decryptedText = decoder.decode(new Uint8Array(decryptedBuffer));
+        
+        // Log decryption result for debugging
+        console.debug('[Crypto] Decryption result (string):', {
+          decryptedLength: decryptedText.length,
+          decryptedPreview: decryptedText.length > 100 ? decryptedText.substring(0, 100) + '...' : decryptedText
+        });
+        
+        return decryptedText;
       } else {
-        return new Uint8Array(decryptedBuffer);
+        const decryptedData = new Uint8Array(decryptedBuffer);
+        
+        // Log decryption result for debugging
+        console.debug('[Crypto] Decryption result (binary):', {
+          decryptedLength: decryptedData.length,
+          decryptedPrefix: Array.from(decryptedData.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join('')
+        });
+        
+        return decryptedData;
       }
     } else {
       throw new Error('Web Crypto API not available');
@@ -198,18 +238,38 @@ export async function createEncryptedPacket(
   // Convert to string if needed
   const messageString = typeof data === 'string' ? data : JSON.stringify(data);
   
-  // Encrypt with AES-GCM (internally uses Web Crypto API's 'AES-GCM')
+  // Log data to be encrypted for debugging
+  console.debug('[Crypto] Creating encrypted packet:', {
+    dataType: typeof data,
+    dataPreview: typeof data === 'object' ? JSON.stringify(data).substring(0, 100) + '...' : messageString,
+    messageLength: messageString.length,
+    sessionKeyLength: sessionKey.length,
+    counter: counter
+  });
+  
+  // Encrypt with AES-GCM
   const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
   
-  // Create properly formatted packet with server-expected field naming
-  return {
+  // Create packet
+  const packet = {
     type: 'Data',
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes256gcm', // Server expects 'aes256gcm' (not 'AES-GCM')
+    encryption_algorithm: 'aes256gcm', // Server expects 'aes256gcm'
     padding: null // Optional padding for length concealment
   };
+  
+  // Log final packet for debugging
+  console.debug('[Crypto] Encrypted packet created:', {
+    packetType: packet.type,
+    encryptedLength: packet.encrypted.length,
+    nonceLength: packet.nonce.length,
+    algorithm: packet.encryption_algorithm,
+    hasPadding: packet.padding !== null
+  });
+  
+  return packet;
 }
 
 /**
@@ -232,6 +292,15 @@ export async function processEncryptedPacket(
       return null;
     }
     
+    // Log packet being processed for debugging
+    console.debug('[Crypto] Processing encrypted packet:', {
+      packetType: packet.type,
+      encryptedLength: packet.encrypted.length,
+      nonceLength: packet.nonce.length,
+      encryptionAlgorithm: packet.encryption_algorithm || packet.encryption || 'unknown',
+      counter: packet.counter
+    });
+    
     // Convert arrays to Uint8Arrays
     const ciphertext = new Uint8Array(packet.encrypted);
     const nonce = new Uint8Array(packet.nonce);
@@ -250,7 +319,7 @@ export async function processEncryptedPacket(
       console.debug('[Crypto] No algorithm field found, using default:', algorithm);
     }
     
-    // Decrypt the data (internally uses Web Crypto API's 'AES-GCM')
+    // Decrypt the data
     const decryptedString = await decryptWithAesGcm(
       ciphertext,
       nonce,
@@ -259,7 +328,16 @@ export async function processEncryptedPacket(
     ) as string;
     
     // Parse the decrypted JSON
-    return JSON.parse(decryptedString);
+    const parsedData = JSON.parse(decryptedString);
+    
+    // Log decryption success with parsed data type
+    console.debug('[Crypto] Successfully processed encrypted packet:', {
+      resultType: typeof parsedData,
+      hasId: !!parsedData.id,
+      dataType: parsedData.type || 'unknown'
+    });
+    
+    return parsedData;
   } catch (error) {
     console.error('[Crypto] Failed to process encrypted packet:', error);
     return null;
@@ -278,6 +356,14 @@ export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Arra
   if (!sharedSecret || sharedSecret.length === 0) {
     throw new Error('Invalid shared secret');
   }
+  
+  // Log key derivation input for debugging
+  console.debug('[Crypto] Deriving session key:', {
+    sharedSecretLength: sharedSecret.length,
+    sharedSecretPrefix: Array.from(sharedSecret.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+    saltLength: salt.length,
+    saltPrefix: Array.from(salt.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+  });
   
   if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
     try {
@@ -302,7 +388,15 @@ export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Arra
         256 // 32 bytes (256 bits)
       );
       
-      return new Uint8Array(derivedBits);
+      const derivedKey = new Uint8Array(derivedBits);
+      
+      // Log derived key for debugging
+      console.debug('[Crypto] Session key derived:', {
+        derivedKeyLength: derivedKey.length,
+        derivedKeyPrefix: Array.from(derivedKey.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+      });
+      
+      return derivedKey;
     } catch (error) {
       console.warn('[Crypto] Web Crypto API HKDF failed, using fallback:', error);
       // Fall back to a simplified HMAC-based KDF implementation
@@ -316,71 +410,83 @@ export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Arra
   const prk = nacl.hash(new Uint8Array([...hmacKey, ...info]));
   
   // Return first 32 bytes as the session key
-  return prk.slice(0, 32);
+  const derivedKey = prk.slice(0, 32);
+  
+  // Log derived key for debugging
+  console.debug('[Crypto] Session key derived (fallback):', {
+    derivedKeyLength: derivedKey.length,
+    derivedKeyPrefix: Array.from(derivedKey.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+  });
+  
+  return derivedKey;
 }
 
 /**
- * Parse challenge data for authentication
- * @param challengeData Challenge data in array or string format
- * @returns Parsed challenge as Uint8Array
+ * Test function to verify encryption compatibility with server
+ * 
+ * @param sessionKey Session key to use for testing
+ * @returns true if the test passed, false otherwise
  */
-export function parseChallengeData(challengeData: number[] | string): Uint8Array {
-  let parsed: Uint8Array;
-  
-  // Handle array format (from server)
-  if (Array.isArray(challengeData)) {
-    parsed = new Uint8Array(challengeData);
-    console.log('[Crypto] Challenge data is array, length:', parsed.length);
-  } 
-  // Handle string format (may be base58 or base64)
-  else if (typeof challengeData === 'string') {
-    try {
-      // Try to parse as base58
-      parsed = bs58.decode(challengeData);
-      console.log('[Crypto] Challenge data decoded as base58, length:', parsed.length);
-    } catch (e) {
-      // Fallback to base64
-      try {
-        const buffer = Buffer.from(challengeData, 'base64');
-        parsed = new Uint8Array(buffer);
-        console.log('[Crypto] Challenge data decoded as base64, length:', parsed.length);
-      } catch (e2) {
-        // Last resort: try to use the string directly as UTF-8
-        const encoder = new TextEncoder();
-        parsed = encoder.encode(challengeData);
-        console.log('[Crypto] Challenge data encoded as UTF-8, length:', parsed.length);
-      }
-    }
-  } else {
-    throw new Error('Invalid challenge data format');
-  }
-  
-  return parsed;
-}
-
-/**
- * Sign a challenge using Ed25519
- * @param challenge Challenge data to sign
- * @param secretKey Ed25519 secret key
- * @returns Signature as a base58 string
- */
-export function signChallenge(
-  challenge: Uint8Array,
-  secretKey: Uint8Array
-): string {
+export async function testEncryptionCompat(sessionKey: Uint8Array): Promise<boolean> {
   try {
-    // Verify the keypair is valid
-    if (secretKey.length !== 64) {
-      throw new Error(`Invalid Ed25519 secret key length: ${secretKey.length} (expected 64 bytes)`);
-    }
+    console.debug('[Crypto] Running encryption compatibility test');
+    // Create test data
+    const testData = {
+      type: "test",
+      message: "Encryption compatibility test",
+      timestamp: Date.now()
+    };
     
-    // Sign the challenge using nacl.sign.detached
-    const signature = nacl.sign.detached(challenge, secretKey);
-    const signatureB58 = bs58.encode(signature);
+    // Stringify for encryption
+    const testString = JSON.stringify(testData);
+    console.debug('[Crypto] Test data:', {
+      original: testData,
+      stringified: testString
+    });
     
-    return signatureB58;
+    // Encrypt
+    console.debug('[Crypto] Encrypting test data...');
+    const { ciphertext, nonce } = await encryptWithAesGcm(testString, sessionKey);
+    
+    // Create packet
+    const packet = {
+      type: "Data",
+      encrypted: Array.from(ciphertext),
+      nonce: Array.from(nonce),
+      counter: 1,
+      encryption_algorithm: "aes256gcm"
+    };
+    
+    console.debug('[Crypto] Test packet created:', {
+      packetType: packet.type,
+      encryptedLength: packet.encrypted.length,
+      nonceLength: packet.nonce.length,
+      algorithm: packet.encryption_algorithm
+    });
+    
+    // Decrypt
+    console.debug('[Crypto] Attempting to decrypt test packet...');
+    const decrypted = await decryptWithAesGcm(
+      new Uint8Array(packet.encrypted),
+      new Uint8Array(packet.nonce),
+      sessionKey,
+      'string'
+    );
+    
+    // Parse and verify
+    const parsedDecrypted = JSON.parse(decrypted as string);
+    console.debug('[Crypto] Decryption test result:', parsedDecrypted);
+    
+    // Check if decrypted data matches original
+    const success = 
+      parsedDecrypted.type === testData.type && 
+      parsedDecrypted.message === testData.message;
+    
+    console.debug(`[Crypto] Encryption compatibility test ${success ? 'PASSED' : 'FAILED'}`);
+    
+    return success;
   } catch (error) {
-    console.error('[Crypto] Error signing challenge:', error);
-    throw error;
+    console.error('[Crypto] Encryption compatibility test failed:', error);
+    return false;
   }
 }
