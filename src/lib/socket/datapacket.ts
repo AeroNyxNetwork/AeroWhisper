@@ -7,7 +7,7 @@
 import { 
   encryptWithAesGcm, 
   decryptWithAesGcm
-} from '../utils/cryptoUtils';
+} from '../../utils/cryptoUtils';
 
 import { DataPacket } from './types';
 
