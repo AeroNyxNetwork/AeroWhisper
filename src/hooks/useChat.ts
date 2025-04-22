@@ -1,3 +1,5 @@
+// src/hooks/useChat.ts
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { v4 as uuid } from 'uuid';
@@ -163,7 +165,7 @@ export const useChat = (chatId: string) => {
   
   // Send a message
   const sendMessage = useCallback(async (content: string): Promise<boolean> => {
-  // ENHANCED LOGGING: Log message sending request from UI
+    // ENHANCED LOGGING: Log message sending request from UI
     console.debug('[Chat:SEND] Message send request from UI:', {
       chatId,
       contentLength: content.length,
@@ -292,31 +294,88 @@ export const useChat = (chatId: string) => {
     } finally {
       setIsSendingMessage(false);
     }
-  }, [user, chatId, toast]);
+  }, [user, chatId, toast, connectionStatus]);
   
-  // Delete the chat room (if creator)
-  const deleteChat = useCallback(async () => {
+  // Leave the chat room - Fix: Define the leaveChat function that was missing
+  const leaveChat = useCallback(async (): Promise<boolean> => {
+    console.debug('[Chat:LEAVE] Attempting to leave chat room:', chatId);
+    
     try {
-      if (!socketRef.current || !chatInfo || chatInfo.createdBy !== user?.id) {
-        throw new Error('Not authorized to delete this chat room');
+      if (socketRef.current) {
+        console.debug('[Chat:LEAVE] Calling socket.leaveChat()');
+        await socketRef.current.leaveChat();
+        console.debug('[Chat:LEAVE] Successfully left chat room');
+      } else {
+        console.warn('[Chat:LEAVE] No socket available to leave chat');
       }
       
-      await socketRef.current.deleteChat();
-      
       if (webrtcRef.current) {
+        console.debug('[Chat:LEAVE] Disconnecting WebRTC');
         webrtcRef.current.disconnect();
       }
       
       return true;
     } catch (error) {
-      console.error('Failed to delete chat:', error);
+      console.error('[Chat:LEAVE] Failed to leave chat:', error);
+      
+      // Enhanced error logging
+      if (error instanceof Error) {
+        console.error('[Chat:LEAVE] Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+      }
+      
+      return false;
+    }
+  }, [chatId]);
+  
+  // Delete the chat room (if creator)
+  const deleteChat = useCallback(async (): Promise<void> => {
+    console.debug('[Chat:DELETE] Attempting to delete chat room:', chatId);
+    
+    try {
+      if (!socketRef.current || !chatInfo || chatInfo.createdBy !== user?.id) {
+        console.error('[Chat:DELETE] Not authorized to delete this chat room', {
+          hasSocket: !!socketRef.current,
+          hasChatInfo: !!chatInfo,
+          isCreator: chatInfo?.createdBy === user?.id
+        });
+        throw new Error('Not authorized to delete this chat room');
+      }
+      
+      console.debug('[Chat:DELETE] Calling socket.deleteChat()');
+      await socketRef.current.deleteChat();
+      console.debug('[Chat:DELETE] Successfully deleted chat room');
+      
+      if (webrtcRef.current) {
+        console.debug('[Chat:DELETE] Disconnecting WebRTC');
+        webrtcRef.current.disconnect();
+      }
+    } catch (error) {
+      console.error('[Chat:DELETE] Failed to delete chat:', error);
+      
+      // Enhanced error logging
+      if (error instanceof Error) {
+        console.error('[Chat:DELETE] Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+      }
+      
       throw error;
     }
-  }, [chatInfo, user?.id]);
+  }, [chatInfo, user?.id, chatId]);
   
   // Connect to a peer directly via WebRTC
-  const connectToPeer = useCallback(async (peerId: string) => {
+  const connectToPeer = useCallback(async (peerId: string): Promise<boolean> => {
+    console.debug('[Chat:P2P] Attempting to connect to peer:', peerId);
+    
     if (!webrtcRef.current) {
+      console.warn('[Chat:P2P] P2P not available for this chat');
+      
       toast({
         title: "P2P not available",
         description: "Peer-to-peer connection is not available for this chat",
@@ -328,11 +387,23 @@ export const useChat = (chatId: string) => {
     }
     
     try {
+      console.debug('[Chat:P2P] Initiating WebRTC connection to peer');
       await webrtcRef.current.connectToPeer(peerId);
       setConnectionStatus('p2p-connecting');
+      console.debug('[Chat:P2P] P2P connection initiated successfully');
       return true;
     } catch (error) {
-      console.error('Failed to connect to peer:', error);
+      console.error('[Chat:P2P] Failed to connect to peer:', error);
+      
+      // Enhanced error logging
+      if (error instanceof Error) {
+        console.error('[Chat:P2P] Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+      }
+      
       toast({
         title: "P2P connection failed",
         description: "Could not establish direct connection",
@@ -345,13 +416,29 @@ export const useChat = (chatId: string) => {
   }, [toast]);
   
   // Refresh participants list
-  const refreshParticipants = useCallback(async () => {
-    if (!socketRef.current) return;
+  const refreshParticipants = useCallback(async (): Promise<void> => {
+    console.debug('[Chat:PARTICIPANTS] Refreshing participants list');
+    
+    if (!socketRef.current) {
+      console.warn('[Chat:PARTICIPANTS] No socket available to refresh participants');
+      return;
+    }
     
     try {
+      console.debug('[Chat:PARTICIPANTS] Calling socket.requestParticipants()');
       await socketRef.current.requestParticipants();
+      console.debug('[Chat:PARTICIPANTS] Participants refresh request sent');
     } catch (error) {
-      console.error('Failed to refresh participants:', error);
+      console.error('[Chat:PARTICIPANTS] Failed to refresh participants:', error);
+      
+      // Enhanced error logging
+      if (error instanceof Error) {
+        console.error('[Chat:PARTICIPANTS] Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+      }
     }
   }, []);
   
