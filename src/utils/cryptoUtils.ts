@@ -4,6 +4,71 @@ import * as bs58 from 'bs58';
 import * as nacl from 'tweetnacl';
 
 /**
+* AeroNyx Client Development Guidelines
+* =====================================
+* 
+* Encryption Algorithm Requirements
+* ---------------------------------
+* When implementing the AeroNyx client, pay close attention to encryption algorithm naming.
+* 
+* Server expects: aes256gcm
+* NOT: aes-gcm, AES-GCM, or other variations
+* 
+* The server recognizes:
+* - `aes256gcm` (preferred)
+* - `aesgcm`
+* - `aes`
+* 
+* For consistency, always use `aes256gcm` in all client code.
+* 
+* Implementation Examples
+* ----------------------
+* 
+* 1. Authentication Request:
+* 
+* ```
+* const authRequest = {
+*   type: "Auth",
+*   public_key: publicKey,
+*   version: "1.0",
+*   features: ["aes256gcm", "chacha20poly1305", "webrtc"],
+*   encryption_algorithm: "aes256gcm", // Correct format
+*   nonce: generateRandomNonce()
+* };
+* ```
+* 
+* 2. Data Packet Format:
+* 
+* ```
+* const packet = {
+*   type: "Data",
+*   encrypted: Array.from(encrypted),
+*   nonce: Array.from(nonce),
+*   counter: counter,
+*   encryption_algorithm: "aes256gcm" // Must include correct algorithm name
+* };
+* ```
+* 
+* 3. Handling Server Response:
+* 
+* ```
+* function handleIpAssign(response) {
+*   const { encryption_algorithm } = response;
+*   // Store exactly as received from server
+*   sessionStore.setEncryptionAlgorithm(encryption_algorithm);
+* }
+* ```
+* 
+* Common Issues
+* ------------
+* 
+* 1. Using incorrect algorithm name format (`aes-gcm` vs `aes256gcm`)
+* 2. Not including algorithm field in data packets
+* 3. Not preserving algorithm name from server response
+* 4. Inconsistent algorithm naming across client codebase
+*/
+
+/**
  * Sign a challenge using Ed25519
  * @param challenge Challenge data to sign
  * @param secretKey Ed25519 secret key
@@ -183,15 +248,20 @@ export async function encryptWithAesGcm(
     ? new TextEncoder().encode(plaintext)
     : plaintext;
   
-  // Log plaintext data for debugging
-  console.debug('[Crypto] Encrypting data:', {
-    plaintextType: typeof plaintext,
-    plaintextLength: plaintextData.length,
+  // ENHANCED LOGGING: Log detailed information about the plaintext
+  console.debug('[Crypto:ENCRYPT] Input data details:', {
+    dataType: typeof plaintext,
+    isStringInput: typeof plaintext === 'string',
+    rawLength: typeof plaintext === 'string' ? plaintext.length : plaintext.length,
+    encodedLength: plaintextData.length,
     plaintextPreview: typeof plaintext === 'string' 
-      ? (plaintext.length > 100 ? plaintext.substring(0, 100) + '...' : plaintext)
-      : 'Binary data',
+      ? (plaintext.length > 300 
+          ? plaintext.substring(0, 150) + '...[truncated]...' + plaintext.substring(plaintext.length - 150) 
+          : plaintext)
+      : '[Binary data]',
     keyLength: key.length,
-    keyPrefix: Array.from(key.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+    keyFirstBytes: Array.from(key.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''),
+    keyLastBytes: Array.from(key.slice(-4)).map(b => b.toString(16).padStart(2, '0')).join('')
   });
   
   // Generate a 12-byte nonce for AES-GCM
@@ -200,6 +270,8 @@ export async function encryptWithAesGcm(
   try {
     // Web Crypto API implementation
     if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+      console.debug('[Crypto:ENCRYPT] Using Web Crypto API for AES-GCM encryption');
+      
       // Import the raw key
       const cryptoKey = await window.crypto.subtle.importKey(
         'raw', 
@@ -208,6 +280,8 @@ export async function encryptWithAesGcm(
         false, 
         ['encrypt']
       );
+      
+      console.debug('[Crypto:ENCRYPT] Key imported successfully, proceeding with encryption');
       
       // Encrypt the data
       const ciphertextBuffer = await window.crypto.subtle.encrypt(
@@ -222,20 +296,33 @@ export async function encryptWithAesGcm(
       
       const ciphertext = new Uint8Array(ciphertextBuffer);
       
-      // Log encryption result for debugging
-      console.debug('[Crypto] Encryption result:', {
+      // ENHANCED LOGGING: Log detailed information about encryption result
+      console.debug('[Crypto:ENCRYPT] Encryption successful:', {
+        plaintextLength: plaintextData.length,
         ciphertextLength: ciphertext.length,
-        ciphertextPrefix: Array.from(ciphertext.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(''),
-        nonceUsed: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
-        authTagPresent: ciphertext.length >= plaintextData.length + 16 ? 'Yes' : 'No'
+        ciphertextFirstBytes: Array.from(ciphertext.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+        ciphertextLastBytes: Array.from(ciphertext.slice(-8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+        nonceHex: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
+        authTagPresent: ciphertext.length >= plaintextData.length + 16 ? 'Yes' : 'No',
+        authTagSize: ciphertext.length - plaintextData.length,
+        overheadPercentage: Math.round(((ciphertext.length - plaintextData.length) / plaintextData.length) * 100)
       });
       
       return { ciphertext, nonce };
     } else {
+      console.error('[Crypto:ENCRYPT] Web Crypto API not available for encryption');
       throw new Error('Web Crypto API not available');
     }
   } catch (error) {
-    console.error('[Crypto] Encryption error:', error);
+    console.error('[Crypto:ENCRYPT] Encryption error:', error);
+    // Log additional diagnostics for common encryption failures
+    if (error instanceof DOMException) {
+      console.error('[Crypto:ENCRYPT] DOM Exception details:', {
+        name: error.name,
+        message: error.message,
+        code: error.code
+      });
+    }
     throw new Error(`AES-GCM encryption failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -263,16 +350,21 @@ export async function decryptWithAesGcm(
     throw new Error(`Invalid nonce: length=${nonce?.length ?? 'null'} (expected 12 bytes for AES-GCM)`);
   }
   
-  // Log decryption attempt for debugging
-  console.debug('[Crypto] Decrypting data:', {
+  // ENHANCED LOGGING: Log detailed information about the encrypted data
+  console.debug('[Crypto:DECRYPT] Input data details:', {
     ciphertextLength: ciphertext.length,
-    ciphertextPrefix: Array.from(ciphertext.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(''),
+    ciphertextFirstBytes: Array.from(ciphertext.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+    ciphertextLastBytes: Array.from(ciphertext.slice(-8)).map(b => b.toString(16).padStart(2, '0')).join(''),
     nonceHex: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
-    keyPrefix: Array.from(key.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+    keyFirstBytes: Array.from(key.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''),
+    keyLastBytes: Array.from(key.slice(-4)).map(b => b.toString(16).padStart(2, '0')).join(''),
+    requestedOutputType: outputType
   });
   
   try {
     if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+      console.debug('[Crypto:DECRYPT] Using Web Crypto API for AES-GCM decryption');
+      
       // Import the raw key
       const cryptoKey = await window.crypto.subtle.importKey(
         'raw',
@@ -281,6 +373,8 @@ export async function decryptWithAesGcm(
         false,
         ['decrypt']
       );
+      
+      console.debug('[Crypto:DECRYPT] Key imported successfully, proceeding with decryption');
       
       // Decrypt the data
       const decryptedBuffer = await window.crypto.subtle.decrypt(
@@ -293,34 +387,61 @@ export async function decryptWithAesGcm(
         ciphertext
       );
       
+      console.debug('[Crypto:DECRYPT] Raw decryption successful, buffer size:', decryptedBuffer.byteLength);
+      
       // Convert to requested output format
       if (outputType === 'string') {
         const decoder = new TextDecoder();
         const decryptedText = decoder.decode(new Uint8Array(decryptedBuffer));
         
-        // Log decryption result for debugging
-        console.debug('[Crypto] Decryption result (string):', {
+        // ENHANCED LOGGING: Log details about the decrypted text
+        console.debug('[Crypto:DECRYPT] String decryption result:', {
           decryptedLength: decryptedText.length,
-          decryptedPreview: decryptedText.length > 100 ? decryptedText.substring(0, 100) + '...' : decryptedText
+          decryptedPreview: decryptedText.length > 300 
+            ? decryptedText.substring(0, 150) + '...[truncated]...' + decryptedText.substring(decryptedText.length - 150)
+            : decryptedText,
+          isValidJSON: (() => {
+            try {
+              JSON.parse(decryptedText);
+              return true;
+            } catch (e) {
+              return false;
+            }
+          })()
         });
         
         return decryptedText;
       } else {
         const decryptedData = new Uint8Array(decryptedBuffer);
         
-        // Log decryption result for debugging
-        console.debug('[Crypto] Decryption result (binary):', {
+        // ENHANCED LOGGING: Log details about the decrypted binary data
+        console.debug('[Crypto:DECRYPT] Binary decryption result:', {
           decryptedLength: decryptedData.length,
-          decryptedPrefix: Array.from(decryptedData.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join('')
+          decryptedFirstBytes: Array.from(decryptedData.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+          decryptedLastBytes: Array.from(decryptedData.slice(-8)).map(b => b.toString(16).padStart(2, '0')).join('')
         });
         
         return decryptedData;
       }
     } else {
+      console.error('[Crypto:DECRYPT] Web Crypto API not available for decryption');
       throw new Error('Web Crypto API not available');
     }
   } catch (error) {
-    console.error('[Crypto] Decryption error:', error);
+    console.error('[Crypto:DECRYPT] Decryption error:', error);
+    // Log additional diagnostics for common decryption failures
+    if (error instanceof DOMException) {
+      console.error('[Crypto:DECRYPT] DOM Exception details:', {
+        name: error.name,
+        message: error.message,
+        code: error.code
+      });
+      
+      // Special handling for common decryption errors
+      if (error.name === 'OperationError') {
+        console.error('[Crypto:DECRYPT] This may indicate an incorrect key, nonce, or corrupted ciphertext');
+      }
+    }
     throw new Error(`AES-GCM decryption failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -343,16 +464,25 @@ export async function createEncryptedPacket(
   // Convert to string if needed
   const messageString = typeof data === 'string' ? data : JSON.stringify(data);
   
-  // Log data to be encrypted for debugging
-  console.debug('[Crypto] Creating encrypted packet:', {
+  // ENHANCED LOGGING: Log data to be encrypted
+  console.debug('[Crypto:PACKET] Creating encrypted packet:', {
     dataType: typeof data,
-    dataPreview: typeof data === 'object' ? JSON.stringify(data).substring(0, 100) + '...' : messageString,
+    dataKeys: typeof data === 'object' ? Object.keys(data) : 'N/A',
+    dataId: data.id || 'none',
+    messageType: data.type || 'unknown',
+    contentPreview: typeof data === 'object' && data.content ? 
+                    (data.content.length > 100 ? data.content.substring(0, 100) + '...' : data.content) : 
+                    'N/A',
     messageLength: messageString.length,
     sessionKeyLength: sessionKey.length,
-    counter: counter
+    counter: counter,
+    jsonPreview: messageString.length > 300 
+      ? messageString.substring(0, 150) + '...[truncated]...' + messageString.substring(messageString.length - 150)
+      : messageString
   });
   
   // Encrypt with AES-GCM
+  console.debug('[Crypto:PACKET] Encrypting message data');
   const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
   
   // Create packet
@@ -365,13 +495,17 @@ export async function createEncryptedPacket(
     padding: null // Optional padding for length concealment
   };
   
-  // Log final packet for debugging
-  console.debug('[Crypto] Encrypted packet created:', {
+  // ENHANCED LOGGING: Log final packet structure
+  console.debug('[Crypto:PACKET] Encrypted packet created:', {
     packetType: packet.type,
     encryptedLength: packet.encrypted.length,
     nonceLength: packet.nonce.length,
     algorithm: packet.encryption_algorithm,
-    hasPadding: packet.padding !== null
+    hasPadding: packet.padding !== null,
+    packetSize: JSON.stringify(packet).length,
+    compressionRatio: messageString.length > 0 ? 
+                    (JSON.stringify(packet).length / messageString.length).toFixed(2) : 
+                    'N/A'
   });
   
   return packet;
