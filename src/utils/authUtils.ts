@@ -3,17 +3,17 @@ import * as bs58 from 'bs58';
 import { encryptWithAesGcm, decryptWithAesGcm, generateNonce } from './cryptoUtils';
 
 /**
- * Create authentication message with AES-GCM support
+ * Create authentication message with aes256gcm support
  * 
  * @param publicKey User's public key
- * @returns Authentication message with features including AES-GCM
+ * @returns Authentication message with features including aes256gcm
  */
 export function createAuthMessage(publicKey: string) {
   return {
     type: 'Auth',
     public_key: publicKey,
     version: '1.0.0',
-    features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // Add aes-gcm as first priority
+    features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // Add aes256gcm as first priority
     nonce: generateRandomString(24),
   };
 }
@@ -46,7 +46,7 @@ function generateRandomString(length: number): string {
 }
 
 /**
- * Format data packet for transmission using AES-GCM encryption
+ * Format data packet for transmission using aes256gcm encryption
  * 
  * @param plaintext Message to encrypt
  * @param sessionKey Session encryption key
@@ -63,7 +63,7 @@ export async function createDataPacket(
     ? plaintext 
     : JSON.stringify(plaintext);
   
-  // Encrypt using AES-GCM
+  // Encrypt using aes256gcm
   const { ciphertext, nonce } = await encryptWithAesGcm(messageText, sessionKey);
   
   // Format to match server expectations
@@ -111,7 +111,7 @@ export async function processDataPacket(
       counter: encryptedData.counter
     });
     
-    // Decrypt with AES-GCM
+    // Decrypt with aes256gcm
     const decryptedText = await decryptWithAesGcm(
       encryptedUint8,
       nonceUint8,
@@ -121,7 +121,7 @@ export async function processDataPacket(
     
     // Parse the decrypted JSON
     const parsedData = JSON.parse(decryptedText);
-    console.log('[Auth] Successfully decrypted message with AES-GCM');
+    console.log('[Auth] Successfully decrypted message with aes256gcm');
     
     return parsedData;
   } catch (error) {
@@ -152,13 +152,13 @@ export function logEncryptionParams(
 }
 
 /**
- * Test AES-GCM encryption with known test vectors
+ * Test aes256gcm encryption with known test vectors
  * Useful for debugging encryption implementations
  */
 export async function runAesGcmTest() {
   // Test vector (key and plaintext that produce known ciphertext with a fixed nonce)
   const testKey = new Uint8Array(32).fill(3); // All bytes are 0x03
-  const testPlaintext = new TextEncoder().encode("Test message for AES-GCM encryption");
+  const testPlaintext = new TextEncoder().encode("Test message for aes256gcm encryption");
   const testNonce = new Uint8Array(12).fill(1); // All bytes are 0x01
   
   try {
@@ -208,7 +208,7 @@ export function base64ToUint8Array(base64: string): Uint8Array {
 }
 
 /**
- * Simple echo test for AES-GCM encryption
+ * Simple echo test for aes256gcm encryption
  * Helps verify server communication is working correctly
  * 
  * @param socket WebSocket to use for sending the test message
@@ -216,14 +216,14 @@ export function base64ToUint8Array(base64: string): Uint8Array {
  */
 export async function testAesGcmEcho(socket: WebSocket, sessionKey: Uint8Array) {
   // Test message
-  const testMessage = "AES-GCM Test: " + new Date().toISOString();
+  const testMessage = "aes256gcm Test: " + new Date().toISOString();
   
   try {
     // Create encrypted data packet
     const packet = await createDataPacket(testMessage, sessionKey, Date.now());
     
     // Log what we're sending
-    console.log("Sending AES-GCM test packet:", {
+    console.log("Sending aes256gcm test packet:", {
       type: packet.type,
       encryptedLength: packet.encrypted.length,
       nonceLength: packet.nonce.length,
@@ -236,7 +236,7 @@ export async function testAesGcmEcho(socket: WebSocket, sessionKey: Uint8Array) 
     
     return true;
   } catch (error) {
-    console.error("Failed to send AES-GCM test packet:", error);
+    console.error("Failed to send aes256gcm test packet:", error);
     return false;
   }
 }
