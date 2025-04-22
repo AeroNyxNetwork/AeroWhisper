@@ -46,8 +46,13 @@ export const EncryptionDiagnostics: React.FC<EncryptionDiagnosticsProps> = ({ on
   // Check for AES-GCM support on component mount
   useEffect(() => {
     const checkSupport = async () => {
-      const supported = await isAesGcmSupported();
-      setAesGcmSupported(supported);
+      try {
+        const supported = await isAesGcmSupported();
+        setAesGcmSupported(supported);
+      } catch (error) {
+        console.error('Error checking AES-GCM support:', error);
+        setAesGcmSupported(false);
+      }
     };
     
     checkSupport();
