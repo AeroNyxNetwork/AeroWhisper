@@ -4,8 +4,8 @@ import * as bs58 from 'bs58';
 import * as nacl from 'tweetnacl';
 
 /**
- * Check if AES-GCM is supported in the current environment
- * @returns Promise resolving to true if AES-GCM is supported
+ * Check if aes256gcm is supported in the current environment
+ * @returns Promise resolving to true if aes256gcm is supported
  */
 export async function isAesGcmSupported(): Promise<boolean> {
   if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
@@ -13,10 +13,10 @@ export async function isAesGcmSupported(): Promise<boolean> {
   }
   
   try {
-    // Try to create a simple key to test AES-GCM support
+    // Try to create a simple key to test aes256gcm support
     await window.crypto.subtle.generateKey(
       {
-        name: 'AES-GCM',
+        name: 'aes256gcm',
         length: 256
       },
       false,
@@ -25,7 +25,7 @@ export async function isAesGcmSupported(): Promise<boolean> {
     
     return true;
   } catch (error) {
-    console.warn('[Crypto] AES-GCM not supported:', error);
+    console.warn('[Crypto] aes256gcm not supported:', error);
     return false;
   }
 }
@@ -51,7 +51,7 @@ export function generateNonce(length: number = 12): Uint8Array {
 }
 
 /**
- * Encrypt data using AES-GCM via Web Crypto API
+ * Encrypt data using aes256gcm via Web Crypto API
  * This is a unified implementation that should be used throughout the application
  * 
  * @param plaintext Data to encrypt (string or Uint8Array)
@@ -71,7 +71,7 @@ export async function encryptWithAesGcm(
     ? new TextEncoder().encode(plaintext)
     : plaintext;
   
-  // Generate a 12-byte nonce for AES-GCM
+  // Generate a 12-byte nonce for aes256gcm
   const nonce = generateNonce(12);
   
   try {
@@ -81,7 +81,7 @@ export async function encryptWithAesGcm(
       const cryptoKey = await window.crypto.subtle.importKey(
         'raw', 
         key, 
-        { name: 'AES-GCM' },
+        { name: 'aes256gcm' },
         false, 
         ['encrypt']
       );
@@ -89,9 +89,9 @@ export async function encryptWithAesGcm(
       // Encrypt the data
       const ciphertextBuffer = await window.crypto.subtle.encrypt(
         {
-          name: 'AES-GCM',
+          name: 'aes256gcm',
           iv: nonce,
-          tagLength: 128 // 16 bytes tag, standard for AES-GCM
+          tagLength: 128 // 16 bytes tag, standard for aes256gcm
         },
         cryptoKey,
         plaintextData
@@ -99,7 +99,7 @@ export async function encryptWithAesGcm(
       
       const ciphertext = new Uint8Array(ciphertextBuffer);
       
-      console.debug('[Crypto] AES-GCM encryption successful:', {
+      console.debug('[Crypto] aes256gcm encryption successful:', {
         plaintextLength: plaintextData.length,
         ciphertextLength: ciphertext.length,
         nonceLength: nonce.length
@@ -111,12 +111,12 @@ export async function encryptWithAesGcm(
     }
   } catch (error) {
     console.error('[Crypto] Encryption error:', error);
-    throw new Error(`AES-GCM encryption failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`aes256gcm encryption failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 /**
- * Decrypt data using AES-GCM via Web Crypto API
+ * Decrypt data using aes256gcm via Web Crypto API
  * This is a unified implementation that should be used throughout the application
  * 
  * @param ciphertext Encrypted data
@@ -136,7 +136,7 @@ export async function decryptWithAesGcm(
   }
   
   if (!nonce || nonce.length !== 12) {
-    throw new Error(`Invalid nonce: length=${nonce?.length ?? 'null'} (expected 12 bytes for AES-GCM)`);
+    throw new Error(`Invalid nonce: length=${nonce?.length ?? 'null'} (expected 12 bytes for aes256gcm)`);
   }
   
   try {
@@ -145,7 +145,7 @@ export async function decryptWithAesGcm(
       const cryptoKey = await window.crypto.subtle.importKey(
         'raw',
         key,
-        { name: 'AES-GCM' },
+        { name: 'aes256gcm' },
         false,
         ['decrypt']
       );
@@ -153,7 +153,7 @@ export async function decryptWithAesGcm(
       // Decrypt the data
       const decryptedBuffer = await window.crypto.subtle.decrypt(
         {
-          name: 'AES-GCM',
+          name: 'aes256gcm',
           iv: nonce,
           tagLength: 128 // Must match encryption setting
         },
@@ -173,7 +173,7 @@ export async function decryptWithAesGcm(
     }
   } catch (error) {
     console.error('[Crypto] Decryption error:', error);
-    throw new Error(`AES-GCM decryption failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`aes256gcm decryption failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -194,7 +194,7 @@ export async function createEncryptedPacket(
   // Convert to string if needed
   const messageString = typeof data === 'string' ? data : JSON.stringify(data);
   
-  // Encrypt with AES-GCM
+  // Encrypt with aes256gcm
   const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
   
   // Create properly formatted packet with CONSISTENT field naming
@@ -203,7 +203,7 @@ export async function createEncryptedPacket(
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes256gcm', // Changed from 'aes-gcm' to 'aes256gcm'
+    encryption_algorithm: 'aes256gcm', // Changed from 'aes256gcm' to 'aes256gcm'
     padding: null // Optional padding for length concealment
   };
 }
@@ -242,7 +242,7 @@ export async function processEncryptedPacket(
       algorithm = packet.encryption;
       console.debug('[Crypto] Using deprecated encryption field:', algorithm);
     } else {
-      algorithm = 'aes-gcm'; // Default
+      algorithm = 'aes256gcm'; // Default
       console.debug('[Crypto] No algorithm field found, using default:', algorithm);
     }
     
