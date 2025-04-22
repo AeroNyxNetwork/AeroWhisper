@@ -480,14 +480,14 @@ export class AeroNyxSocket extends EventEmitter {
       type: 'Auth',
       public_key: this.publicKey,
       version: '1.0.0',
-      features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], 
-      encryption_algorithm: 'aes-gcm', // Always use consistent field name
+      features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // Updated from 'aes-gcm'
+      encryption_algorithm: 'aes256gcm', // Updated from 'aes-gcm'
       nonce: Date.now().toString(),
     };
     
     try {
       this.socket.send(JSON.stringify(authMessage));
-      console.log('[Socket] Auth message sent successfully with AES-GCM preference');
+      console.log('[Socket] Auth message sent successfully with AES256GCM preference');
     } catch (error) {
       console.error('[Socket] Error sending auth message:', error);
       this.emit('error', this.createSocketError(
