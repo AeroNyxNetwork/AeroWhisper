@@ -39,12 +39,14 @@ export interface MessageData {
 
 /**
  * Auth message sent to server
+ * Updated to include encryption_algorithm field
  */
 export interface AuthMessage {
   type: 'Auth';
   public_key: string;
   version: string;
   features: string[];
+  encryption_algorithm: string; // Add this field for the server compatibility
   nonce: string;
 }
 
@@ -76,19 +78,20 @@ export interface IpAssignMessage {
   session_key?: string;
   key_nonce?: string;
   server_public_key?: string;
-  encryption_algorithm?: string;
+  encryption_algorithm?: string; // Use the consistent field name
 }
 
 /**
  * Encrypted data packet for transmission
+ * Updated to use consistent field name encryption_algorithm
  */
 export interface DataPacket {
   type: 'Data';
   encrypted: number[];
   nonce: number[];
   counter: number;
+  encryption_algorithm: string; // Changed from optional to required and renamed
   padding?: any;
-  encryption_algorithm?: string;
 }
 
 /**
