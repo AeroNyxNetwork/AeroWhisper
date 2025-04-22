@@ -136,7 +136,7 @@ export async function processDataPacket(
     
     // Check if server specified an encryption algorithm
     // Support both field names for backward compatibility
-    const algorithm = packet.encryption_algorithm || (packet as any).encryption || 'aes-gcm';
+    const algorithm = packet.encryption_algorithm || (packet as any).encryption || 'aes256gcm';
     
     // Log packet details for debugging
     console.debug('[Socket] Processing encrypted data packet:', {
@@ -146,7 +146,7 @@ export async function processDataPacket(
       algorithm: algorithm
     });
     
-    // Decrypt using AES-GCM
+    // Decrypt using aes256gcm
     const decryptedText = await decryptWithAesGcm(
       encryptedUint8,
       nonceUint8,
