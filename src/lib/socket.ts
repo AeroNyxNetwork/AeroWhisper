@@ -17,6 +17,25 @@ import {
   deriveSessionKey
 } from '../utils/cryptoUtils';
 
+mport { 
+  createChallengeResponse 
+} from './socket/handleChallenge';
+
+import {
+  processIpAssign
+} from './socket/processIpAssign';
+
+import {
+  parseMessage,
+  createSocketError,
+  processDataPacket
+} from './socket/messageHandlers';
+
+import {
+  createWebSocketUrl,
+  isSocketOpen,
+  createDisconnectMessage
+} from './socket/networking';
 /**
  * Connection status types for socket
  */
@@ -62,6 +81,8 @@ interface ChallengeMessage {
   data: number[] | string;
   server_public_key?: string;
 }
+
+
 
 // IP assignment message interface
 interface IpAssignMessage {
