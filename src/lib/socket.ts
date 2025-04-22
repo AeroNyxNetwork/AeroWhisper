@@ -396,7 +396,7 @@ export class AeroNyxSocket extends EventEmitter {
       public_key: this.publicKey,
       version: '1.0.0',
       features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], 
-      encryption: 'aes-gcm', // Use encryption instead of encryption_algorithm
+      encryption: 'aes-gcm', // Ensure this field is consistent
       nonce: Date.now().toString(),
     };
     
@@ -737,7 +737,7 @@ export class AeroNyxSocket extends EventEmitter {
       // Log successful connection
       console.log(`[Socket] IP assigned: ${message.ip_address}, Session ID: ${message.session_id}`);
       
-      // New: Store encryption algorithm info if provided
+      // Store encryption algorithm info if provided
       if (message.encryption_algorithm) {
         console.log(`[Socket] Server selected encryption algorithm: ${message.encryption_algorithm}`);
         this.encryptionAlgorithm = message.encryption_algorithm;
@@ -1334,7 +1334,7 @@ export class AeroNyxSocket extends EventEmitter {
         encrypted: Array.from(ciphertext), // Convert Uint8Array to regular array for JSON
         nonce: Array.from(nonce),
         counter: this.messageCounter++,
-        encryption: this.encryptionAlgorithm, // Use encryption instead of encryption_algorithm
+        encryption: this.encryptionAlgorithm, // This field should match what the server expects
         padding: null // Optional padding for length concealment
       };
       
