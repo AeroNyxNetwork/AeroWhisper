@@ -18,6 +18,10 @@ export const Message: React.FC<MessageProps> = ({
   showAvatar = true 
 }) => {
 
+  
+  const { colorMode } = useColorMode();
+  const [showDetails, setShowDetails] = useState(false);
+
   if (process.env.NODE_ENV === 'development') {
     console.debug('[UI:Message] Rendering message:', {
       id: message.id,
@@ -28,11 +32,9 @@ export const Message: React.FC<MessageProps> = ({
       senderName: message.senderName,
       status: message.status,
       isEncrypted: message.isEncrypted,
-      timestamp: message.timestamp
+      timestamp: typeof message.timestamp === 'string' ? message.timestamp : message.timestamp?.toISOString()
     });
   }
-  const { colorMode } = useColorMode();
-  const [showDetails, setShowDetails] = useState(false);
   
   // Convert timestamp to Date if it's a string or number
   const messageDate = typeof message.timestamp === 'string' || typeof message.timestamp === 'number' 
