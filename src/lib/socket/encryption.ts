@@ -1,5 +1,7 @@
 import * as bs58 from 'bs58';
 import * as nacl from 'tweetnacl';
+// Import the required cryptoUtils functions
+import { encryptWithAesGcm, decryptWithAesGcm, generateNonce } from '../../utils/cryptoUtils';
 
 /**
  * Encrypt data using AES-GCM via Web Crypto API
