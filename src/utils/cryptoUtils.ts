@@ -259,11 +259,11 @@ export function prepareEncryptedPacket(
     encrypted: Array.from(encrypted),
     nonce: Array.from(nonce),
     counter,
-    encryption: algorithm, // Use 'encryption' field to match server expectations
+    // 将 'encryption' 改为 'encryption_algorithm'
+    encryption_algorithm: algorithm, // 修改此处
     padding: padding ? Array.from(padding) : null
   };
 }
-
 /**
  * Creates random padding bytes for traffic analysis protection
  * @param minBytes Minimum padding bytes
