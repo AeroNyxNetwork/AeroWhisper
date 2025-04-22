@@ -7,7 +7,7 @@ import {
   DataPacket
 } from './types';
 import { createPongMessage } from './networking';
-import { decryptWithAesGcm } from '../utils/cryptoUtils';
+import { decryptWithAesGcm } from '../../utils/cryptoUtils';
 
 /**
  * Parse WebSocket message from different formats
