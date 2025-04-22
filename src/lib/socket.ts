@@ -757,6 +757,99 @@ export class AeroNyxSocket extends EventEmitter {
       ));
     }
   }
+
+
+  export async function encryptWithAesGcm(
+    plaintext: string | Uint8Array,
+    key: Uint8Array
+  ): Promise<{ ciphertext: Uint8Array, nonce: Uint8Array }> {
+    if (!key || key.length !== 32) {
+      throw new Error(`Invalid encryption key: length=${key?.length ?? 'null'} (expected 32 bytes)`);
+    }
+    
+    // Convert string to Uint8Array if necessary
+    const plaintextData = typeof plaintext === 'string' 
+      ? new TextEncoder().encode(plaintext)
+      : plaintext;
+    
+    // ENHANCED LOGGING: Log detailed information about the plaintext
+    console.debug('[Crypto:ENCRYPT] Input data details:', {
+      dataType: typeof plaintext,
+      isStringInput: typeof plaintext === 'string',
+      rawLength: typeof plaintext === 'string' ? plaintext.length : plaintext.length,
+      encodedLength: plaintextData.length,
+      plaintextPreview: typeof plaintext === 'string' 
+        ? (plaintext.length > 300 
+            ? plaintext.substring(0, 150) + '...[truncated]...' + plaintext.substring(plaintext.length - 150) 
+            : plaintext)
+        : '[Binary data]',
+      keyLength: key.length,
+      keyFirstBytes: Array.from(key.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''),
+      keyLastBytes: Array.from(key.slice(-4)).map(b => b.toString(16).padStart(2, '0')).join('')
+    });
+    
+    // Generate a 12-byte nonce for AES-GCM
+    const nonce = generateNonce(12);
+    
+    try {
+      // Web Crypto API implementation
+      if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+        console.debug('[Crypto:ENCRYPT] Using Web Crypto API for AES-GCM encryption');
+        
+        // Import the raw key
+        const cryptoKey = await window.crypto.subtle.importKey(
+          'raw', 
+          key, 
+          { name: 'AES-GCM' },
+          false, 
+          ['encrypt']
+        );
+        
+        console.debug('[Crypto:ENCRYPT] Key imported successfully, proceeding with encryption');
+        
+        // Encrypt the data
+        const ciphertextBuffer = await window.crypto.subtle.encrypt(
+          {
+            name: 'AES-GCM',
+            iv: nonce,
+            tagLength: 128 // 16 bytes tag, standard for AES-GCM
+          },
+          cryptoKey,
+          plaintextData
+        );
+        
+        const ciphertext = new Uint8Array(ciphertextBuffer);
+        
+        // ENHANCED LOGGING: Log detailed information about encryption result
+        console.debug('[Crypto:ENCRYPT] Encryption successful:', {
+          plaintextLength: plaintextData.length,
+          ciphertextLength: ciphertext.length,
+          ciphertextFirstBytes: Array.from(ciphertext.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+          ciphertextLastBytes: Array.from(ciphertext.slice(-8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+          nonceHex: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
+          authTagPresent: ciphertext.length >= plaintextData.length + 16 ? 'Yes' : 'No',
+          authTagSize: ciphertext.length - plaintextData.length,
+          overheadPercentage: Math.round(((ciphertext.length - plaintextData.length) / plaintextData.length) * 100)
+        });
+        
+        return { ciphertext, nonce };
+      } else {
+        console.error('[Crypto:ENCRYPT] Web Crypto API not available for encryption');
+        throw new Error('Web Crypto API not available');
+      }
+    } catch (error) {
+      console.error('[Crypto:ENCRYPT] Encryption error:', error);
+      // Log additional diagnostics for common encryption failures
+      if (error instanceof DOMException) {
+        console.error('[Crypto:ENCRYPT] DOM Exception details:', {
+          name: error.name,
+          message: error.message,
+          code: error.code
+        });
+      }
+      throw new Error(`AES-GCM encryption failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   
   /**
    * Handle authentication challenge
