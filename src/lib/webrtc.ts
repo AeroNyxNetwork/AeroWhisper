@@ -1,3 +1,5 @@
+// src/lib/webrtc.ts
+
 import { EventEmitter } from 'events';
 import { AeroNyxSocket } from './socket';
 import * as bs58 from 'bs58';
@@ -837,7 +839,7 @@ export class WebRTCManager extends EventEmitter {
    * @returns true if sent successfully, false otherwise
    */
   async sendMessage(message: any, maxAttempts: number = 3): Promise<boolean> {
-  // If not connected, queue message and return false
+    // If not connected, queue message and return false
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
       this.queueMessage(message, maxAttempts);
       return false;
@@ -887,12 +889,13 @@ export class WebRTCManager extends EventEmitter {
       const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
       
       // Create packet with the correct field naming
+      // IMPORTANT: Always use encryption_algorithm for field name consistency
       const encryptedMessage = JSON.stringify({
         type: 'Data',
         encrypted: Array.from(ciphertext),
         nonce: Array.from(nonce),
         counter: messageCounter,
-        encryption_algorithm: 'aes-gcm', // Use consistent field name expected by server
+        encryption_algorithm: 'aes-gcm', // Use consistent field name 
         padding: null // Optional padding
       });
       
@@ -913,7 +916,6 @@ export class WebRTCManager extends EventEmitter {
       return false;
     }
   }
-
 
   /**
    * Process an encrypted message received through WebRTC
@@ -943,7 +945,18 @@ export class WebRTCManager extends EventEmitter {
       const nonceUint8 = new Uint8Array(encryptedData.nonce);
       
       // Support both field names for backward compatibility
-      const algorithm = encryptedData.encryption_algorithm || encryptedData.encryption || 'aes-gcm';
+      // But log which one is being used to help debug issues
+      let algorithm: string;
+      if (encryptedData.encryption_algorithm !== undefined) {
+        algorithm = encryptedData.encryption_algorithm;
+        console.debug('[WebRTC] Using encryption_algorithm field:', algorithm);
+      } else if (encryptedData.encryption !== undefined) {
+        algorithm = encryptedData.encryption;
+        console.debug('[WebRTC] Using deprecated encryption field:', algorithm);
+      } else {
+        algorithm = 'aes-gcm'; // Default
+        console.debug('[WebRTC] No algorithm field found, using default:', algorithm);
+      }
       
       // Log decryption attempt
       console.debug('[WebRTC] Attempting to decrypt message:', {
