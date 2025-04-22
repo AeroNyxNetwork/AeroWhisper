@@ -903,13 +903,27 @@ export class WebRTCManager extends EventEmitter {
    * @returns true if sent successfully, false otherwise
    */
   async sendMessage(message: any, maxAttempts: number = 3): Promise<boolean> {
+    // ENHANCED LOGGING: Log detailed message sending attempt
+    console.debug('[WebRTC:SEND] Sending message attempt:', {
+      dataChannelState: this.dataChannel?.readyState || 'none',
+      messageType: message.type || 'unknown',
+      messageId: message.id || 'none',
+      hasSessionKey: !!this.sessionKey,
+      sessionKeyLength: this.sessionKey?.length || 0,
+      maxAttempts,
+      content: message.content ? (message.content.length > 100 ? message.content.substring(0, 100) + '...' : message.content) : null,
+      messageSize: JSON.stringify(message).length
+    });
+  
     // If not connected, queue message and return false
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      console.debug('[WebRTC:SEND] Data channel not open, queueing message');
       this.queueMessage(message, maxAttempts);
       return false;
     }
     
     if (this.sessionKey) {
+      console.debug('[WebRTC:SEND] Session key available, proceeding with encryption');
       return await this.sendEncryptedMessage(
         message, 
         this.sessionKey, 
@@ -917,10 +931,11 @@ export class WebRTCManager extends EventEmitter {
         this.messageCounter++
       );
     } else {
-      console.error('[WebRTC] Cannot send message: No session key available');
+      console.error('[WebRTC:SEND] Cannot send message: No session key available');
       return false;
     }
   }
+
   
   /**
    * Send a message through the WebRTC data channel with aes256gcm encryption
@@ -937,7 +952,7 @@ export class WebRTCManager extends EventEmitter {
     messageCounter: number
   ): Promise<boolean> {
     if (dataChannel.readyState !== 'open') {
-      console.error('[WebRTC] Cannot send message: Data channel not open');
+      console.error('[WebRTC:SEND:ENCRYPTED] Cannot send message: Data channel not open');
       return false;
     }
     
@@ -946,38 +961,74 @@ export class WebRTCManager extends EventEmitter {
         throw new Error(`Invalid session key: length=${sessionKey?.length ?? 'null'} (expected 32 bytes)`);
       }
       
+      // ENHANCED LOGGING: Log the pre-encryption message
+      console.debug('[WebRTC:SEND:ENCRYPTED] Message before encryption:', {
+        messageType: typeof message === 'object' ? message.type : 'unknown',
+        messageId: typeof message === 'object' ? message.id : 'unknown',
+        messageContent: typeof message === 'object' && message.content ? 
+                      (message.content.length > 200 ? message.content.substring(0, 200) + '...' : message.content) : 
+                      'N/A',
+        sender: typeof message === 'object' ? message.senderId : 'unknown',
+        timestamp: typeof message === 'object' ? message.timestamp : 'unknown',
+        counter: messageCounter
+      });
+      
       // Prepare the message for encryption
       const messageString = JSON.stringify(message);
       
-      // Encrypt with AES-GCM using Web Crypto API
-      // Internally uses 'AES-GCM' with Web Crypto API, but server expects 'aes256gcm'
+      // ENHANCED LOGGING: Log the stringified message
+      console.debug('[WebRTC:SEND:ENCRYPTED] Stringified message:', {
+        length: messageString.length,
+        preview: messageString.length > 300 
+          ? messageString.substring(0, 150) + '...[truncated]...' + messageString.substring(messageString.length - 150)
+          : messageString
+      });
+      
+      // Encrypt with AES-GCM
+      console.debug('[WebRTC:SEND:ENCRYPTED] Encrypting message with AES-GCM');
       const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
       
+      // ENHANCED LOGGING: Log encryption details
+      console.debug('[WebRTC:SEND:ENCRYPTED] Encryption complete:', {
+        originalLength: messageString.length,
+        encryptedLength: ciphertext.length,
+        encryptedFirstBytes: Array.from(ciphertext.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+        nonceHex: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join('')
+      });
+      
       // Create packet with the correct field naming
-      // IMPORTANT: We use 'aes256gcm' as the field value for server compatibility
       const encryptedMessage = JSON.stringify({
         type: 'Data',
         encrypted: Array.from(ciphertext),
         nonce: Array.from(nonce),
         counter: messageCounter,
         encryption_algorithm: 'aes256gcm', // Server expects this format
-        padding: null // Optional padding
+        padding: null
       });
       
-      // Debug log to verify format
-      console.debug('[WebRTC] Sending encrypted message:', {
-        type: 'Data',
-        encryptedLength: ciphertext.length,
-        nonceLength: nonce.length,
-        counter: messageCounter,
-        encryption_algorithm: 'aes256gcm'
+      // ENHANCED LOGGING: Log final packet size
+      console.debug('[WebRTC:SEND:ENCRYPTED] Final packet created:', {
+        packetSize: encryptedMessage.length,
+        fieldName: 'encryption_algorithm',
+        fieldValue: 'aes256gcm',
+        compressionRatio: (encryptedMessage.length / messageString.length).toFixed(2)
       });
       
       // Send the message
+      console.debug('[WebRTC:SEND:ENCRYPTED] Sending packet through data channel');
       dataChannel.send(encryptedMessage);
+      
+      console.debug('[WebRTC:SEND:ENCRYPTED] Message sent successfully');
       return true;
     } catch (error) {
-      console.error('[WebRTC] Error sending encrypted message:', error);
+      console.error('[WebRTC:SEND:ENCRYPTED] Error sending encrypted message:', error);
+      if (error instanceof Error) {
+        console.error('[WebRTC:SEND:ENCRYPTED] Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        });
+      }
       return false;
     }
   }
