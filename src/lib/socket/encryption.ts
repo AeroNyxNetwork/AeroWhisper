@@ -4,7 +4,7 @@ import * as nacl from 'tweetnacl';
 import { encryptWithAesGcm, decryptWithAesGcm, generateNonce } from '../../utils/cryptoUtils';
 
 /**
- * Encrypt data using AES-GCM via Web Crypto API
+ * Encrypt data using aes256gcm via Web Crypto API
  * @param data Data to encrypt
  * @param key 32-byte encryption key
  * @returns Encrypted data and nonce
@@ -24,7 +24,7 @@ export async function encryptData(
     const encoder = new TextEncoder();
     const plaintext = encoder.encode(jsonData);
     
-    // Generate a 12-byte nonce as required by AES-GCM
+    // Generate a 12-byte nonce as required by aes256gcm
     const nonce = new Uint8Array(12);
     if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
         window.crypto.getRandomValues(nonce);
@@ -36,13 +36,13 @@ export async function encryptData(
     }
     
     try {
-        // Use Web Crypto API with AES-GCM
+        // Use Web Crypto API with aes256gcm
         if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-            // Import key for AES-GCM
+            // Import key for aes256gcm
             const cryptoKey = await window.crypto.subtle.importKey(
                 'raw', 
                 sessionKey, 
-                { name: 'AES-GCM' },
+                { name: 'aes256gcm' },
                 false, 
                 ['encrypt']
             );
@@ -50,9 +50,9 @@ export async function encryptData(
             // Encrypt the data
             const encryptedBuffer = await window.crypto.subtle.encrypt(
                 {
-                    name: 'AES-GCM',
+                    name: 'aes256gcm',
                     iv: nonce,
-                    tagLength: 128 // 16 bytes tag, standard for AES-GCM
+                    tagLength: 128 // 16 bytes tag, standard for aes256gcm
                 },
                 cryptoKey,
                 plaintext
@@ -60,7 +60,7 @@ export async function encryptData(
             
             const encrypted = new Uint8Array(encryptedBuffer);
             
-            console.log('[Socket] Successfully encrypted data with AES-GCM via Web Crypto API', {
+            console.log('[Socket] Successfully encrypted data with aes256gcm via Web Crypto API', {
                 plaintextLength: plaintext.length,
                 ciphertextLength: encrypted.length,
                 nonceLength: nonce.length
@@ -95,7 +95,7 @@ export async function createEncryptedPacket(
   // Convert to string if needed
   const messageString = typeof data === 'string' ? data : JSON.stringify(data);
   
-  // Encrypt with AES-GCM
+  // Encrypt with aes256gcm
   const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
   
   // Create properly formatted packet with consistent field naming
@@ -104,13 +104,13 @@ export async function createEncryptedPacket(
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes256gcm', // Updated from 'aes-gcm'
+    encryption_algorithm: 'aes256gcm', // Updated from 'aes256gcm'
     padding: null // Optional padding for length concealment
   };
 }
 
 /**
- * Decrypt data using AES-GCM via Web Crypto API
+ * Decrypt data using aes256gcm via Web Crypto API
  * @param encrypted Encrypted data
  * @param nonce Nonce used for encryption
  * @param sessionKey Session key
@@ -131,13 +131,13 @@ export async function decryptData(
     }
     
     try {
-        // Use Web Crypto API with AES-GCM
+        // Use Web Crypto API with aes256gcm
         if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-            // Import key for AES-GCM
+            // Import key for aes256gcm
             const cryptoKey = await window.crypto.subtle.importKey(
                 'raw',
                 sessionKey,
-                { name: 'AES-GCM' },
+                { name: 'aes256gcm' },
                 false,
                 ['decrypt']
             );
@@ -145,9 +145,9 @@ export async function decryptData(
             // Decrypt the data
             const decryptedBuffer = await window.crypto.subtle.decrypt(
                 {
-                    name: 'AES-GCM',
+                    name: 'aes256gcm',
                     iv: nonce,
-                    tagLength: 128 // 16 bytes tag, standard for AES-GCM
+                    tagLength: 128 // 16 bytes tag, standard for aes256gcm
                 },
                 cryptoKey,
                 encrypted
@@ -157,7 +157,7 @@ export async function decryptData(
             const decoder = new TextDecoder();
             const jsonString = decoder.decode(new Uint8Array(decryptedBuffer));
             
-            console.log('[Socket] Successfully decrypted data with AES-GCM via Web Crypto API', {
+            console.log('[Socket] Successfully decrypted data with aes256gcm via Web Crypto API', {
                 ciphertextLength: encrypted.length,
                 plaintextLength: decryptedBuffer.byteLength
             });
