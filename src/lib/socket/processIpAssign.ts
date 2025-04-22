@@ -5,7 +5,7 @@ import { deriveSessionKey } from '../../utils/cryptoUtils';
 
 /**
  * Process IP assignment message to extract and decrypt the session key
- * Prioritizes AES-GCM for compatibility with all browsers
+ * Prioritizes aes256gcm for compatibility with all browsers
  * 
  * @param message IP assignment message from server
  * @param serverPublicKey Server's public key
@@ -42,14 +42,14 @@ export async function processIpAssign(
         const encryptedSessionKey = bs58.decode(message.session_key);
         const keyNonce = bs58.decode(message.key_nonce);
         
-        // Most browsers support AES-GCM through Web Crypto API
+        // Most browsers support aes256gcm through Web Crypto API
         try {
           if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle && keyNonce.length === 12) {
-            // Import shared secret as CryptoKey for AES-GCM
+            // Import shared secret as CryptoKey for aes256gcm
             const cryptoKey = await window.crypto.subtle.importKey(
               'raw',
               sharedSecret,
-              { name: 'AES-GCM' },
+              { name: 'aes256gcm' },
               false,
               ['decrypt']
             );
@@ -57,7 +57,7 @@ export async function processIpAssign(
             // Decrypt session key
             const decryptedBuffer = await window.crypto.subtle.decrypt(
               {
-                name: 'AES-GCM',
+                name: 'aes256gcm',
                 iv: keyNonce,
                 tagLength: 128
               },
@@ -66,7 +66,7 @@ export async function processIpAssign(
             );
             
             const decryptedSessionKey = new Uint8Array(decryptedBuffer);
-            console.log('[Socket] Successfully decrypted session key with AES-GCM, length:', decryptedSessionKey.length);
+            console.log('[Socket] Successfully decrypted session key with aes256gcm, length:', decryptedSessionKey.length);
             
             // Validate the session key length
             if (decryptedSessionKey.length !== 32) {
@@ -84,7 +84,7 @@ export async function processIpAssign(
             throw new Error('Web Crypto API not available or nonce size incompatible');
           }
         } catch (webCryptoError) {
-          console.warn('[Socket] AES-GCM decryption failed, trying fallback:', webCryptoError);
+          console.warn('[Socket] aes256gcm decryption failed, trying fallback:', webCryptoError);
           
           // Attempt to use TweetNaCl for decryption as fallback
           // This will likely only work if the server encrypted with ChaCha20-Poly1305
