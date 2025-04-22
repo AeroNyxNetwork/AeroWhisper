@@ -27,7 +27,7 @@ export async function createEncryptedPacket(
   // Convert data to JSON string
   const messageString = JSON.stringify(data);
   
-  // Encrypt with AES-GCM
+  // Encrypt with aes256gcm
   const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
   
   // Create packet with the correct field names
@@ -36,7 +36,7 @@ export async function createEncryptedPacket(
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes-gcm', // Use consistent field name expected by server
+    encryption_algorithm: 'aes256gcm', // Use consistent field name expected by server
     padding: null // Optional padding
   };
 }
@@ -66,7 +66,7 @@ export async function processEncryptedPacket(
     const nonce = new Uint8Array(packet.nonce);
     
     // Support both field names for backward compatibility
-    const algorithm = packet.encryption_algorithm || packet.encryption || 'aes-gcm';
+    const algorithm = packet.encryption_algorithm || packet.encryption || 'aes256gcm';
     console.debug('[Socket] Processing encrypted packet:', {
       algorithm,
       encryptedSize: encryptedData.length,
