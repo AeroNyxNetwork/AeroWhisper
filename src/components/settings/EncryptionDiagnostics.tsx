@@ -1,50 +1,47 @@
-// src/components/settings/EncryptionSettings.tsx
+// src/components/settings/EncryptionDiagnostics.tsx
 import React, { useState, useEffect } from 'react';
 import {
   Box,
   Button,
-  FormControl,
-  FormLabel,
   Heading,
-  Switch,
   Text,
   VStack,
   HStack,
   Icon,
   Badge,
-  useColorMode,
-  Divider,
-  RadioGroup,
-  Radio,
-  Tooltip,
-  Select,
   Alert,
   AlertIcon,
   AlertTitle,
   AlertDescription,
+  Divider,
+  Spinner,
+  Progress,
+  Code,
+  useColorMode,
 } from '@chakra-ui/react';
-import { FaLock, FaInfoCircle, FaSave, FaExclamationTriangle } from 'react-icons/fa';
+import {
+  FaCheck,
+  FaTimes,
+  FaExclamationTriangle,
+  FaSync,
+  FaBug,
+  FaWrench,
+  FaQuestionCircle,
+} from 'react-icons/fa';
 import { isAesGcmSupported } from '../../utils/cryptoUtils';
+import { testEncryptionFormat, findCompatibleEncryptionFormat } from '../../utils/testCrypto';
 
-interface EncryptionSettings {
-  preferredMethod: 'aes-gcm' | 'chacha20poly1305' | 'auto';
-  keySize: 128 | 256;
-  fieldName: 'encryption_algorithm' | 'encryption' | 'auto';
+interface EncryptionDiagnosticsProps {
+  onFixIssue: (fixType: string) => void;
 }
 
-const defaultSettings: EncryptionSettings = {
-  preferredMethod: 'auto',
-  keySize: 256,
-  fieldName: 'auto',
-};
-
-export const EncryptionSettings: React.FC = () => {
+export const EncryptionDiagnostics: React.FC<EncryptionDiagnosticsProps> = ({ onFixIssue }) => {
   const { colorMode } = useColorMode();
-  const [settings, setSettings] = useState<EncryptionSettings>(defaultSettings);
-  const [isDirty, setIsDirty] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
-  const [aesGcmSupported, setAesGcmSupported] = useState<boolean>(true);
-  const [isAdvancedMode, setIsAdvancedMode] = useState(false);
+  const [isRunningTests, setIsRunningTests] = useState(false);
+  const [testResults, setTestResults] = useState<any>(null);
+  const [aesGcmSupported, setAesGcmSupported] = useState<boolean | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [compatibilityResults, setCompatibilityResults] = useState<any>(null);
 
   // Check for AES-GCM support on component mount
   useEffect(() => {
@@ -54,48 +51,52 @@ export const EncryptionSettings: React.FC = () => {
     };
     
     checkSupport();
-    
-    // Load existing settings from localStorage
-    try {
-      const savedSettings = localStorage.getItem('aero-encryption-settings');
-      if (savedSettings) {
-        const parsedSettings = JSON.parse(savedSettings) as EncryptionSettings;
-        setSettings(parsedSettings);
-      }
-    } catch (error) {
-      console.error('Failed to load encryption settings:', error);
-    }
   }, []);
 
-  // Handle settings changes
-  const handleSettingChange = (field: keyof EncryptionSettings, value: any) => {
-    setSettings(prev => ({ ...prev, [field]: value }));
-    setIsDirty(true);
-    setSaveStatus('idle');
-  };
-
-  // Save settings to localStorage
-  const saveSettings = () => {
+  // Run diagnostic tests to identify encryption issues
+  const runDiagnostics = async () => {
+    setIsRunningTests(true);
+    setProgress(0);
+    setTestResults(null);
+    
     try {
-      localStorage.setItem('aero-encryption-settings', JSON.stringify(settings));
-      setIsDirty(false);
-      setSaveStatus('saved');
+      // Step 1: Check for AES-GCM support
+      setProgress(10);
+      const aesGcmSupport = await isAesGcmSupported();
       
-      // Reset status after delay
-      setTimeout(() => {
-        setSaveStatus('idle');
-      }, 3000);
+      // Step 2: Test both field names for compatibility
+      setProgress(30);
+      const fieldTest1 = await testEncryptionFormat({ test: "Testing with 'encryption' field" }, 'encryption');
+      
+      setProgress(50);
+      const fieldTest2 = await testEncryptionFormat({ test: "Testing with 'encryption_algorithm' field" }, 'encryption_algorithm');
+      
+      // Step 3: Test key sizes
+      setProgress(70);
+      
+      // Find best field format
+      setProgress(90);
+      const compatResults = await findCompatibleEncryptionFormat();
+      setCompatibilityResults(compatResults);
+      
+      // Compile results
+      setTestResults({
+        aesGcmSupport,
+        fieldTest1,
+        fieldTest2,
+        compatibility: compatResults
+      });
+      
+      setProgress(100);
     } catch (error) {
-      console.error('Failed to save encryption settings:', error);
-      setSaveStatus('error');
+      console.error('Error running diagnostics:', error);
+      setTestResults({
+        error: true,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setIsRunningTests(false);
     }
-  };
-
-  // Reset to default settings
-  const resetSettings = () => {
-    setSettings(defaultSettings);
-    setIsDirty(true);
-    setSaveStatus('idle');
   };
 
   return (
@@ -108,145 +109,188 @@ export const EncryptionSettings: React.FC = () => {
     >
       <VStack spacing={6} align="stretch">
         <HStack justify="space-between">
-          <HStack>
-            <Icon as={FaLock} color="purple.500" boxSize={6} mr={2} />
-            <Heading size="md">Encryption Settings</Heading>
-          </HStack>
-          {!aesGcmSupported && (
-            <Badge colorScheme="red" p={2} borderRadius="md">
-              <Icon as={FaExclamationTriangle} mr={1} />
-              AES-GCM Not Supported
-            </Badge>
-          )}
+          <Heading size="md" display="flex" alignItems="center">
+            <Icon as={FaBug} mr={2} color="purple.500" /> 
+            Encryption Diagnostics
+          </Heading>
+          <Button
+            leftIcon={<Icon as={FaSync} />}
+            colorScheme="purple"
+            size="sm"
+            isLoading={isRunningTests}
+            loadingText="Running Tests"
+            onClick={runDiagnostics}
+          >
+            Run Diagnostics
+          </Button>
         </HStack>
         
-        {!aesGcmSupported && (
-          <Alert status="warning" borderRadius="md">
+        <Text>
+          This tool helps diagnose encryption compatibility issues with your browser and our server.
+          If you're experiencing connection problems, run the tests to identify potential fixes.
+        </Text>
+        
+        {/* AES-GCM Support Status */}
+        <Box
+          bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
+          p={4}
+          borderRadius="md"
+        >
+          <HStack>
+            <Heading size="sm">AES-GCM Support:</Heading>
+            {aesGcmSupported === null ? (
+              <Spinner size="sm" />
+            ) : aesGcmSupported ? (
+              <Badge colorScheme="green" display="flex" alignItems="center">
+                <Icon as={FaCheck} mr={1} /> Supported
+              </Badge>
+            ) : (
+              <Badge colorScheme="red" display="flex" alignItems="center">
+                <Icon as={FaTimes} mr={1} /> Not Supported
+              </Badge>
+            )}
+          </HStack>
+          
+          {aesGcmSupported === false && (
+            <Alert status="warning" mt={2} size="sm">
+              <AlertIcon />
+              <Box>
+                <AlertTitle fontSize="sm">Browser Compatibility Issue</AlertTitle>
+                <AlertDescription fontSize="xs">
+                  Your browser doesn't fully support AES-GCM encryption.
+                  Consider using a more modern browser like Chrome, Firefox, or Safari.
+                </AlertDescription>
+              </Box>
+            </Alert>
+          )}
+        </Box>
+        
+        {/* Diagnostic Results */}
+        {isRunningTests && (
+          <Box>
+            <Text mb={2}>Running encryption tests...</Text>
+            <Progress value={progress} colorScheme="purple" hasStripe isAnimated />
+          </Box>
+        )}
+        
+        {testResults && !testResults.error && (
+          <VStack spacing={4} align="stretch">
+            <Heading size="sm">Diagnostic Results:</Heading>
+            
+            <Box
+              bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
+              p={4}
+              borderRadius="md"
+            >
+              <VStack align="start" spacing={3}>
+                <HStack>
+                  <Text fontWeight="medium">Using 'encryption' field:</Text>
+                  {testResults.fieldTest1.success ? (
+                    <Badge colorScheme="green" display="flex" alignItems="center">
+                      <Icon as={FaCheck} mr={1} /> Working
+                    </Badge>
+                  ) : (
+                    <Badge colorScheme="red" display="flex" alignItems="center">
+                      <Icon as={FaTimes} mr={1} /> Not Working
+                    </Badge>
+                  )}
+                </HStack>
+                
+                <HStack>
+                  <Text fontWeight="medium">Using 'encryption_algorithm' field:</Text>
+                  {testResults.fieldTest2.success ? (
+                    <Badge colorScheme="green" display="flex" alignItems="center">
+                      <Icon as={FaCheck} mr={1} /> Working
+                    </Badge>
+                  ) : (
+                    <Badge colorScheme="red" display="flex" alignItems="center">
+                      <Icon as={FaTimes} mr={1} /> Not Working
+                    </Badge>
+                  )}
+                </HStack>
+                
+                <Divider />
+                
+                <Box>
+                  <Text fontWeight="medium">Recommended Settings:</Text>
+                  <HStack mt={2}>
+                    <Badge colorScheme="purple">
+                      {testResults.compatibility.recommendedField}
+                    </Badge>
+                    
+                    {testResults.compatibility.recommendedField !== 'unknown' && (
+                      <Button
+                        size="xs"
+                        leftIcon={<Icon as={FaWrench} />}
+                        colorScheme="blue"
+                        onClick={() => 
+                          onFixIssue(testResults.compatibility.recommendedField === 'encryption_algorithm' 
+                            ? 'use_encryption_algorithm_field' 
+                            : 'use_encryption_field')
+                        }
+                      >
+                        Apply Fix
+                      </Button>
+                    )}
+                  </HStack>
+                </Box>
+              </VStack>
+            </Box>
+            
+            {!testResults.fieldTest1.success && !testResults.fieldTest2.success && (
+              <Alert status="error">
+                <AlertIcon />
+                <Box>
+                  <AlertTitle>Encryption Tests Failed</AlertTitle>
+                  <AlertDescription>
+                    All encryption tests failed. This might indicate an issue with your browser's
+                    Web Crypto API implementation. Try a different browser or check our troubleshooting guide.
+                  </AlertDescription>
+                  <Button
+                    mt={2}
+                    size="sm"
+                    colorScheme="red"
+                    onClick={() => onFixIssue('unknown_error')}
+                  >
+                    Apply Emergency Fix
+                  </Button>
+                </Box>
+              </Alert>
+            )}
+            
+            {/* Key size tests would go here */}
+            <Box>
+              <Heading size="sm" mb={2}>Other Potential Fixes:</Heading>
+              <Button
+                size="sm"
+                leftIcon={<Icon as={FaWrench} />}
+                colorScheme="teal"
+                mr={2}
+                onClick={() => onFixIssue('check_key_length')}
+              >
+                Toggle Key Size (256/128 bits)
+              </Button>
+            </Box>
+          </VStack>
+        )}
+        
+        {testResults && testResults.error && (
+          <Alert status="error">
             <AlertIcon />
             <Box>
-              <AlertTitle>Encryption Compatibility Warning</AlertTitle>
+              <AlertTitle>Error Running Tests</AlertTitle>
               <AlertDescription>
-                Your browser doesn't fully support AES-GCM encryption which may cause issues
-                with secure messaging. Consider using a more modern browser.
+                {testResults.message}
               </AlertDescription>
             </Box>
           </Alert>
         )}
         
-        <FormControl>
-          <FormLabel fontWeight="medium">Preferred Encryption Method</FormLabel>
-          <RadioGroup 
-            value={settings.preferredMethod} 
-            onChange={(val) => handleSettingChange('preferredMethod', val)}
-          >
-            <VStack align="start" spacing={2}>
-              <Radio value="auto">
-                <HStack>
-                  <Text>Automatic (Recommended)</Text>
-                  <Tooltip label="System will determine the best encryption method based on browser support.">
-                    <span><Icon as={FaInfoCircle} ml={1} color="gray.500" /></span>
-                  </Tooltip>
-                </HStack>
-              </Radio>
-              <Radio value="aes-gcm" isDisabled={!aesGcmSupported}>
-                <HStack>
-                  <Text>AES-GCM</Text>
-                  {aesGcmSupported ? (
-                    <Badge colorScheme="green">Supported</Badge>
-                  ) : (
-                    <Badge colorScheme="red">Not Supported</Badge>
-                  )}
-                </HStack>
-              </Radio>
-              <Radio value="chacha20poly1305">
-                <Text>ChaCha20-Poly1305 (Legacy)</Text>
-              </Radio>
-            </VStack>
-          </RadioGroup>
-        </FormControl>
-        
-        <Divider />
-        
-        <FormControl display="flex" alignItems="center">
-          <FormLabel htmlFor="advanced-mode" mb="0">
-            Show Advanced Settings
-          </FormLabel>
-          <Switch 
-            id="advanced-mode" 
-            isChecked={isAdvancedMode}
-            onChange={() => setIsAdvancedMode(!isAdvancedMode)}
-          />
-        </FormControl>
-        
-        {isAdvancedMode && (
-          <>
-            <FormControl>
-              <FormLabel fontWeight="medium">Encryption Key Size</FormLabel>
-              <Select 
-                value={settings.keySize.toString()} 
-                onChange={(e) => handleSettingChange('keySize', parseInt(e.target.value))}
-              >
-                <option value="256">256-bit (Recommended)</option>
-                <option value="128">128-bit (Faster, less secure)</option>
-              </Select>
-            </FormControl>
-            
-            <FormControl>
-              <FormLabel fontWeight="medium">Encryption Field Name</FormLabel>
-              <RadioGroup 
-                value={settings.fieldName} 
-                onChange={(val) => handleSettingChange('fieldName', val)}
-              >
-                <VStack align="start" spacing={2}>
-                  <Radio value="auto">
-                    <Text>Automatic (Recommended)</Text>
-                  </Radio>
-                  <Radio value="encryption_algorithm">
-                    <Text>encryption_algorithm</Text>
-                  </Radio>
-                  <Radio value="encryption">
-                    <Text>encryption</Text>
-                  </Radio>
-                </VStack>
-              </RadioGroup>
-              <Text fontSize="sm" color="gray.500" mt={2}>
-                This affects how encryption information is shared with the server and other clients. 
-                Only change if experiencing connection issues.
-              </Text>
-            </FormControl>
-          </>
-        )}
-        
-        <Divider />
-        
-        <HStack justify="space-between">
-          <Button 
-            variant="outline" 
-            onClick={resetSettings}
-            size="sm"
-          >
-            Reset to Default
-          </Button>
-          
-          <Button
-            colorScheme="purple"
-            onClick={saveSettings}
-            isDisabled={!isDirty}
-            leftIcon={<FaSave />}
-            size="md"
-          >
-            {saveStatus === 'saved' ? 'Saved!' : 'Save Settings'}
-          </Button>
-        </HStack>
-        
-        {saveStatus === 'error' && (
-          <Alert status="error" borderRadius="md">
-            <AlertIcon />
-            <AlertTitle>Save Error</AlertTitle>
-            <AlertDescription>
-              Failed to save settings. Please try again.
-            </AlertDescription>
-          </Alert>
+        {!isRunningTests && !testResults && (
+          <Box textAlign="center" py={4}>
+            <Icon as={FaQuestionCircle} boxSize={12} color="gray.400" mb={3} />
+            <Text>Press "Run Diagnostics" to test encryption compatibility</Text>
+          </Box>
         )}
       </VStack>
     </Box>
