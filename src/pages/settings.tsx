@@ -163,9 +163,7 @@ const SettingsPage = () => {
                 <Text>Server</Text>
               </Tab>
             </TabList>
-                     <TabPanel>
-                <ServerSettings onSave={handleSaveServerSettings} />
-              </TabPanel>
+            
             <TabPanels>
               <TabPanel>
                 <SecuritySettings onSave={handleSaveSecuritySettings} />
@@ -187,8 +185,9 @@ const SettingsPage = () => {
                   <Text>Profile settings coming soon!</Text>
                 </Box>
               </TabPanel>
-     
-    
+              <TabPanel>
+                <ServerSettings onSave={handleSaveServerSettings} />
+              </TabPanel>
             </TabPanels>
           </Tabs>
         </VStack>
