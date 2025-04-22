@@ -4,6 +4,111 @@ import * as bs58 from 'bs58';
 import * as nacl from 'tweetnacl';
 
 /**
+ * Sign a challenge using Ed25519
+ * @param challenge Challenge data to sign
+ * @param secretKey Ed25519 secret key
+ * @returns Signature as a base58 string
+ */
+export function signChallenge(
+  challenge: Uint8Array,
+  secretKey: Uint8Array
+): string {
+  try {
+    // Log challenge details for debugging
+    console.debug('[Crypto] Signing challenge:', {
+      challengeLength: challenge.length,
+      challengePrefix: Array.from(challenge.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+      secretKeyLength: secretKey.length,
+      secretKeyPrefix: Array.from(secretKey.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('')
+    });
+    
+    // Verify the keypair is valid
+    if (secretKey.length !== 64) {
+      throw new Error(`Invalid Ed25519 secret key length: ${secretKey.length} (expected 64 bytes)`);
+    }
+    
+    // Sign the challenge using nacl.sign.detached
+    const signature = nacl.sign.detached(challenge, secretKey);
+    const signatureB58 = bs58.encode(signature);
+    
+    console.debug('[Crypto] Challenge signed successfully:', {
+      signatureLength: signature.length,
+      signaturePrefix: Array.from(signature.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+      signatureB58Length: signatureB58.length,
+      signatureB58Prefix: signatureB58.substring(0, 16)
+    });
+    
+    return signatureB58;
+  } catch (error) {
+    console.error('[Crypto] Error signing challenge:', error);
+    throw error;
+  }
+}
+
+
+/**
+ * Parse challenge data for authentication
+ * @param challengeData Challenge data in array or string format
+ * @returns Parsed challenge as Uint8Array
+ */
+export function parseChallengeData(challengeData: number[] | string): Uint8Array {
+  let parsed: Uint8Array;
+  
+  // Log the raw challenge data for debugging
+  console.debug('[Crypto] Parsing challenge data:', {
+    dataType: typeof challengeData,
+    isArray: Array.isArray(challengeData),
+    dataLength: Array.isArray(challengeData) 
+      ? challengeData.length 
+      : (typeof challengeData === 'string' ? challengeData.length : 'unknown')
+  });
+  
+  // Handle array format (from server)
+  if (Array.isArray(challengeData)) {
+    parsed = new Uint8Array(challengeData);
+    console.debug('[Crypto] Challenge data is array, converted to Uint8Array:', {
+      length: parsed.length,
+      prefix: Array.from(parsed.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+    });
+  } 
+  // Handle string format (may be base58 or base64)
+  else if (typeof challengeData === 'string') {
+    try {
+      // Try to parse as base58
+      parsed = bs58.decode(challengeData);
+      console.debug('[Crypto] Challenge data decoded as base58:', {
+        length: parsed.length,
+        prefix: Array.from(parsed.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+      });
+    } catch (e) {
+      console.debug('[Crypto] Not valid base58, trying other formats');
+      // Fallback to base64
+      try {
+        const buffer = Buffer.from(challengeData, 'base64');
+        parsed = new Uint8Array(buffer);
+        console.debug('[Crypto] Challenge data decoded as base64:', {
+          length: parsed.length,
+          prefix: Array.from(parsed.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+        });
+      } catch (e2) {
+        console.debug('[Crypto] Not valid base64, using as UTF-8');
+        // Last resort: try to use the string directly as UTF-8
+        const encoder = new TextEncoder();
+        parsed = encoder.encode(challengeData);
+        console.debug('[Crypto] Challenge data encoded as UTF-8:', {
+          length: parsed.length,
+          prefix: Array.from(parsed.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+        });
+      }
+    }
+  } else {
+    throw new Error('Invalid challenge data format');
+  }
+  
+  return parsed;
+}
+
+/**
  * Check if AES-GCM is supported in the current environment
  * @returns Promise resolving to true if AES-GCM is supported
  */
