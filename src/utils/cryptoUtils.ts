@@ -173,33 +173,6 @@ export function createDataPacket(
 }
 
 /**
- * Check if AES-GCM encryption is supported in current environment
- * @returns Promise that resolves to true if supported
- */
-export async function isAesGcmSupported(): Promise<boolean> {
-  if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
-    return false;
-  }
-  
-  try {
-    // Try to create a simple key to test AES-GCM support
-    await window.crypto.subtle.generateKey(
-      {
-        name: 'AES-GCM',
-        length: 256
-      },
-      false,
-      ['encrypt', 'decrypt']
-    );
-    
-    return true;
-  } catch (error) {
-    console.warn('[Crypto] AES-GCM not supported:', error);
-    return false;
-  }
-}
-
-/**
  * Derive a session key from ECDH shared secret using HKDF
  * Following the server implementation: derive_session_key()
  * 
