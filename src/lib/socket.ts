@@ -759,7 +759,13 @@ export class AeroNyxSocket extends EventEmitter {
   }
 
 
-  export async function encryptWithAesGcm(
+  /**
+ * Encrypt data using AES-GCM algorithm
+ * @param plaintext Data to encrypt (string or Uint8Array)
+ * @param key Encryption key (32 bytes)
+ * @returns Object containing ciphertext and nonce
+ */
+export async function encryptWithAesGcm(
     plaintext: string | Uint8Array,
     key: Uint8Array
   ): Promise<{ ciphertext: Uint8Array, nonce: Uint8Array }> {
