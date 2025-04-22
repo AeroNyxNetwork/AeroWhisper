@@ -1,45 +1,7 @@
 import * as bs58 from 'bs58';
 import * as nacl from 'tweetnacl';
 import { ChallengeMessage } from './types';
-
-/**
- * Parses challenge data from various formats
- * @param challengeData Challenge data in array or string format
- * @returns Parsed challenge as Uint8Array
- */
-export function parseChallengeData(challengeData: number[] | string): Uint8Array {
-  let parsed: Uint8Array;
-  
-  // Handle array format (from server)
-  if (Array.isArray(challengeData)) {
-    parsed = new Uint8Array(challengeData);
-    console.log('[Socket] Challenge data is array, length:', parsed.length);
-  } 
-  // Handle string format (may be base58 or base64)
-  else if (typeof challengeData === 'string') {
-    try {
-      // Try to parse as base58
-      parsed = bs58.decode(challengeData);
-      console.log('[Socket] Challenge data decoded as base58, length:', parsed.length);
-    } catch (e) {
-      // Fallback to base64
-      try {
-        const buffer = Buffer.from(challengeData, 'base64');
-        parsed = new Uint8Array(buffer);
-        console.log('[Socket] Challenge data decoded as base64, length:', parsed.length);
-      } catch (e2) {
-        // Last resort: try to use the string directly as UTF-8
-        const encoder = new TextEncoder();
-        parsed = encoder.encode(challengeData);
-        console.log('[Socket] Challenge data encoded as UTF-8, length:', parsed.length);
-      }
-    }
-  } else {
-    throw new Error('Invalid challenge data format');
-  }
-  
-  return parsed;
-}
+import { parseChallengeData, signChallenge } from '../../utils/cryptoUtils';
 
 /**
  * Creates a challenge response using Ed25519 signature
@@ -85,11 +47,10 @@ export async function createChallengeResponse(
       console.warn('[Socket] Warning: Derived public key does not match stored public key');
     }
     
-    // Sign the challenge
-    const signature = nacl.sign.detached(challengeData, secretKey);
-    const signatureB58 = bs58.encode(signature);
+    // Sign the challenge using the imported function from cryptoUtils
+    const signatureB58 = signChallenge(challengeData, secretKey);
     
-    console.log('[Socket] Signature generated, length:', signature.length, 'base58 length:', signatureB58.length);
+    console.log('[Socket] Signature generated, base58 length:', signatureB58.length);
     
     // Create and return response
     return {
