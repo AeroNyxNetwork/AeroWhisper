@@ -33,6 +33,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../contexts/NotificationContext';
 
+import { EncryptionSettings } from '../components/settings/EncryptionSettings';
+
 const SettingsPage = () => {
   const router = useRouter();
   const { colorMode } = useColorMode();
@@ -183,6 +185,9 @@ const SettingsPage = () => {
                   <Heading size="md" mb={4}>Profile Settings</Heading>
                   <Text>Profile settings coming soon!</Text>
                 </Box>
+              </TabPanel>
+              <TabPanel>
+                <EncryptionSettings onSave={handleSaveEncryptionSettings} />
               </TabPanel>
               <TabPanel>
                 <ServerSettings onSave={handleSaveServerSettings} />
