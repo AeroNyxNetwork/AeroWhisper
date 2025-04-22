@@ -6,7 +6,7 @@
 import { encryptWithAesGcm, decryptWithAesGcm, generateNonce } from './cryptoUtils';
 
 /**
- * Test AES-GCM encryption/decryption cycle with a given format
+ * Test aes256gcm encryption/decryption cycle with a given format
  * This helps verify the crypto functions work properly and match the server's expectations
  * 
  * @param messageData The data to test encryption with
@@ -14,7 +14,7 @@ import { encryptWithAesGcm, decryptWithAesGcm, generateNonce } from './cryptoUti
  * @returns Result object with success status and details
  */
 export async function testEncryptionFormat(
-  messageData: any = { test: "AES-GCM Test Message" },
+  messageData: any = { test: "aes256gcm Test Message" },
   fieldName: string = 'encryption' // The field name to use ('encryption' or 'encryption_algorithm')
 ): Promise<{success: boolean, details: any}> {
   try {
@@ -42,7 +42,7 @@ export async function testEncryptionFormat(
     };
     
     // Set the encryption algorithm field with the specified field name
-    packet[fieldName] = 'aes-gcm';
+    packet[fieldName] = 'aes256gcm';
     
     // Serialize the packet
     const packetJson = JSON.stringify(packet);
@@ -112,7 +112,7 @@ export async function findCompatibleEncryptionFormat(): Promise<{
   // Test message with timestamp to ensure uniqueness
   const testMessage = {
     type: 'test',
-    content: 'AES-GCM encryption test',
+    content: 'aes256gcm encryption test',
     timestamp: new Date().toISOString()
   };
   
@@ -163,7 +163,7 @@ export async function generateTestPacket(
   };
   
   // Set encryption algorithm field
-  packet[fieldName] = 'aes-gcm';
+  packet[fieldName] = 'aes256gcm';
   
   return packet;
 }
