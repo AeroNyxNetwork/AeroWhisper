@@ -67,7 +67,18 @@ export const EncryptionSettings: React.FC<EncryptionSettingsProps> = ({ onSave }
   
   // Check for AES-GCM support on component mount
   useEffect(() => {
-    setAesGcmSupported(isAesGcmSupported());
+    // Fix: Properly handle the Promise returned by isAesGcmSupported
+    const checkSupport = async () => {
+      try {
+        const supported = await isAesGcmSupported();
+        setAesGcmSupported(supported);
+      } catch (error) {
+        console.error('Error checking AES-GCM support:', error);
+        setAesGcmSupported(false);
+      }
+    };
+    
+    checkSupport();
     
     // Load existing settings from localStorage
     try {
