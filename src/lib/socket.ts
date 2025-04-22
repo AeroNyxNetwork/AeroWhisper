@@ -1567,7 +1567,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @returns Promise resolving to true if sent successfully
    */
   public async send(data: any): Promise<boolean> {
-  // ENHANCED LOGGING: Log detailed message sending attempt through socket
+    // ENHANCED LOGGING: Log detailed message sending attempt through socket
     console.debug('[Socket:SEND] Sending data through socket:', {
       socketState: this.socket ? (this.socket.readyState === WebSocket.OPEN ? 'OPEN' : 'NOT_OPEN') : 'NO_SOCKET',
       isConnected: this.isConnected,
@@ -1654,6 +1654,7 @@ export class AeroNyxSocket extends EventEmitter {
       return false;
     }
   }
+
   
   /**
    * Send a message to the chat
@@ -1661,7 +1662,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @returns Promise resolving to true if sent successfully, false otherwise
    */
   async sendMessage(message: MessageType): Promise<boolean> {
-  // ENHANCED LOGGING: Log message sending attempt
+    // ENHANCED LOGGING: Log message sending attempt
     console.debug('[Socket:SEND:MESSAGE] Sending chat message:', {
       messageId: message.id,
       content: message.content ? (message.content.length > 100 ? message.content.substring(0, 100) + '...' : message.content) : 'empty',
