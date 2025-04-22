@@ -179,7 +179,7 @@ export async function decryptWithAesGcm(
 
 /**
  * Create a proper data packet for encrypted messaging
- * Using the consistent field names expected by the server
+ * Using the consistent field name "encryption_algorithm" expected by the server
  * 
  * @param data The data to encrypt (object or string)
  * @param sessionKey The session key for encryption
@@ -197,13 +197,14 @@ export async function createEncryptedPacket(
   // Encrypt with AES-GCM
   const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
   
-  // Create properly formatted packet with consistent field naming
+  // Create properly formatted packet with CONSISTENT field naming
+  // Always use 'encryption_algorithm' for compatibility
   return {
     type: 'Data',
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes-gcm', // Use this field name consistently
+    encryption_algorithm: 'aes-gcm', // Always use this field name for server compatibility
     padding: null // Optional padding for length concealment
   };
 }
@@ -233,7 +234,18 @@ export async function processEncryptedPacket(
     const nonce = new Uint8Array(packet.nonce);
     
     // Support both field names for backward compatibility
-    const algorithm = packet.encryption_algorithm || packet.encryption || 'aes-gcm';
+    // Log which field name is being used for debugging
+    let algorithm: string;
+    if (packet.encryption_algorithm !== undefined) {
+      algorithm = packet.encryption_algorithm;
+      console.debug('[Crypto] Using encryption_algorithm field:', algorithm);
+    } else if (packet.encryption !== undefined) {
+      algorithm = packet.encryption;
+      console.debug('[Crypto] Using deprecated encryption field:', algorithm);
+    } else {
+      algorithm = 'aes-gcm'; // Default
+      console.debug('[Crypto] No algorithm field found, using default:', algorithm);
+    }
     
     // Decrypt the data
     const decryptedString = await decryptWithAesGcm(
