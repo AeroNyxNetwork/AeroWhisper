@@ -53,16 +53,19 @@ export const EncryptionDiagnostics: React.FC<EncryptionDiagnosticsProps> = ({ on
     checkSupport();
   }, []);
   
-  const runTests = async () => {
+ const runTests = async () => {
     setIsRunningTests(true);
     setTestResults(null);
     
     try {
+      // Get AES-GCM support status
+      const aesGcmSupport = await isAesGcmSupported();
+      
       // Test both encryption field formats
       const formatResults = await findCompatibleEncryptionFormat();
       
       setTestResults({
-        aesGcmSupport: isAesGcmSupported(),
+        aesGcmSupport: aesGcmSupport, // Now correctly awaited
         formatTests: formatResults,
         timestamp: new Date().toISOString(),
       });
