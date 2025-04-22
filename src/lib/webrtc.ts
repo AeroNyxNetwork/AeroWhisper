@@ -886,13 +886,13 @@ export class WebRTCManager extends EventEmitter {
       // Encrypt with AES-GCM using Web Crypto API
       const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
       
-      // Create packet in the expected format with the correct field name
+      // Create packet with the correct field naming
       const encryptedMessage = JSON.stringify({
         type: 'Data',
         encrypted: Array.from(ciphertext), // Convert to regular array for JSON
         nonce: Array.from(nonce),
         counter: messageCounter,
-        encryption_algorithm: 'aes-gcm', // Use consistent field name expected by the server
+        encryption_algorithm: 'aes-gcm', // Use consistent field name expected by server
         padding: null // Optional padding
       });
       
@@ -942,12 +942,15 @@ export class WebRTCManager extends EventEmitter {
       const encryptedUint8 = new Uint8Array(encryptedData.encrypted);
       const nonceUint8 = new Uint8Array(encryptedData.nonce);
       
-      // Log decryption attempt - support both field names for backwards compatibility
+      // Support both field names for backward compatibility
+      const algorithm = encryptedData.encryption_algorithm || encryptedData.encryption || 'aes-gcm';
+      
+      // Log decryption attempt
       console.debug('[WebRTC] Attempting to decrypt message:', {
         encryptedLength: encryptedUint8.length,
         nonceLength: nonceUint8.length,
         counter: encryptedData.counter,
-        algorithm: encryptedData.encryption_algorithm || encryptedData.encryption || 'aes-gcm'
+        algorithm: algorithm
       });
       
       // Decrypt with AES-GCM
