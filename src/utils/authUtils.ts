@@ -13,7 +13,7 @@ export function createAuthMessage(publicKey: string) {
     type: 'Auth',
     public_key: publicKey,
     version: '1.0.0',
-    features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], // Add aes-gcm as first priority
+    features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // Add aes-gcm as first priority
     nonce: generateRandomString(24),
   };
 }
