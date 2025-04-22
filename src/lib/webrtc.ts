@@ -837,7 +837,7 @@ export class WebRTCManager extends EventEmitter {
    * @returns true if sent successfully, false otherwise
    */
   async sendMessage(message: any, maxAttempts: number = 3): Promise<boolean> {
-    // If not connected, queue message and return false
+  // If not connected, queue message and return false
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
       this.queueMessage(message, maxAttempts);
       return false;
@@ -892,6 +892,7 @@ export class WebRTCManager extends EventEmitter {
         encrypted: Array.from(ciphertext), // Convert to regular array for JSON
         nonce: Array.from(nonce),
         counter: messageCounter,
+        encryption: 'aes-gcm', // Ensure this field is correctly named to match server expectations
         padding: null // Optional padding
       });
       
@@ -900,7 +901,8 @@ export class WebRTCManager extends EventEmitter {
         type: 'Data',
         encryptedLength: ciphertext.length,
         nonceLength: nonce.length,
-        counter: messageCounter
+        counter: messageCounter,
+        encryption: 'aes-gcm'
       });
       
       // Send the message
@@ -911,6 +913,7 @@ export class WebRTCManager extends EventEmitter {
       return false;
     }
   }
+
 
   /**
    * Process an encrypted message received through WebRTC
@@ -943,7 +946,8 @@ export class WebRTCManager extends EventEmitter {
       console.debug('[WebRTC] Attempting to decrypt message:', {
         encryptedLength: encryptedUint8.length,
         nonceLength: nonceUint8.length,
-        counter: encryptedData.counter
+        counter: encryptedData.counter,
+        encryption: encryptedData.encryption || 'aes-gcm' // Note the encryption field name
       });
       
       // Decrypt with AES-GCM
