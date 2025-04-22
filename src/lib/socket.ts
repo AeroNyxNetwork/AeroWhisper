@@ -139,14 +139,14 @@ export class AeroNyxSocket extends EventEmitter {
   private keepAliveInterval: NodeJS.Timeout | null = null;
   private lastMessageTime: number = Date.now();
   private connectionTimeout: NodeJS.Timeout | null = null;
-  private encryptionAlgorithm: string = 'aes-gcm'; 
+  private encryptionAlgorithm: string = 'aes256gcm'; 
   private processedMessageIds: Set<string> = new Set(); // For preventing replay attacks
   private serverPublicKey: string | null = null; // Store server public key for ECDH
   private forceReconnect: boolean = false; // Flag to force reconnection on server restart
   private heartbeatInterval: NodeJS.Timeout | null = null; // Heartbeat to detect connection issues
   private autoReconnect: boolean = true; // Flag to control automatic reconnection
   private pingTimeouts: Map<number, NodeJS.Timeout> = new Map(); // Map to track ping timeouts
-  private useAesGcm: boolean = true; // Flag to prefer AES-GCM encryption
+  private useAesGcm: boolean = true; // Flag to prefer aes256gcm encryption
   
   /**
    * Reconnection configuration with exponential backoff
@@ -480,8 +480,8 @@ export class AeroNyxSocket extends EventEmitter {
       type: 'Auth',
       public_key: this.publicKey,
       version: '1.0.0',
-      features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // Updated from 'aes-gcm'
-      encryption_algorithm: 'aes256gcm', // Updated from 'aes-gcm'
+      features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // Updated from 'aes256gcm'
+      encryption_algorithm: 'aes256gcm', // Updated from 'aes256gcm'
       nonce: Date.now().toString(),
     };
     
@@ -787,8 +787,8 @@ export class AeroNyxSocket extends EventEmitter {
         console.log(`[Socket] Server selected encryption algorithm: ${message.encryption_algorithm}`);
         this.encryptionAlgorithm = message.encryption_algorithm;
       } else {
-        // Default to AES-GCM if not specified
-        this.encryptionAlgorithm = 'aes-gcm';
+        // Default to aes256gcm if not specified
+        this.encryptionAlgorithm = 'aes256gcm';
         console.log(`[Socket] Using default encryption algorithm: ${this.encryptionAlgorithm}`);
       }
       
@@ -881,7 +881,7 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   /**
-   * Send a test message to verify AES-GCM encryption is working
+   * Send a test message to verify aes256gcm encryption is working
    */
   private async sendTestMessage(): Promise<boolean> {
     if (!this.socket || !this.isConnected || !this.sessionKey) {
@@ -891,7 +891,7 @@ export class AeroNyxSocket extends EventEmitter {
     
     try {
       // Test message
-      const testMessage = "AES-GCM Test: " + new Date().toISOString();
+      const testMessage = "aes256gcm Test: " + new Date().toISOString();
       
       // Create packet with a simple object
       return await this.send({
@@ -900,7 +900,7 @@ export class AeroNyxSocket extends EventEmitter {
         timestamp: Date.now()
       });
     } catch (error) {
-      console.error("Failed to send AES-GCM test message:", error);
+      console.error("Failed to send aes256gcm test message:", error);
       return false;
     }
   }
