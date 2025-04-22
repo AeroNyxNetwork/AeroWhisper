@@ -1,3 +1,5 @@
+// src/lib/socket.ts
+
 import { EventEmitter } from 'events';
 import { MessageType } from '../types/chat';
 import * as bs58 from 'bs58';
@@ -5,20 +7,100 @@ import * as nacl from 'tweetnacl';
 
 // Import from utility modules
 import { 
-  ReconnectionConfig, 
-  SocketError,
-  ConnectionStatus,
-  PendingMessage,
-  QueuedMessage,
-  ChallengeMessage,
-  IpAssignMessage,
-  PingMessage,
-  PongMessage,
-  ErrorMessage,
-  DisconnectMessage
-} from './socket/types';
+  createEncryptedPacket, 
+  processEncryptedPacket,
+  encryptWithAesGcm, 
+  decryptWithAesGcm, 
+  generateNonce,
+  parseChallengeData,
+  signChallenge,
+  deriveSessionKey
+} from '../utils/cryptoUtils';
 
-import { encryptWithAesGcm, decryptWithAesGcm, generateNonce } from '../utils/cryptoUtils';
+/**
+ * Connection status types for socket
+ */
+export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
+
+/**
+ * Types of errors that can occur during socket operations
+ */
+export interface SocketError {
+  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message';
+  message: string;
+  code: string;
+  details?: string;
+  retry: boolean;
+  originalError?: any;
+}
+
+/**
+ * Configuration for reconnection strategy
+ */
+export interface ReconnectionConfig {
+  initialDelay: number;
+  maxDelay: number;
+  maxAttempts: number;
+  jitter: boolean;
+}
+
+// Pending message interface
+interface PendingMessage {
+  type: string;
+  data: any;
+}
+
+// Queued message interface
+interface QueuedMessage {
+  data: any;
+  attempts: number;
+}
+
+// Challenge message interface
+interface ChallengeMessage {
+  id: string;
+  data: number[] | string;
+  server_public_key?: string;
+}
+
+// IP assignment message interface
+interface IpAssignMessage {
+  ip_address: string;
+  session_id: string;
+  session_key?: string;
+  key_nonce?: string;
+  server_public_key?: string;
+  encryption_algorithm?: string;
+}
+
+// Ping message interface
+interface PingMessage {
+  type: 'Ping';
+  timestamp: number;
+  sequence: number;
+}
+
+// Pong message interface
+interface PongMessage {
+  type: 'Pong';
+  echo_timestamp: number;
+  server_timestamp: number;
+  sequence: number;
+}
+
+// Error message interface
+interface ErrorMessage {
+  type: 'Error';
+  message: string;
+  code?: number;
+}
+
+// Disconnect message interface
+interface DisconnectMessage {
+  type: 'Disconnect';
+  reason: number;
+  message: string;
+}
 
 /**
  * Default reconnection configuration with exponential backoff
@@ -131,7 +213,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.autoReconnect = false;
     
     // Try to send a clean disconnect message if possible
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+    if (this.socket && this.isSocketOpen(this.socket)) {
       try {
         // Use a synchronous approach for beforeunload
         const disconnectMsg = JSON.stringify(this.createDisconnectMessage(0, 'User left the page'));
@@ -494,30 +576,6 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   /**
-   * Handle messages from the server
-   * @param data Message data
-   */
-  private async handleServerMessage(data: string | ArrayBuffer | Blob): Promise<void> {
-    try {
-      // Parse the message
-      const message = await this.parseMessage(data);
-      
-      // Process the parsed message
-      await this.processMessage(message);
-    } catch (error) {
-      console.error('[Socket] Error handling server message:', error);
-      this.emit('error', this.createSocketError(
-        'message',
-        'Failed to parse server message',
-        'PARSE_ERROR',
-        undefined,
-        false,
-        error
-      ));
-    }
-  }
-  
-  /**
    * Parse WebSocket message from different formats
    * @param data Message data in various formats
    * @returns Parsed message object
@@ -550,6 +608,30 @@ export class AeroNyxSocket extends EventEmitter {
     } catch (error) {
       console.error('[Socket] Error parsing message:', error);
       throw new Error('Failed to parse server message');
+    }
+  }
+  
+  /**
+   * Handle messages from the server
+   * @param data Message data
+   */
+  private async handleServerMessage(data: string | ArrayBuffer | Blob): Promise<void> {
+    try {
+      // Parse the message
+      const message = await this.parseMessage(data);
+      
+      // Process the parsed message
+      await this.processMessage(message);
+    } catch (error) {
+      console.error('[Socket] Error handling server message:', error);
+      this.emit('error', this.createSocketError(
+        'message',
+        'Failed to parse server message',
+        'PARSE_ERROR',
+        undefined,
+        false,
+        error
+      ));
     }
   }
   
@@ -628,7 +710,7 @@ export class AeroNyxSocket extends EventEmitter {
       }
       
       // Parse challenge data
-      const challengeData = this.parseChallengeData(message.data);
+      const challengeData = parseChallengeData(message.data);
       console.log('[Socket] Challenge data parsed, length:', challengeData.length);
       
       // Get keypair from localStorage
@@ -648,9 +730,8 @@ export class AeroNyxSocket extends EventEmitter {
         throw new Error(`Invalid Ed25519 secret key length: ${secretKey.length} (expected 64 bytes)`);
       }
       
-      // Sign the challenge using nacl.sign.detached
-      const signature = nacl.sign.detached(challengeData, secretKey);
-      const signatureB58 = bs58.encode(signature);
+      // Sign the challenge using our helper function from cryptoUtils
+      const signatureB58 = signChallenge(challengeData, secretKey);
       
       // Create the challenge response
       const response = {
@@ -684,45 +765,6 @@ export class AeroNyxSocket extends EventEmitter {
         this.scheduleReconnect();
       }
     }
-  }
-  
-  /**
-   * Parses challenge data from various formats
-   * @param challengeData Challenge data in array or string format
-   * @returns Parsed challenge as Uint8Array
-   */
-  private parseChallengeData(challengeData: number[] | string): Uint8Array {
-    let parsed: Uint8Array;
-    
-    // Handle array format (from server)
-    if (Array.isArray(challengeData)) {
-      parsed = new Uint8Array(challengeData);
-      console.log('[Socket] Challenge data is array, length:', parsed.length);
-    } 
-    // Handle string format (may be base58 or base64)
-    else if (typeof challengeData === 'string') {
-      try {
-        // Try to parse as base58
-        parsed = bs58.decode(challengeData);
-        console.log('[Socket] Challenge data decoded as base58, length:', parsed.length);
-      } catch (e) {
-        // Fallback to base64
-        try {
-          const buffer = Buffer.from(challengeData, 'base64');
-          parsed = new Uint8Array(buffer);
-          console.log('[Socket] Challenge data decoded as base64, length:', parsed.length);
-        } catch (e2) {
-          // Last resort: try to use the string directly as UTF-8
-          const encoder = new TextEncoder();
-          parsed = encoder.encode(challengeData);
-          console.log('[Socket] Challenge data encoded as UTF-8, length:', parsed.length);
-        }
-      }
-    } else {
-      throw new Error('Invalid challenge data format');
-    }
-    
-    return parsed;
   }
   
   /**
@@ -864,34 +906,40 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle encrypted data packet
    * @param message Data packet message
    */
- private async handleDataPacket(message: { encrypted: number[], nonce: number[], counter: number, encryption_algorithm?: string, encryption?: string }): Promise<void> {
+  private async handleDataPacket(message: { 
+    encrypted: number[], 
+    nonce: number[], 
+    counter: number, 
+    encryption_algorithm?: string, 
+    encryption?: string 
+  }): Promise<void> {
     try {
       if (!this.sessionKey) {
         throw new Error('No session key available to decrypt message');
       }
       
-       const encryptedUint8 = new Uint8Array(message.encrypted);
-       const nonceUint8 = new Uint8Array(message.nonce);
+      const encryptedUint8 = new Uint8Array(message.encrypted);
+      const nonceUint8 = new Uint8Array(message.nonce);
       
       // Check if server specified an encryption algorithm
       // Support both field names for backward compatibility
-       const algorithm = message.encryption_algorithm || message.encryption || this.encryptionAlgorithm;
+      const algorithm = message.encryption_algorithm || message.encryption || this.encryptionAlgorithm;
       
       // Log packet details for debugging
-        console.debug('[Socket] Received encrypted data:', {
-          encryptedSize: encryptedUint8.length,
-          nonceSize: nonceUint8.length,
-          counter: message.counter,
-          algorithm: algorithm
-        });
-        
+      console.debug('[Socket] Received encrypted data:', {
+        encryptedSize: encryptedUint8.length,
+        nonceSize: nonceUint8.length,
+        counter: message.counter,
+        algorithm: algorithm
+      });
+      
       try {
-        // Decrypt using AES-GCM
+        // Use our unified function to decrypt the data
         const decryptedText = await decryptWithAesGcm(
           encryptedUint8,
           nonceUint8,
           this.sessionKey,
-          'string'   // Output as string
+          'string'
         ) as string;
         
         // Parse the decrypted JSON
@@ -1193,7 +1241,7 @@ export class AeroNyxSocket extends EventEmitter {
       try {
         this.socket.close();
       } catch (e) {
-        // Ignore errors when closing an already broken socket
+        // Ignore errors closing an already broken socket
       }
       this.socket = null;
     }
@@ -1300,20 +1348,8 @@ export class AeroNyxSocket extends EventEmitter {
     }
     
     try {
-      // Encrypt the data with session key using AES-GCM
-      const messageString = JSON.stringify(data);
-      
-      const { ciphertext, nonce } = await encryptWithAesGcm(messageString, this.sessionKey);
-      
-      // Create data packet with the correct format
-      const dataPacket = {
-        type: 'Data',
-        encrypted: Array.from(ciphertext), // Convert Uint8Array to regular array for JSON
-        nonce: Array.from(nonce),
-        counter: this.messageCounter++,
-        encryption_algorithm: this.encryptionAlgorithm, // Changed from 'encryption' to 'encryption_algorithm'
-        padding: null // Optional padding for length concealment
-      };
+      // Use our unified function to create an encrypted packet
+      const dataPacket = await createEncryptedPacket(data, this.sessionKey, this.messageCounter++);
       
       // Check socket is still connected
       if (!this.isSocketOpen(this.socket)) {
@@ -1351,7 +1387,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @returns Promise resolving to true if sent successfully, false otherwise
    */
   async sendMessage(message: MessageType): Promise<boolean> {
-  // If not connected, queue message and return false
+    // If not connected, queue message and return false
     if (!this.socket || !this.isConnected) {
       console.log('[Socket] Not connected, queueing message');
       this.queueMessage('message', message);
@@ -1688,10 +1724,11 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   /**
-   * Check if connection is active
-   * @returns True if socket is open and connected
+   * Check if socket is open and connected
+   * @param socket WebSocket instance to check
+   * @returns True if socket is open
    */
-  isSocketOpen(socket: WebSocket | null): boolean {
+  private isSocketOpen(socket: WebSocket | null): boolean {
     return !!socket && socket.readyState === WebSocket.OPEN;
   }
   
@@ -1701,7 +1738,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @param chatId Chat room ID
    * @returns Formatted WebSocket URL
    */
-  createWebSocketUrl(baseUrl: string, chatId: string): string {
+  private createWebSocketUrl(baseUrl: string, chatId: string): string {
     let serverUrl = baseUrl;
     
     // Ensure URL starts with WebSocket protocol
@@ -1714,7 +1751,7 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   /**
-   * Create a socket error object
+   * Create socket error object
    * @param type Error type
    * @param message User-friendly error message
    * @param code Error code
@@ -1723,7 +1760,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @param originalError Original error object
    * @returns Structured socket error object
    */
-  createSocketError(
+  private createSocketError(
     type: SocketError['type'],
     message: string,
     code: string,
@@ -1747,7 +1784,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @param message Text message explaining disconnect
    * @returns Disconnect message object
    */
-  createDisconnectMessage(reason: number, message: string) {
+  private createDisconnectMessage(reason: number, message: string) {
     return {
       type: 'Disconnect',
       reason,
@@ -1760,7 +1797,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @param code WebSocket close code or error code
    * @returns True if reconnection should be attempted
    */
-  shouldAttemptReconnect(code: number): boolean {
+  private shouldAttemptReconnect(code: number): boolean {
     // Common codes where reconnection makes sense
     const reconnectCodes = [1000, 1001, 1006, 1012, 1013];
     return reconnectCodes.includes(code);
