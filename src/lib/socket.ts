@@ -847,11 +847,11 @@ export class AeroNyxSocket extends EventEmitter {
       console.log(`[Socket] IP assigned: ${message.ip_address}, Session ID: ${message.session_id}`);
       
       // Store encryption algorithm info if provided
-       if (message.encryption_algorithm) {
+      if (message.encryption_algorithm) {
         console.log(`[Socket] Server selected encryption algorithm: ${message.encryption_algorithm}`);
         this.encryptionAlgorithm = message.encryption_algorithm;
       } else {
-        // Default to aes256gcm if not specified - this is what server expects
+        // Default to aes256gcm if not specified
         this.encryptionAlgorithm = 'aes256gcm';
         console.log(`[Socket] Using default encryption algorithm: ${this.encryptionAlgorithm}`);
       }
@@ -861,22 +861,85 @@ export class AeroNyxSocket extends EventEmitter {
         hasSessionKey: !!message.session_key,
         hasKeyNonce: !!message.key_nonce,
         hasServerPublicKey: !!message.server_public_key,
-        encryptionAlgorithm: this.encryptionAlgorithm
+        encryptionAlgorithm: this.encryptionAlgorithm,
+        sessionId: message.session_id
       });
       
       // If server_public_key wasn't provided in Challenge, it might be here
       if (message.server_public_key && !this.serverPublicKey) {
         this.serverPublicKey = message.server_public_key;
+        console.debug('[Socket] Received server public key:', message.server_public_key.substring(0, 10) + '...');
       }
       
       // Process the session key
       if (message.session_key && message.key_nonce) {
         try {
-          // In a real implementation, this would properly decrypt the key
-          // For simplicity, we'll just store it directly
-          this.sessionKey = bs58.decode(message.session_key);
-          console.debug('[Socket] Session key received and decoded, length:', this.sessionKey.length);
+          console.debug('[Socket] Processing server-provided session key');
+          
+          // Log raw encrypted key data for debugging
+          const encryptedKey = bs58.decode(message.session_key);
+          const keyNonce = bs58.decode(message.key_nonce);
+          
+          console.debug('[Socket] Encrypted session key details:', {
+            encryptedKeyLength: encryptedKey.length,
+            encryptedKeyPrefix: Array.from(encryptedKey.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
+            keyNonceLength: keyNonce.length,
+            keyNonceHex: Array.from(keyNonce).map(b => b.toString(16).padStart(2, '0')).join('')
+          });
+          
+          // If we have a server public key, we should use it to derive a shared secret
+          if (this.serverPublicKey) {
+            try {
+              console.debug('[Socket] Attempting to decrypt session key with server public key');
+              // Get keypair from localStorage
+              const storedKeypair = localStorage.getItem('aero-keypair');
+              if (!storedKeypair) {
+                throw new Error('No keypair found for decrypting session key');
+              }
+              
+              const keypair = JSON.parse(storedKeypair);
+              const secretKey = bs58.decode(keypair.secretKey);
+              const serverPubKeyBytes = bs58.decode(this.serverPublicKey);
+              
+              console.debug('[Socket] Key pair info:', {
+                secretKeyLength: secretKey.length,
+                secretKeyPrefix: Array.from(secretKey.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''),
+                serverPubKeyLength: serverPubKeyBytes.length,
+                serverPubKeyPrefix: Array.from(serverPubKeyBytes.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('')
+              });
+              
+              // Convert X25519 and derive shared secret
+              // This should properly decrypt the session key based on server-compatible method
+              // Logic here will depend on how the server encrypts the session key
+              // ... (implement appropriate decryption based on server method)
+              
+              // For now, using the decoded session key directly
+              this.sessionKey = encryptedKey;
+            } catch (derivationError) {
+              console.error('[Socket] Error deriving shared secret for session key:', derivationError);
+              // Fall back to direct decoding
+              this.sessionKey = encryptedKey;
+            }
+          } else {
+            // In a real implementation, this would properly decrypt the key
+            // For simplicity, we'll just store it directly
+            this.sessionKey = encryptedKey;
+          }
+          
+          console.debug('[Socket] Session key processed, length:', this.sessionKey.length);
           console.debug('[Socket] Session key prefix:', Array.from(this.sessionKey.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''));
+          
+          // Test encryption compatibility
+          if (process.env.NODE_ENV === 'development') {
+            const { testEncryptionCompat } = await import('../utils/cryptoUtils');
+            testEncryptionCompat(this.sessionKey)
+              .then(compatible => {
+                console.debug(`[Socket] Encryption compatibility test: ${compatible ? 'PASSED' : 'FAILED'}`);
+              })
+              .catch(err => {
+                console.error('[Socket] Encryption compatibility test error:', err);
+              });
+          }
         } catch (keyError) {
           console.error('[Socket] Error processing session key:', keyError);
           
@@ -956,6 +1019,7 @@ export class AeroNyxSocket extends EventEmitter {
     try {
       // Test message
       const testMessage = "Encryption Test: " + new Date().toISOString();
+      console.debug('[Socket] Sending encryption test message:', testMessage);
       
       // Create packet with a simple object
       return await this.send({
@@ -964,7 +1028,7 @@ export class AeroNyxSocket extends EventEmitter {
         timestamp: Date.now()
       });
     } catch (error) {
-      console.error("Failed to send encryption test message:", error);
+      console.error("[Socket] Failed to send encryption test message:", error);
       return false;
     }
   }
