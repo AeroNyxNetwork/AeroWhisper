@@ -1286,7 +1286,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @param data The data to send
    * @returns Promise resolving to true if sent successfully
    */
-  public async send(data: any): Promise {
+  public async send(data: any): Promise<boolean> {
     if (!this.socket || !this.isConnected) {
       console.error('[Socket] Cannot send data: not connected');
       this.queueMessage('data', data);
