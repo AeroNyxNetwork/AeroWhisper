@@ -198,13 +198,12 @@ export async function createEncryptedPacket(
   const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
   
   // Create properly formatted packet with CONSISTENT field naming
-  // Always use 'encryption_algorithm' for compatibility
   return {
     type: 'Data',
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes-gcm', // Always use this field name for server compatibility
+    encryption_algorithm: 'aes256gcm', // Changed from 'aes-gcm' to 'aes256gcm'
     padding: null // Optional padding for length concealment
   };
 }
