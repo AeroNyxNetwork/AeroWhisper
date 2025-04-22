@@ -1,6 +1,6 @@
 // src/lib/socket/networking.ts
 import { PingMessage, PongMessage, AuthMessage } from './types';
-import { generateNonce } from '../utils/cryptoUtils';
+import { generateNonce } from '../../utils/cryptoUtils';
 
 /**
  * Create a ping message
