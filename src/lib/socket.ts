@@ -543,14 +543,14 @@ export class AeroNyxSocket extends EventEmitter {
       type: 'Auth',
       public_key: this.publicKey,
       version: '1.0.0',
-      features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // Updated from 'aes256gcm'
-      encryption_algorithm: 'aes256gcm', // Updated from 'aes256gcm'
+      features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // Server expects 'aes256gcm'
+      encryption_algorithm: 'aes256gcm', // Server expects this format
       nonce: Date.now().toString(),
     };
     
     try {
       this.socket.send(JSON.stringify(authMessage));
-      console.log('[Socket] Auth message sent successfully with AES256GCM preference');
+      console.log('[Socket] Auth message sent successfully with aes256gcm preference');
     } catch (error) {
       console.error('[Socket] Error sending auth message:', error);
       this.emit('error', this.createSocketError(
@@ -562,6 +562,7 @@ export class AeroNyxSocket extends EventEmitter {
       ));
     }
   }
+
   
   /**
    * Start heartbeat mechanism to detect broken connections quickly
@@ -846,11 +847,11 @@ export class AeroNyxSocket extends EventEmitter {
       console.log(`[Socket] IP assigned: ${message.ip_address}, Session ID: ${message.session_id}`);
       
       // Store encryption algorithm info if provided
-      if (message.encryption_algorithm) {
+       if (message.encryption_algorithm) {
         console.log(`[Socket] Server selected encryption algorithm: ${message.encryption_algorithm}`);
         this.encryptionAlgorithm = message.encryption_algorithm;
       } else {
-        // Default to aes256gcm if not specified
+        // Default to aes256gcm if not specified - this is what server expects
         this.encryptionAlgorithm = 'aes256gcm';
         console.log(`[Socket] Using default encryption algorithm: ${this.encryptionAlgorithm}`);
       }
@@ -954,7 +955,7 @@ export class AeroNyxSocket extends EventEmitter {
     
     try {
       // Test message
-      const testMessage = "aes256gcm Test: " + new Date().toISOString();
+      const testMessage = "Encryption Test: " + new Date().toISOString();
       
       // Create packet with a simple object
       return await this.send({
@@ -963,7 +964,7 @@ export class AeroNyxSocket extends EventEmitter {
         timestamp: Date.now()
       });
     } catch (error) {
-      console.error("Failed to send aes256gcm test message:", error);
+      console.error("Failed to send encryption test message:", error);
       return false;
     }
   }
@@ -1008,6 +1009,7 @@ export class AeroNyxSocket extends EventEmitter {
       
       try {
         // Use the unified decryption function from cryptoUtils
+        // Internally uses 'AES-GCM' with Web Crypto API, but packet uses 'aes256gcm'
         const decryptedText = await decryptWithAesGcm(
           encryptedUint8,
           nonceUint8,
@@ -1422,7 +1424,7 @@ export class AeroNyxSocket extends EventEmitter {
     
     try {
       // Use our unified function to create an encrypted packet
-      // This now uses the consistent field name 'encryption_algorithm'
+      // Internally uses 'AES-GCM' with Web Crypto API, but server expects 'aes256gcm'
       const dataPacket = await createEncryptedPacket(data, this.sessionKey, this.messageCounter++);
       
       // Check socket is still connected
