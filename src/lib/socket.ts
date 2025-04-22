@@ -478,7 +478,7 @@ export class AeroNyxSocket extends EventEmitter {
       public_key: this.publicKey,
       version: '1.0.0',
       features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], 
-      encryption_algorithm: 'aes-gcm', // Use the correct field name
+      encryption_algorithm: 'aes-gcm', // Always use consistent field name
       nonce: Date.now().toString(),
     };
     
@@ -911,32 +911,37 @@ export class AeroNyxSocket extends EventEmitter {
       encrypted: number[], 
       nonce: number[], 
       counter: number, 
-      encryption_algorithm?: string, 
+      encryption_algorithm?: string,
       encryption?: string 
     }
-  ): Promise<void> {
+  }): Promise<void> {
     try {
       if (!this.sessionKey) {
         throw new Error('No session key available to decrypt message');
       }
       
-      const encryptedUint8 = new Uint8Array(message.encrypted);
-      const nonceUint8 = new Uint8Array(message.nonce);
+      // Extract message data with support for both field names
+      const packet = message.message;
+      const encryptedUint8 = new Uint8Array(packet.encrypted);
+      const nonceUint8 = new Uint8Array(packet.nonce);
       
       // Check if server specified an encryption algorithm
       // Support both field names for backward compatibility
-      const algorithm = message.encryption_algorithm || message.encryption || this.encryptionAlgorithm;
+      // Note: Field naming inconsistency is a key issue we address here
+      const algorithm = packet.encryption_algorithm || packet.encryption || this.encryptionAlgorithm;
       
       // Log packet details for debugging
       console.debug('[Socket] Received encrypted data:', {
         encryptedSize: encryptedUint8.length,
         nonceSize: nonceUint8.length,
-        counter: message.counter,
-        algorithm: algorithm
+        counter: packet.counter,
+        algorithm: algorithm,
+        fieldNameUsed: packet.encryption_algorithm ? 'encryption_algorithm' : 
+                      packet.encryption ? 'encryption' : 'none'
       });
       
       try {
-      // Use the unified decryption function from cryptoUtils
+        // Use the unified decryption function from cryptoUtils
         const decryptedText = await decryptWithAesGcm(
           encryptedUint8,
           nonceUint8,
@@ -1351,6 +1356,7 @@ export class AeroNyxSocket extends EventEmitter {
     
     try {
       // Use our unified function to create an encrypted packet
+      // This now uses the consistent field name 'encryption_algorithm'
       const dataPacket = await createEncryptedPacket(data, this.sessionKey, this.messageCounter++);
       
       // Check socket is still connected
