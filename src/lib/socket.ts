@@ -907,12 +907,14 @@ export class AeroNyxSocket extends EventEmitter {
    * @param message Data packet message
    */
   private async handleDataPacket(message: { 
-    encrypted: number[], 
-    nonce: number[], 
-    counter: number, 
-    encryption_algorithm?: string, 
-    encryption?: string 
-  }): Promise<void> {
+     message: { 
+      encrypted: number[], 
+      nonce: number[], 
+      counter: number, 
+      encryption_algorithm?: string, 
+      encryption?: string 
+    }
+  ): Promise<void> {
     try {
       if (!this.sessionKey) {
         throw new Error('No session key available to decrypt message');
@@ -934,7 +936,7 @@ export class AeroNyxSocket extends EventEmitter {
       });
       
       try {
-        // Use our unified function to decrypt the data
+      // Use the unified decryption function from cryptoUtils
         const decryptedText = await decryptWithAesGcm(
           encryptedUint8,
           nonceUint8,
