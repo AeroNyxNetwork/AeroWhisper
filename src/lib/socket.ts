@@ -1,6 +1,69 @@
 // src/lib/socket.ts
 
-// src/lib/socket.ts
+/**
+* AeroNyx Client Development Guidelines
+* =====================================
+* 
+* Encryption Algorithm Requirements
+* ---------------------------------
+* When implementing the AeroNyx client, pay close attention to encryption algorithm naming.
+* 
+* Server expects: aes256gcm
+* NOT: aes-gcm, AES-GCM, or other variations
+* 
+* The server recognizes:
+* - `aes256gcm` (preferred)
+* - `aesgcm`
+* - `aes`
+* 
+* For consistency, always use `aes256gcm` in all client code.
+* 
+* Implementation Examples
+* ----------------------
+* 
+* 1. Authentication Request:
+* 
+* ```
+* const authRequest = {
+*   type: "Auth",
+*   public_key: publicKey,
+*   version: "1.0",
+*   features: ["aes256gcm", "chacha20poly1305", "webrtc"],
+*   encryption_algorithm: "aes256gcm", // Correct format
+*   nonce: generateRandomNonce()
+* };
+* ```
+* 
+* 2. Data Packet Format:
+* 
+* ```
+* const packet = {
+*   type: "Data",
+*   encrypted: Array.from(encrypted),
+*   nonce: Array.from(nonce),
+*   counter: counter,
+*   encryption_algorithm: "aes256gcm" // Must include correct algorithm name
+* };
+* ```
+* 
+* 3. Handling Server Response:
+* 
+* ```
+* function handleIpAssign(response) {
+*   const { encryption_algorithm } = response;
+*   // Store exactly as received from server
+*   sessionStore.setEncryptionAlgorithm(encryption_algorithm);
+* }
+* ```
+* 
+* Common Issues
+* ------------
+* 
+* 1. Using incorrect algorithm name format (`aes-gcm` vs `aes256gcm`)
+* 2. Not including algorithm field in data packets
+* 3. Not preserving algorithm name from server response
+* 4. Inconsistent algorithm naming across client codebase
+*/
 import { EventEmitter } from 'events';
 import { MessageType } from '../types/chat';
 import * as bs58 from 'bs58';
