@@ -1,7 +1,7 @@
 import * as bs58 from 'bs58';
 import * as nacl from 'tweetnacl';
 import { IpAssignMessage } from './types';
-import { deriveSessionKey } from './encryption';
+import { deriveSessionKey } from '../../utils/cryptoUtils';
 
 /**
  * Process IP assignment message to extract and decrypt the session key
