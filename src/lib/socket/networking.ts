@@ -105,8 +105,8 @@ export function createAuthMessage(publicKey: string): AuthMessage {
     type: 'Auth',
     public_key: publicKey,
     version: '1.0.0',
-    features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], // List aes-gcm first for preference
-    encryption_algorithm: 'aes-gcm', // Explicitly specify preferred algorithm with correct field name
+    features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // List aes-gcm first for preference
+    encryption_algorithm: 'aes256gcm', // Explicitly specify preferred algorithm with correct field name
     nonce: Date.now().toString(),
   };
 }
