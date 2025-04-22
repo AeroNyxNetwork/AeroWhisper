@@ -33,7 +33,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../contexts/NotificationContext';
 
-import { EncryptionSettings } from '../components/settings/EncryptionSettings';
 
 const SettingsPage = () => {
   const router = useRouter();
@@ -188,9 +187,7 @@ const SettingsPage = () => {
                   <Text>Profile settings coming soon!</Text>
                 </Box>
               </TabPanel>
-              <TabPanel>
-                <EncryptionSettings onSave={handleSaveEncryptionSettings} />
-              </TabPanel>
+     
     
             </TabPanels>
           </Tabs>
