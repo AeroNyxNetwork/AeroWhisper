@@ -384,7 +384,7 @@ export class WebRTCManager extends EventEmitter {
         // Parse the incoming message
         const message = JSON.parse(event.data);
         
-        // Process with our AES-GCM handler
+        // Process with our aes256gcm handler
         if (this.sessionKey) {
           const decryptedData = await this.processEncryptedMessage(message, this.sessionKey);
           if (decryptedData) {
@@ -833,7 +833,7 @@ export class WebRTCManager extends EventEmitter {
   }
 
   /**
-   * Send a message through the WebRTC data channel with AES-GCM encryption
+   * Send a message through the WebRTC data channel with aes256gcm encryption
    * @param message - The message to send
    * @param maxAttempts - Maximum number of retry attempts if sending fails
    * @returns true if sent successfully, false otherwise
@@ -859,7 +859,7 @@ export class WebRTCManager extends EventEmitter {
   }
   
   /**
-   * Send a message through the WebRTC data channel with AES-GCM encryption
+   * Send a message through the WebRTC data channel with aes256gcm encryption
    * @param message - The message to send
    * @param sessionKey - The encryption key
    * @param dataChannel - The WebRTC data channel
@@ -885,7 +885,7 @@ export class WebRTCManager extends EventEmitter {
       // Prepare the message for encryption
       const messageString = JSON.stringify(message);
       
-      // Encrypt with AES-GCM using Web Crypto API
+      // Encrypt with aes256gcm using Web Crypto API
       const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
       
       // Create packet with the correct field naming
@@ -966,7 +966,7 @@ export class WebRTCManager extends EventEmitter {
         algorithm: algorithm
       });
       
-      // Decrypt with AES-GCM
+      // Decrypt with aes256gcm
       const decryptedText = await decryptWithAesGcm(
         encryptedUint8,
         nonceUint8,
