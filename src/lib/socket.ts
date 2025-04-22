@@ -864,7 +864,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Handle encrypted data packet
    * @param message Data packet message
    */
- private async handleDataPacket(message: { encrypted: number[], nonce: number[], counter: number, encryption?: string }): Promise<void> {
+ private async handleDataPacket(message: { encrypted: number[], nonce: number[], counter: number, encryption_algorithm?: string, encryption?: string }): Promise<void> {
     try {
       if (!this.sessionKey) {
         throw new Error('No session key available to decrypt message');
@@ -875,7 +875,8 @@ export class AeroNyxSocket extends EventEmitter {
       const nonceUint8 = new Uint8Array(message.nonce);
       
       // Check if server specified an encryption algorithm
-      const algorithm = message.encryption || this.encryptionAlgorithm;
+      // Handle both field names for backward compatibility
+      const algorithm = message.encryption_algorithm || message.encryption || this.encryptionAlgorithm;
       
       // Log packet details for debugging
       console.debug('[Socket] Received encrypted data:', {
@@ -886,7 +887,7 @@ export class AeroNyxSocket extends EventEmitter {
       });
       
       try {
-        // Decrypt using AES-GCM (our simplified implementation only supports this)
+        // Decrypt using AES-GCM
         const decryptedText = await decryptWithAesGcm(
           encryptedUint8,
           nonceUint8,
@@ -1334,7 +1335,7 @@ export class AeroNyxSocket extends EventEmitter {
         encrypted: Array.from(ciphertext), // Convert Uint8Array to regular array for JSON
         nonce: Array.from(nonce),
         counter: this.messageCounter++,
-        encryption_algorithm: 'aes-gcm', 
+        encryption_algorithm: this.encryptionAlgorithm, // Use consistent field name
         padding: null // Optional padding for length concealment
       };
       
