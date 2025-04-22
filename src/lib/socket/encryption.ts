@@ -74,6 +74,39 @@ export async function encryptData(
     }
 }
 
+
+
+/**
+ * Create a proper data packet for encrypted messaging
+ * Using the consistent field names expected by the server
+ * 
+ * @param data The data to encrypt (object or string)
+ * @param sessionKey The session key for encryption
+ * @param counter Message counter for replay protection
+ * @returns Promise resolving to a properly formatted data packet
+ */
+export async function createEncryptedPacket(
+  data: any,
+  sessionKey: Uint8Array,
+  counter: number
+): Promise<any> {
+  // Convert to string if needed
+  const messageString = typeof data === 'string' ? data : JSON.stringify(data);
+  
+  // Encrypt with AES-GCM
+  const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
+  
+  // Create properly formatted packet with consistent field naming
+  return {
+    type: 'Data',
+    encrypted: Array.from(ciphertext),
+    nonce: Array.from(nonce),
+    counter: counter,
+    encryption_algorithm: 'aes-gcm', // Use this field name consistently
+    padding: null // Optional padding for length concealment
+  };
+}
+
 /**
  * Decrypt data using AES-GCM via Web Crypto API
  * @param encrypted Encrypted data
