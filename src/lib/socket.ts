@@ -396,7 +396,7 @@ export class AeroNyxSocket extends EventEmitter {
       public_key: this.publicKey,
       version: '1.0.0',
       features: ['aes-gcm', 'chacha20poly1305', 'webrtc'], 
-      encryption: 'aes-gcm', // Ensure this field is consistent
+      encryption_algorithm: 'aes-gcm', // Ensure this field is consistent
       nonce: Date.now().toString(),
     };
     
@@ -1397,7 +1397,7 @@ export class AeroNyxSocket extends EventEmitter {
     
     try {
       // Create the message data object
-      const messageData = {
+      onst messageData = {
         type: 'message',
         id: message.id,
         content: message.content,
