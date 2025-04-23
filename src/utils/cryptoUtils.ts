@@ -5,6 +5,18 @@ import * as nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
 
 /**
+ * Derive a session key from ECDH shared secret
+ * (This is an alias to deriveSessionKeyHKDF for backward compatibility)
+ * 
+ * @param sharedSecret The raw 32-byte shared secret from ECDH
+ * @param salt A salt (usually empty or specific string, must match server)
+ * @returns Promise resolving to a 32-byte session key
+ */
+export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
+  return deriveSessionKeyHKDF(sharedSecret, salt);
+}
+
+/**
  * Generate a cryptographically secure random nonce
  * @param length Length of nonce in bytes
  * @returns Nonce as Uint8Array
@@ -57,6 +69,8 @@ export async function isAesGcmSupported(): Promise<boolean> {
     return false;
   }
 }
+
+
 
 /**
  * Encrypt data using AES-GCM via Web Crypto API
