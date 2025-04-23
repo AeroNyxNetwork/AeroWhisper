@@ -825,9 +825,9 @@ export class AeroNyxSocket extends EventEmitter {
   }
   
   /**
-   * Handle IP assignment message after successful authentication
-   * @param message IP assignment message
-   */
+ * Handle IP assignment message after successful authentication
+ * @param message IP assignment message
+ */
   private async handleIpAssign(message: IpAssignMessage): Promise<void> {
     try {
       this.sessionId = message.session_id;
@@ -844,19 +844,19 @@ export class AeroNyxSocket extends EventEmitter {
       this.encryptionAlgorithm = sessionKeyEncryptionAlgorithm;
   
       // --- Decrypt the Session Key ---
-      if (message.encrypted_session_key && message.key_nonce && this.serverPublicKey) {
+      if (message.session_key && message.key_nonce && this.serverPublicKey) {
         console.debug('[Socket] Attempting to decrypt received session key...');
   
         // 1. Parse received data 
         // The server sends this as Vec<u8> which becomes number[] client-side
-        const encryptedKey = new Uint8Array(message.encrypted_session_key);
-        const keyNonce = new Uint8Array(message.key_nonce);
+        const encryptedKey = new Uint8Array(message.session_key as any);
+        const keyNonce = new Uint8Array(message.key_nonce as any);
   
         console.debug('[Socket] Encrypted session key details:', {
-           encryptedKeyLength: encryptedKey.length,
-           encryptedKeyPrefix: Buffer.from(encryptedKey.slice(0, 8)).toString('hex'),
-           keyNonceLength: keyNonce.length,
-           keyNonceHex: Buffer.from(keyNonce).toString('hex')
+          encryptedKeyLength: encryptedKey.length,
+          encryptedKeyPrefix: Buffer.from(encryptedKey.slice(0, 8)).toString('hex'),
+          keyNonceLength: keyNonce.length,
+          keyNonceHex: Buffer.from(keyNonce).toString('hex')
         });
   
         // 2. Get client's Ed25519 secret key from storage
@@ -956,6 +956,7 @@ export class AeroNyxSocket extends EventEmitter {
       if (this.autoReconnect) this.scheduleReconnect();
     }
   }
+
     
     /**
      * Send a test message to verify aes256gcm encryption is working
