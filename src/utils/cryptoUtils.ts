@@ -32,6 +32,33 @@ export function generateNonce(length: number = 12): Uint8Array {
 }
 
 /**
+ * Check if AES-GCM is supported in the current environment
+ * @returns Promise resolving to true if AES-GCM is supported
+ */
+export async function isAesGcmSupported(): Promise<boolean> {
+  if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
+    return false;
+  }
+  
+  try {
+    // Try to create a simple key to test AES-GCM support
+    await window.crypto.subtle.generateKey(
+      {
+        name: 'AES-GCM',
+        length: 256
+      },
+      false,
+      ['encrypt', 'decrypt']
+    );
+    
+    return true;
+  } catch (error) {
+    console.warn('[Crypto] AES-GCM not supported:', error);
+    return false;
+  }
+}
+
+/**
  * Encrypt data using AES-GCM via Web Crypto API
  * This is a unified implementation that should be used throughout the application
  * 
