@@ -209,7 +209,6 @@ export class AeroNyxSocket extends EventEmitter {
   private heartbeatInterval: NodeJS.Timeout | null = null; // Heartbeat to detect connection issues
   private autoReconnect: boolean = true; // Flag to control automatic reconnection
   private pingTimeouts: Map<number, NodeJS.Timeout> = new Map(); // Map to track ping timeouts
-  private useAesGcm: boolean = true; // Flag to prefer aes256gcm encryption
   
   /**
    * Reconnection configuration with exponential backoff
@@ -249,7 +248,7 @@ export class AeroNyxSocket extends EventEmitter {
       initialDelay: this.reconnectionConfig.initialDelay,
       maxDelay: this.reconnectionConfig.maxDelay,
       maxAttempts: this.reconnectionConfig.maxAttempts,
-      preferAesGcm: this.useAesGcm
+      preferredEncryption: this.encryptionAlgorithm
     });
   }
   
@@ -764,66 +763,58 @@ export class AeroNyxSocket extends EventEmitter {
   private async handleChallenge(message: ChallengeMessage): Promise<void> {
     try {
       console.log('[Socket] Received authentication challenge, ID:', message.id);
-      
-      // Store server public key for later ECDH key exchange
-      if (message.server_public_key) {
+  
+      // Store server's Ed25519 public key (received in Challenge packet)
+      if (message.server_public_key) { 
         this.serverPublicKey = message.server_public_key;
-        console.log('[Socket] Received server public key for ECDH');
+        console.log('[Socket] Stored server Ed25519 public key:', this.serverPublicKey.substring(0, 10) + '...');
+      } else {
+        console.error("[Socket] Server did not provide its public key in the Challenge message!");
+        throw new Error("Server public key missing in Challenge");
       }
-      
+  
       if (!this.publicKey) {
-        throw new Error('No public key available for challenge response');
+        throw new Error('No client public key available for challenge response');
       }
-      
-      // Parse challenge data
+  
       const challengeData = parseChallengeData(message.data);
       console.log('[Socket] Challenge data parsed, length:', challengeData.length);
-      
-      // Get keypair from localStorage
-      const storedKeypair = localStorage.getItem('aero-keypair');
+  
+      // Get client's keypair from storage
+      const storedKeypair = localStorage.getItem('aero-keypair'); 
       if (!storedKeypair) {
         throw new Error('No keypair found for authentication');
       }
-      
       const keypair = JSON.parse(storedKeypair);
-      console.log('[Socket] Using keypair with public key:', keypair.publicKey.substring(0, 10) + '...');
-      
-      // Decode the secret key
-      const secretKey = bs58.decode(keypair.secretKey);
-      
-      // Verify the keypair is valid
-      if (secretKey.length !== 64) {
-        throw new Error(`Invalid Ed25519 secret key length: ${secretKey.length} (expected 64 bytes)`);
+      const clientSecretKey64 = bs58.decode(keypair.secretKey); 
+  
+      if (clientSecretKey64.length !== 64) {
+        throw new Error(`Invalid Ed25519 secret key length: ${clientSecretKey64.length} (expected 64 bytes)`);
       }
-      
-      // Sign the challenge using our helper function from cryptoUtils
-      const signatureB58 = signChallenge(challengeData, secretKey);
-      
-      // Create the challenge response
+  
+      const signatureB58 = signChallenge(challengeData, clientSecretKey64);
+  
       const response = {
         type: 'ChallengeResponse',
         signature: signatureB58,
-        public_key: this.publicKey, 
+        public_key: this.publicKey,
         challenge_id: message.id,
       };
-      
-      // Send the response
+  
       if (this.isSocketOpen(this.socket)) {
         this.socket.send(JSON.stringify(response));
         console.log('[Socket] Challenge response sent successfully');
       } else {
-        console.error('[Socket] Socket not open when trying to send challenge response');
-        throw new Error('Socket connection not available');
+        throw new Error('Socket not open when trying to send challenge response');
       }
     } catch (error) {
       console.error('[Socket] Error handling challenge:', error);
       this.emit('error', this.createSocketError(
         'auth',
         'Failed to authenticate with server',
-        'AUTH_CHALLENGE_ERROR',
-        error instanceof Error ? error.message : 'Unknown error',
-        true,
-        error
+        'CHALLENGE_ERROR',
+        error instanceof Error ? error.message : 'Unknown authentication error',
+        true
       ));
       
       // Attempt reconnection
@@ -839,129 +830,102 @@ export class AeroNyxSocket extends EventEmitter {
    */
   private async handleIpAssign(message: IpAssignMessage): Promise<void> {
     try {
-      // Store the session ID
       this.sessionId = message.session_id;
-      
-      // Log successful connection
       console.log(`[Socket] IP assigned: ${message.ip_address}, Session ID: ${message.session_id}`);
-      
-      // Store encryption algorithm info if provided
-      if (message.encryption_algorithm) {
-        console.log(`[Socket] Server selected encryption algorithm: ${message.encryption_algorithm}`);
-        this.encryptionAlgorithm = message.encryption_algorithm;
-      } else {
-        // Default to aes256gcm if not specified
-        this.encryptionAlgorithm = 'aes256gcm';
-        console.log(`[Socket] Using default encryption algorithm: ${this.encryptionAlgorithm}`);
+  
+      // This is the algorithm used TO ENCRYPT THE SESSION KEY, and also the one
+      // the server expects for subsequent DATA packets from the client.
+      const sessionKeyEncryptionAlgorithm = message.encryption_algorithm;
+      if (!sessionKeyEncryptionAlgorithm) {
+        throw new Error("Server did not specify encryption algorithm in IpAssign message");
       }
-      
-      // Log session key information
-      console.debug('[Socket] Session key info from server:', {
-        hasSessionKey: !!message.session_key,
-        hasKeyNonce: !!message.key_nonce,
-        hasServerPublicKey: !!message.server_public_key,
-        encryptionAlgorithm: this.encryptionAlgorithm,
-        sessionId: message.session_id
-      });
-      
-      // If server_public_key wasn't provided in Challenge, it might be here
-      if (message.server_public_key && !this.serverPublicKey) {
-        this.serverPublicKey = message.server_public_key;
-        console.debug('[Socket] Received server public key:', message.server_public_key.substring(0, 10) + '...');
-      }
-      
-      // Process the session key
-      if (message.session_key && message.key_nonce) {
-        try {
-          console.debug('[Socket] Processing server-provided session key');
-          
-          // Log raw encrypted key data for debugging
-          const encryptedKey = bs58.decode(message.session_key);
-          const keyNonce = bs58.decode(message.key_nonce);
-          
-          console.debug('[Socket] Encrypted session key details:', {
-            encryptedKeyLength: encryptedKey.length,
-            encryptedKeyPrefix: Array.from(encryptedKey.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
-            keyNonceLength: keyNonce.length,
-            keyNonceHex: Array.from(keyNonce).map(b => b.toString(16).padStart(2, '0')).join('')
-          });
-          
-          // If we have a server public key, we should use it to derive a shared secret
-          if (this.serverPublicKey) {
-            try {
-              console.debug('[Socket] Attempting to decrypt session key with server public key');
-              // Get keypair from localStorage
-              const storedKeypair = localStorage.getItem('aero-keypair');
-              if (!storedKeypair) {
-                throw new Error('No keypair found for decrypting session key');
-              }
-              
-              const keypair = JSON.parse(storedKeypair);
-              const secretKey = bs58.decode(keypair.secretKey);
-              const serverPubKeyBytes = bs58.decode(this.serverPublicKey);
-              
-              console.debug('[Socket] Key pair info:', {
-                secretKeyLength: secretKey.length,
-                secretKeyPrefix: Array.from(secretKey.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''),
-                serverPubKeyLength: serverPubKeyBytes.length,
-                serverPubKeyPrefix: Array.from(serverPubKeyBytes.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('')
-              });
-              
-              // Convert X25519 and derive shared secret
-              // This should properly decrypt the session key based on server-compatible method
-              // Logic here will depend on how the server encrypts the session key
-              // ... (implement appropriate decryption based on server method)
-              
-              // For now, using the decoded session key directly
-              this.sessionKey = encryptedKey;
-            } catch (derivationError) {
-              console.error('[Socket] Error deriving shared secret for session key:', derivationError);
-              // Fall back to direct decoding
-              this.sessionKey = encryptedKey;
-            }
-          } else {
-            // In a real implementation, this would properly decrypt the key
-            // For simplicity, we'll just store it directly
-            this.sessionKey = encryptedKey;
-          }
-          
-          console.debug('[Socket] Session key processed, length:', this.sessionKey.length);
-          console.debug('[Socket] Session key prefix:', Array.from(this.sessionKey.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''));
-          
-          // Test encryption compatibility
-          if (process.env.NODE_ENV === 'development') {
-            const { testEncryptionCompat } = await import('../utils/cryptoUtils');
-            testEncryptionCompat(this.sessionKey)
-              .then(compatible => {
-                console.debug(`[Socket] Encryption compatibility test: ${compatible ? 'PASSED' : 'FAILED'}`);
-              })
-              .catch(err => {
-                console.error('[Socket] Encryption compatibility test error:', err);
-              });
-          }
-        } catch (keyError) {
-          console.error('[Socket] Error processing session key:', keyError);
-          
-          // Generate random key as fallback
-          if (window.crypto && window.crypto.getRandomValues) {
-            this.sessionKey = new Uint8Array(32);
-            window.crypto.getRandomValues(this.sessionKey);
-          } else {
-            this.sessionKey = nacl.randomBytes(32);
-          }
-          
-          console.log('[Socket] Generated fallback session key of length:', this.sessionKey.length);
+      console.log(`[Socket] Server used algorithm '${sessionKeyEncryptionAlgorithm}' for session key.`);
+      // Store the algorithm the server expects us to use for Data packets
+      this.encryptionAlgorithm = sessionKeyEncryptionAlgorithm;
+  
+      // --- Decrypt the Session Key ---
+      if (message.encrypted_session_key && message.key_nonce && this.serverPublicKey) {
+        console.debug('[Socket] Attempting to decrypt received session key...');
+  
+        // 1. Parse received data 
+        // The server sends this as Vec<u8> which becomes number[] client-side
+        const encryptedKey = new Uint8Array(message.encrypted_session_key);
+        const keyNonce = new Uint8Array(message.key_nonce);
+  
+        console.debug('[Socket] Encrypted session key details:', {
+           encryptedKeyLength: encryptedKey.length,
+           encryptedKeyPrefix: Buffer.from(encryptedKey.slice(0, 8)).toString('hex'),
+           keyNonceLength: keyNonce.length,
+           keyNonceHex: Buffer.from(keyNonce).toString('hex')
+        });
+  
+        // 2. Get client's Ed25519 secret key from storage
+        const storedKeypair = localStorage.getItem('aero-keypair');
+        if (!storedKeypair) throw new Error('No keypair found for deriving shared secret');
+        const keypair = JSON.parse(storedKeypair);
+        const clientEdSecretKey64 = bs58.decode(keypair.secretKey);
+  
+        // 3. Decode server's Ed25519 public key
+        const serverEdPublicKey32 = bs58.decode(this.serverPublicKey);
+  
+        // 4. Derive the RAW ECDH shared secret (MUST match server's derivation)
+        const rawSharedSecret = deriveECDHSharedSecret(clientEdSecretKey64, serverEdPublicKey32);
+        if (!rawSharedSecret) {
+          throw new Error("Failed to derive ECDH shared secret due to key conversion error.");
         }
+  
+        // 5. Derive the final shared secret using HKDF (matching server)
+        //    The server's HKDF uses an empty salt (None) and specific info.
+        const hkdfSalt = new Uint8Array(); // Empty salt
+        const finalSharedSecret = await deriveSessionKeyHKDF(rawSharedSecret, hkdfSalt);
+  
+        // 6. Decrypt based on the algorithm the server *used* for the session key
+        if (sessionKeyEncryptionAlgorithm === 'aes256gcm') {
+          console.debug('[Socket] Decrypting session key using AES-GCM...');
+          // Use decryptWithAesGcm. The 'finalSharedSecret' is the KEY for this operation.
+          const decryptedKey = await decryptWithAesGcm(
+            encryptedKey,
+            keyNonce,           // Nonce used by server for *this* encryption
+            finalSharedSecret,  // The derived shared secret IS THE KEY here
+            'binary'          // We want the raw bytes of the session key
+          ) as Uint8Array;
+  
+          this.sessionKey = decryptedKey; // Store the *decrypted* session key
+          console.debug('[Socket] Session key decrypted successfully using AES-GCM');
+  
+        } else {
+          // If server sent something other than aes256gcm
+          console.error(`[Socket] Received session key encrypted with unsupported algorithm '${sessionKeyEncryptionAlgorithm}'. Client only supports AES-GCM decryption for session key.`);
+          throw new Error(`Cannot decrypt session key: Unsupported algorithm '${sessionKeyEncryptionAlgorithm}'`);
+        }
+  
+        // 7. Validate and store
+        if (!this.sessionKey || this.sessionKey.length !== 32) {
+          throw new Error(`Decrypted session key has invalid length: ${this.sessionKey?.length}`);
+        }
+        console.debug('[Socket] Final Session Key Stored:', {
+          length: this.sessionKey.length,
+          prefix: Buffer.from(this.sessionKey.slice(0, 8)).toString('hex')
+        });
+  
+        // Run compatibility test if in development mode
+        if (process.env.NODE_ENV === 'development') {
+          testEncryptionCompat(this.sessionKey)
+            .then(compatible => {
+              console.log(`[Socket] Encryption compatibility test: ${compatible ? 'PASSED' : 'FAILED'}`);
+            })
+            .catch(err => {
+              console.error('[Socket] Encryption compatibility test error:', err);
+            });
+        }
+  
       } else {
-        // Generate a session key if not provided
-        this.sessionKey = new Uint8Array(32);
-        window.crypto.getRandomValues(this.sessionKey);
-        console.log('[Socket] Generated new session key, length:', this.sessionKey.length);
+        throw new Error('Missing necessary data in IpAssign message to establish session key (key, nonce, or server public key)');
       }
-      
+  
+      // --- Connection is now fully established ---
       this.isConnected = true;
       this.connecting = false;
-      
       this.emit('connectionStatus', 'connected');
       
       // Start ping interval to keep connection alive
@@ -976,166 +940,133 @@ export class AeroNyxSocket extends EventEmitter {
         sessionId: message.session_id,
       });
       
-      // Optional: send a test message to verify encryption
-      if (process.env.NODE_ENV === 'development') {
-        setTimeout(() => {
-          this.sendTestMessage();
-        }, 1000);
-      }
-      
       // Send any messages that were queued while disconnected
       await this.processPendingMessages();
-      
-      // Notify all waiting connection listeners
-      this.connectionListeners.forEach(listener => listener());
-      this.connectionListeners.clear();
+  
     } catch (error) {
-      console.error('[Socket] Error handling IP assignment:', error);
+      console.error('[Socket] Error handling IP assignment or session key decryption:', error);
       this.emit('error', this.createSocketError(
         'connection',
-        'Failed to complete connection setup',
-        'IP_ASSIGN_ERROR',
-        error instanceof Error ? error.message : 'Unknown error',
-        true,
-        error
+        'Failed to process connection setup',
+        'SESSION_KEY_ERROR',
+        error instanceof Error ? error.message : String(error),
+        true
       ));
+      this.disconnect();
+      if (this.autoReconnect) this.scheduleReconnect();
+    }
+  }
+    
+    /**
+     * Send a test message to verify aes256gcm encryption is working
+     */
+    private async sendTestMessage(): Promise<boolean> {
+      if (!this.socket || !this.isConnected || !this.sessionKey) {
+        console.error('[Socket] Cannot send test message: not connected or missing session key');
+        return false;
+      }
       
-      if (this.autoReconnect) {
-        this.scheduleReconnect();
+      try {
+        // Test message
+        const testMessage = "Encryption Test: " + new Date().toISOString();
+        console.debug('[Socket] Sending encryption test message:', testMessage);
+        
+        // Create packet with a simple object
+        return await this.send({
+          type: 'test',
+          content: testMessage,
+          timestamp: Date.now()
+        });
+      } catch (error) {
+        console.error("[Socket] Failed to send encryption test message:", error);
+        return false;
       }
     }
-  }
-  
-  /**
-   * Send a test message to verify aes256gcm encryption is working
-   */
-  private async sendTestMessage(): Promise<boolean> {
-    if (!this.socket || !this.isConnected || !this.sessionKey) {
-      console.error('[Socket] Cannot send test message: not connected or missing session key');
-      return false;
-    }
-    
-    try {
-      // Test message
-      const testMessage = "Encryption Test: " + new Date().toISOString();
-      console.debug('[Socket] Sending encryption test message:', testMessage);
-      
-      // Create packet with a simple object
-      return await this.send({
-        type: 'test',
-        content: testMessage,
-        timestamp: Date.now()
-      });
-    } catch (error) {
-      console.error("[Socket] Failed to send encryption test message:", error);
-      return false;
-    }
-  }
   
   /**
    * Handle encrypted data packet
    * @param message Data packet message
    */
-  private async handleDataPacket(message: { 
-     message: { 
-      encrypted: number[], 
-      nonce: number[], 
-      counter: number, 
-      encryption_algorithm?: string,
-      encryption?: string 
-    }
-  }): Promise<void> {
+  private async handleDataPacket(message: any): Promise<void> { 
     try {
       if (!this.sessionKey) {
         throw new Error('No session key available to decrypt message');
       }
       
-      // Extract message data with support for both field names
-      const packet = message.message;
+      // message should already be the parsed JSON object from handleServerMessage
+      const packet = message; 
+  
+      if (!packet || packet.type !== 'Data' || !Array.isArray(packet.encrypted) || !Array.isArray(packet.nonce)) {
+        console.warn('[Socket] Invalid data packet format received:', packet);
+        return;
+      }
+  
       const encryptedUint8 = new Uint8Array(packet.encrypted);
       const nonceUint8 = new Uint8Array(packet.nonce);
-      
-      // Check if server specified an encryption algorithm
-      // Support both field names for backward compatibility
-      // Note: Field naming inconsistency is a key issue we address here
-      const algorithm = packet.encryption_algorithm || packet.encryption || this.encryptionAlgorithm;
-      
-      // Log packet details for debugging
-      console.debug('[Socket] Received encrypted data:', {
+      const algorithm = packet.encryption_algorithm || 'aes256gcm'; // Default if missing
+  
+      console.debug('[Socket] Received encrypted data:', { 
         encryptedSize: encryptedUint8.length,
         nonceSize: nonceUint8.length,
         counter: packet.counter,
-        algorithm: algorithm,
-        fieldNameUsed: packet.encryption_algorithm ? 'encryption_algorithm' : 
-                      packet.encryption ? 'encryption' : 'none'
+        algorithm 
       });
+  
+      if (algorithm !== 'aes256gcm') {
+        console.error(`[Socket] Received data packet with unsupported algorithm '${algorithm}'. Cannot decrypt.`);
+        return; // Cannot decrypt if it's not AES-GCM
+      }
+  
+      // Use the CORRECT, DECRYPTED this.sessionKey
+      const decryptedText = await decryptWithAesGcm(
+        encryptedUint8,
+        nonceUint8,
+        this.sessionKey,
+        'string'
+      ) as string;
+  
+      const decryptedData = JSON.parse(decryptedText);
+  
+      // Check for message replay attempts
+      if (decryptedData.id && this.processedMessageIds.has(decryptedData.id)) {
+        console.warn('[Socket] Detected message replay attempt, ignoring');
+        return;
+      }
       
-      try {
-        // Use the unified decryption function from cryptoUtils
-        // Internally uses 'AES-GCM' with Web Crypto API, but packet uses 'aes256gcm'
-        const decryptedText = await decryptWithAesGcm(
-          encryptedUint8,
-          nonceUint8,
-          this.sessionKey,
-          'string'
-        ) as string;
+      // Store message ID to prevent replay attacks
+      if (decryptedData.id) {
+        this.processedMessageIds.add(decryptedData.id);
         
-        // Parse the decrypted JSON
-        const decryptedData = JSON.parse(decryptedText);
-        
-        // Check for message replay attempts
-        if (decryptedData.id && this.processedMessageIds.has(decryptedData.id)) {
-          console.warn('[Socket] Detected message replay attempt, ignoring');
-          return;
-        }
-        
-        // Store message ID to prevent replay attacks
-        if (decryptedData.id) {
-          this.processedMessageIds.add(decryptedData.id);
-          
-          // Limit the set size
-          if (this.processedMessageIds.size > 1000) {
-            const oldestId = Array.from(this.processedMessageIds)[0];
-            this.processedMessageIds.delete(oldestId);
-          }
-        }
-        
-        // Process the message by type
-        if (decryptedData.type === 'message') {
-          this.emit('message', decryptedData);
-        } else if (decryptedData.type === 'chatInfo') {
-          this.emit('chatInfo', decryptedData.data);
-        } else if (decryptedData.type === 'participants') {
-          this.emit('participants', decryptedData.data);
-        } else {
-          // Forward other message types as is
-          this.emit(decryptedData.type, decryptedData);
-        }
-        
-        console.debug('[Socket] Successfully processed decrypted data:', {
-          type: decryptedData.type,
-          hasId: !!decryptedData.id
-        });
-      } catch (decryptError) {
-        console.error('[Socket] Failed to decrypt data packet:', decryptError);
-        
-        // For development/testing, attempt to handle the data even if decryption fails
-        if (process.env.NODE_ENV === 'development') {
-          this.simulateDataReceived(message);
-        } else {
-          throw decryptError;
+        // Limit the set size
+        if (this.processedMessageIds.size > 1000) {
+          const oldestId = Array.from(this.processedMessageIds)[0];
+          this.processedMessageIds.delete(oldestId);
         }
       }
       
-      // Forward raw data for WebRTC signaling
-      this.emit('data', message);
+      // Process the message by type
+      if (decryptedData.type === 'message') {
+        this.emit('message', decryptedData);
+      } else if (decryptedData.type === 'chatInfo') {
+        this.emit('chatInfo', decryptedData.data);
+      } else if (decryptedData.type === 'participants') {
+        this.emit('participants', decryptedData.data);
+      } else {
+        // Forward other message types as is
+        this.emit(decryptedData.type, decryptedData);
+      }
+  
+      console.debug('[Socket] Successfully processed decrypted data:', { 
+        type: decryptedData.type, 
+        hasId: !!decryptedData.id 
+      });
     } catch (error) {
       console.error('[Socket] Error handling data packet:', error);
       this.emit('error', this.createSocketError(
         'data',
         'Failed to process data packet',
         'DATA_ERROR',
-        error instanceof Error ? error.message : 'Unknown error',
+        error instanceof Error ? error.message : String(error),
         false,
         error
       ));
@@ -1473,81 +1404,52 @@ export class AeroNyxSocket extends EventEmitter {
    * @returns Promise resolving to true if sent successfully
    */
   public async send(data: any): Promise<boolean> {
-    // ENHANCED LOGGING: Log detailed message sending attempt through socket
     console.debug('[Socket:SEND] Sending data through socket:', {
       socketState: this.socket ? (this.socket.readyState === WebSocket.OPEN ? 'OPEN' : 'NOT_OPEN') : 'NO_SOCKET',
       isConnected: this.isConnected,
       dataType: typeof data === 'object' ? data.type : 'unknown',
-      dataId: typeof data === 'object' ? data.id : 'unknown',
       hasSessionKey: !!this.sessionKey,
-      sessionKeyLength: this.sessionKey?.length || 0,
-      content: typeof data === 'object' && data.content ? 
-                (data.content.length > 100 ? data.content.substring(0, 100) + '...' : data.content) : 
-                null,
-      messageSize: JSON.stringify(data).length
+      sessionKeyLength: this.sessionKey?.length || 0
     });
   
-    if (!this.socket || !this.isConnected) {
-      console.error('[Socket:SEND] Cannot send data: not connected');
+    if (!this.socket || !this.isConnected || !this.sessionKey) {
+      console.error('[Socket:SEND] Cannot send data: not connected or missing session key.');
       this.queueMessage('data', data);
       return false;
     }
-    
-    if (!this.sessionKey) {
-      console.error('[Socket:SEND] Cannot send data: missing session key');
-      this.queueMessage('data', data);
-      return false;
-    }
-    
+  
     try {
-      // ENHANCED LOGGING: Log details before creating encrypted packet
-      console.debug('[Socket:SEND] Creating encrypted packet:', {
-        dataType: typeof data === 'object' ? data.type : 'unknown',
-        dataKeys: typeof data === 'object' ? Object.keys(data) : 'N/A',
-        counter: this.messageCounter,
-        encryptionAlgorithm: this.encryptionAlgorithm
-      });
-      
-      // Use our unified function to create an encrypted packet
+      // CRITICAL: Use the CORRECT, DECRYPTED this.sessionKey
       const dataPacket = await createEncryptedPacket(data, this.sessionKey, this.messageCounter++);
-      
-      // Check socket is still connected
+  
+      // Ensure the algorithm field matches what the server expects for DATA
+      // which should be the same as this.encryptionAlgorithm stored during IpAssign
+      if (dataPacket.encryption_algorithm !== this.encryptionAlgorithm) {
+        console.warn(`[Socket:SEND] Mismatch between packet algorithm (${dataPacket.encryption_algorithm}) and stored session algorithm (${this.encryptionAlgorithm}). Using stored.`);
+        dataPacket.encryption_algorithm = this.encryptionAlgorithm;
+      }
+  
       if (!this.isSocketOpen(this.socket)) {
         console.error('[Socket:SEND] Socket closed while preparing to send data');
         this.queueMessage('data', data);
         return false;
       }
-      
-      // ENHANCED LOGGING: Log final packet details
+  
       const packetJson = JSON.stringify(dataPacket);
       console.debug('[Socket:SEND] Sending packet to server:', {
         packetType: dataPacket.type,
-        packetSize: packetJson.length,
         encryptedLength: dataPacket.encrypted.length,
         nonceLength: dataPacket.nonce.length,
         algorithm: dataPacket.encryption_algorithm,
         counter: dataPacket.counter
       });
-      
-      // Send the packet
+  
       this.socket.send(packetJson);
       console.debug('[Socket:SEND] Packet sent successfully');
       return true;
     } catch (error) {
       console.error('[Socket:SEND] Error sending encrypted data:', error);
-      
-      // ENHANCED LOGGING: Log detailed error information
-      if (error instanceof Error) {
-        console.error('[Socket:SEND] Error details:', {
-          name: error.name,
-          message: error.message,
-          stack: error.stack
-        });
-      }
-      
-      // Queue message for retry
       this.queueMessage('data', data);
-      
       this.emit('error', this.createSocketError(
         'data',
         'Failed to send encrypted data',
@@ -1556,10 +1458,10 @@ export class AeroNyxSocket extends EventEmitter {
         true,
         error
       ));
-      
       return false;
     }
   }
+
 
   
   /**
