@@ -2,203 +2,7 @@
 
 import * as bs58 from 'bs58';
 import * as nacl from 'tweetnacl';
-
-/**
-* AeroNyx Client Development Guidelines
-* =====================================
-* 
-* Encryption Algorithm Requirements
-* ---------------------------------
-* When implementing the AeroNyx client, pay close attention to encryption algorithm naming.
-* 
-* Server expects: aes256gcm
-* NOT: aes-gcm, AES-GCM, or other variations
-* 
-* The server recognizes:
-* - `aes256gcm` (preferred)
-* - `aesgcm`
-* - `aes`
-* 
-* For consistency, always use `aes256gcm` in all client code.
-* 
-* Implementation Examples
-* ----------------------
-* 
-* 1. Authentication Request:
-* 
-* ```
-* const authRequest = {
-*   type: "Auth",
-*   public_key: publicKey,
-*   version: "1.0",
-*   features: ["aes256gcm", "chacha20poly1305", "webrtc"],
-*   encryption_algorithm: "aes256gcm", // Correct format
-*   nonce: generateRandomNonce()
-* };
-* ```
-* 
-* 2. Data Packet Format:
-* 
-* ```
-* const packet = {
-*   type: "Data",
-*   encrypted: Array.from(encrypted),
-*   nonce: Array.from(nonce),
-*   counter: counter,
-*   encryption_algorithm: "aes256gcm" // Must include correct algorithm name
-* };
-* ```
-* 
-* 3. Handling Server Response:
-* 
-* ```
-* function handleIpAssign(response) {
-*   const { encryption_algorithm } = response;
-*   // Store exactly as received from server
-*   sessionStore.setEncryptionAlgorithm(encryption_algorithm);
-* }
-* ```
-* 
-* Common Issues
-* ------------
-* 
-* 1. Using incorrect algorithm name format (`aes-gcm` vs `aes256gcm`)
-* 2. Not including algorithm field in data packets
-* 3. Not preserving algorithm name from server response
-* 4. Inconsistent algorithm naming across client codebase
-*/
-
-/**
- * Sign a challenge using Ed25519
- * @param challenge Challenge data to sign
- * @param secretKey Ed25519 secret key
- * @returns Signature as a base58 string
- */
-export function signChallenge(
-  challenge: Uint8Array,
-  secretKey: Uint8Array
-): string {
-  try {
-    // Log challenge details for debugging
-    console.debug('[Crypto] Signing challenge:', {
-      challengeLength: challenge.length,
-      challengePrefix: Array.from(challenge.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
-      secretKeyLength: secretKey.length,
-      secretKeyPrefix: Array.from(secretKey.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('')
-    });
-    
-    // Verify the keypair is valid
-    if (secretKey.length !== 64) {
-      throw new Error(`Invalid Ed25519 secret key length: ${secretKey.length} (expected 64 bytes)`);
-    }
-    
-    // Sign the challenge using nacl.sign.detached
-    const signature = nacl.sign.detached(challenge, secretKey);
-    const signatureB58 = bs58.encode(signature);
-    
-    console.debug('[Crypto] Challenge signed successfully:', {
-      signatureLength: signature.length,
-      signaturePrefix: Array.from(signature.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
-      signatureB58Length: signatureB58.length,
-      signatureB58Prefix: signatureB58.substring(0, 16)
-    });
-    
-    return signatureB58;
-  } catch (error) {
-    console.error('[Crypto] Error signing challenge:', error);
-    throw error;
-  }
-}
-
-
-/**
- * Parse challenge data for authentication
- * @param challengeData Challenge data in array or string format
- * @returns Parsed challenge as Uint8Array
- */
-export function parseChallengeData(challengeData: number[] | string): Uint8Array {
-  let parsed: Uint8Array;
-  
-  // Log the raw challenge data for debugging
-  console.debug('[Crypto] Parsing challenge data:', {
-    dataType: typeof challengeData,
-    isArray: Array.isArray(challengeData),
-    dataLength: Array.isArray(challengeData) 
-      ? challengeData.length 
-      : (typeof challengeData === 'string' ? challengeData.length : 'unknown')
-  });
-  
-  // Handle array format (from server)
-  if (Array.isArray(challengeData)) {
-    parsed = new Uint8Array(challengeData);
-    console.debug('[Crypto] Challenge data is array, converted to Uint8Array:', {
-      length: parsed.length,
-      prefix: Array.from(parsed.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
-    });
-  } 
-  // Handle string format (may be base58 or base64)
-  else if (typeof challengeData === 'string') {
-    try {
-      // Try to parse as base58
-      parsed = bs58.decode(challengeData);
-      console.debug('[Crypto] Challenge data decoded as base58:', {
-        length: parsed.length,
-        prefix: Array.from(parsed.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
-      });
-    } catch (e) {
-      console.debug('[Crypto] Not valid base58, trying other formats');
-      // Fallback to base64
-      try {
-        const buffer = Buffer.from(challengeData, 'base64');
-        parsed = new Uint8Array(buffer);
-        console.debug('[Crypto] Challenge data decoded as base64:', {
-          length: parsed.length,
-          prefix: Array.from(parsed.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
-        });
-      } catch (e2) {
-        console.debug('[Crypto] Not valid base64, using as UTF-8');
-        // Last resort: try to use the string directly as UTF-8
-        const encoder = new TextEncoder();
-        parsed = encoder.encode(challengeData);
-        console.debug('[Crypto] Challenge data encoded as UTF-8:', {
-          length: parsed.length,
-          prefix: Array.from(parsed.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
-        });
-      }
-    }
-  } else {
-    throw new Error('Invalid challenge data format');
-  }
-  
-  return parsed;
-}
-
-/**
- * Check if AES-GCM is supported in the current environment
- * @returns Promise resolving to true if AES-GCM is supported
- */
-export async function isAesGcmSupported(): Promise<boolean> {
-  if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
-    return false;
-  }
-  
-  try {
-    // Try to create a simple key to test AES-GCM support
-    await window.crypto.subtle.generateKey(
-      {
-        name: 'AES-GCM',
-        length: 256
-      },
-      false,
-      ['encrypt', 'decrypt']
-    );
-    
-    return true;
-  } catch (error) {
-    console.warn('[Crypto] AES-GCM not supported:', error);
-    return false;
-  }
-}
+import { Buffer } from 'buffer';
 
 /**
  * Generate a cryptographically secure random nonce
@@ -248,22 +52,6 @@ export async function encryptWithAesGcm(
     ? new TextEncoder().encode(plaintext)
     : plaintext;
   
-  // ENHANCED LOGGING: Log detailed information about the plaintext
-  console.debug('[Crypto:ENCRYPT] Input data details:', {
-    dataType: typeof plaintext,
-    isStringInput: typeof plaintext === 'string',
-    rawLength: typeof plaintext === 'string' ? plaintext.length : plaintext.length,
-    encodedLength: plaintextData.length,
-    plaintextPreview: typeof plaintext === 'string' 
-      ? (plaintext.length > 300 
-          ? plaintext.substring(0, 150) + '...[truncated]...' + plaintext.substring(plaintext.length - 150) 
-          : plaintext)
-      : '[Binary data]',
-    keyLength: key.length,
-    keyFirstBytes: Array.from(key.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''),
-    keyLastBytes: Array.from(key.slice(-4)).map(b => b.toString(16).padStart(2, '0')).join('')
-  });
-  
   // Generate a 12-byte nonce for AES-GCM
   const nonce = generateNonce(12);
   
@@ -281,8 +69,6 @@ export async function encryptWithAesGcm(
         ['encrypt']
       );
       
-      console.debug('[Crypto:ENCRYPT] Key imported successfully, proceeding with encryption');
-      
       // Encrypt the data
       const ciphertextBuffer = await window.crypto.subtle.encrypt(
         {
@@ -296,16 +82,10 @@ export async function encryptWithAesGcm(
       
       const ciphertext = new Uint8Array(ciphertextBuffer);
       
-      // ENHANCED LOGGING: Log detailed information about encryption result
       console.debug('[Crypto:ENCRYPT] Encryption successful:', {
         plaintextLength: plaintextData.length,
         ciphertextLength: ciphertext.length,
-        ciphertextFirstBytes: Array.from(ciphertext.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
-        ciphertextLastBytes: Array.from(ciphertext.slice(-8)).map(b => b.toString(16).padStart(2, '0')).join(''),
-        nonceHex: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
-        authTagPresent: ciphertext.length >= plaintextData.length + 16 ? 'Yes' : 'No',
-        authTagSize: ciphertext.length - plaintextData.length,
-        overheadPercentage: Math.round(((ciphertext.length - plaintextData.length) / plaintextData.length) * 100)
+        ciphertextFirstBytes: Array.from(ciphertext.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
       });
       
       return { ciphertext, nonce };
@@ -315,14 +95,6 @@ export async function encryptWithAesGcm(
     }
   } catch (error) {
     console.error('[Crypto:ENCRYPT] Encryption error:', error);
-    // Log additional diagnostics for common encryption failures
-    if (error instanceof DOMException) {
-      console.error('[Crypto:ENCRYPT] DOM Exception details:', {
-        name: error.name,
-        message: error.message,
-        code: error.code
-      });
-    }
     throw new Error(`AES-GCM encryption failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -350,17 +122,6 @@ export async function decryptWithAesGcm(
     throw new Error(`Invalid nonce: length=${nonce?.length ?? 'null'} (expected 12 bytes for AES-GCM)`);
   }
   
-  // ENHANCED LOGGING: Log detailed information about the encrypted data
-  console.debug('[Crypto:DECRYPT] Input data details:', {
-    ciphertextLength: ciphertext.length,
-    ciphertextFirstBytes: Array.from(ciphertext.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
-    ciphertextLastBytes: Array.from(ciphertext.slice(-8)).map(b => b.toString(16).padStart(2, '0')).join(''),
-    nonceHex: Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join(''),
-    keyFirstBytes: Array.from(key.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(''),
-    keyLastBytes: Array.from(key.slice(-4)).map(b => b.toString(16).padStart(2, '0')).join(''),
-    requestedOutputType: outputType
-  });
-  
   try {
     if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
       console.debug('[Crypto:DECRYPT] Using Web Crypto API for AES-GCM decryption');
@@ -374,8 +135,6 @@ export async function decryptWithAesGcm(
         ['decrypt']
       );
       
-      console.debug('[Crypto:DECRYPT] Key imported successfully, proceeding with decryption');
-      
       // Decrypt the data
       const decryptedBuffer = await window.crypto.subtle.decrypt(
         {
@@ -387,62 +146,85 @@ export async function decryptWithAesGcm(
         ciphertext
       );
       
-      console.debug('[Crypto:DECRYPT] Raw decryption successful, buffer size:', decryptedBuffer.byteLength);
-      
       // Convert to requested output format
       if (outputType === 'string') {
         const decoder = new TextDecoder();
-        const decryptedText = decoder.decode(new Uint8Array(decryptedBuffer));
-        
-        // ENHANCED LOGGING: Log details about the decrypted text
-        console.debug('[Crypto:DECRYPT] String decryption result:', {
-          decryptedLength: decryptedText.length,
-          decryptedPreview: decryptedText.length > 300 
-            ? decryptedText.substring(0, 150) + '...[truncated]...' + decryptedText.substring(decryptedText.length - 150)
-            : decryptedText,
-          isValidJSON: (() => {
-            try {
-              JSON.parse(decryptedText);
-              return true;
-            } catch (e) {
-              return false;
-            }
-          })()
-        });
-        
-        return decryptedText;
+        return decoder.decode(new Uint8Array(decryptedBuffer));
       } else {
-        const decryptedData = new Uint8Array(decryptedBuffer);
-        
-        // ENHANCED LOGGING: Log details about the decrypted binary data
-        console.debug('[Crypto:DECRYPT] Binary decryption result:', {
-          decryptedLength: decryptedData.length,
-          decryptedFirstBytes: Array.from(decryptedData.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
-          decryptedLastBytes: Array.from(decryptedData.slice(-8)).map(b => b.toString(16).padStart(2, '0')).join('')
-        });
-        
-        return decryptedData;
+        return new Uint8Array(decryptedBuffer);
       }
     } else {
-      console.error('[Crypto:DECRYPT] Web Crypto API not available for decryption');
       throw new Error('Web Crypto API not available');
     }
   } catch (error) {
     console.error('[Crypto:DECRYPT] Decryption error:', error);
-    // Log additional diagnostics for common decryption failures
-    if (error instanceof DOMException) {
-      console.error('[Crypto:DECRYPT] DOM Exception details:', {
-        name: error.name,
-        message: error.message,
-        code: error.code
-      });
-      
-      // Special handling for common decryption errors
-      if (error.name === 'OperationError') {
-        console.error('[Crypto:DECRYPT] This may indicate an incorrect key, nonce, or corrupted ciphertext');
+    throw new Error(`AES-GCM decryption failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Parse challenge data for authentication
+ * @param challengeData Challenge data in array or string format
+ * @returns Parsed challenge as Uint8Array
+ */
+export function parseChallengeData(challengeData: number[] | string): Uint8Array {
+  let parsed: Uint8Array;
+  
+  // Handle array format (from server)
+  if (Array.isArray(challengeData)) {
+    parsed = new Uint8Array(challengeData);
+    console.debug('[Crypto] Challenge data is array, converted to Uint8Array:', {
+      length: parsed.length,
+      prefix: Array.from(parsed.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+    });
+  } 
+  // Handle string format (may be base58 or base64)
+  else if (typeof challengeData === 'string') {
+    try {
+      // Try to parse as base58
+      parsed = bs58.decode(challengeData);
+    } catch (e) {
+      // Fallback to base64
+      try {
+        const buffer = Buffer.from(challengeData, 'base64');
+        parsed = new Uint8Array(buffer);
+      } catch (e2) {
+        // Last resort: try to use the string directly as UTF-8
+        const encoder = new TextEncoder();
+        parsed = encoder.encode(challengeData);
       }
     }
-    throw new Error(`AES-GCM decryption failed: ${error instanceof Error ? error.message : String(error)}`);
+  } else {
+    throw new Error('Invalid challenge data format');
+  }
+  
+  return parsed;
+}
+
+/**
+ * Sign a challenge using Ed25519
+ * @param challenge Challenge data to sign
+ * @param secretKey Ed25519 secret key
+ * @returns Signature as a base58 string
+ */
+export function signChallenge(
+  challenge: Uint8Array,
+  secretKey: Uint8Array
+): string {
+  try {
+    // Verify the keypair is valid
+    if (secretKey.length !== 64) {
+      throw new Error(`Invalid Ed25519 secret key length: ${secretKey.length} (expected 64 bytes)`);
+    }
+    
+    // Sign the challenge using nacl.sign.detached
+    const signature = nacl.sign.detached(challenge, secretKey);
+    const signatureB58 = bs58.encode(signature);
+    
+    return signatureB58;
+  } catch (error) {
+    console.error('[Crypto] Error signing challenge:', error);
+    throw error;
   }
 }
 
@@ -464,51 +246,18 @@ export async function createEncryptedPacket(
   // Convert to string if needed
   const messageString = typeof data === 'string' ? data : JSON.stringify(data);
   
-  // ENHANCED LOGGING: Log data to be encrypted
-  console.debug('[Crypto:PACKET] Creating encrypted packet:', {
-    dataType: typeof data,
-    dataKeys: typeof data === 'object' ? Object.keys(data) : 'N/A',
-    dataId: data.id || 'none',
-    messageType: data.type || 'unknown',
-    contentPreview: typeof data === 'object' && data.content ? 
-                    (data.content.length > 100 ? data.content.substring(0, 100) + '...' : data.content) : 
-                    'N/A',
-    messageLength: messageString.length,
-    sessionKeyLength: sessionKey.length,
-    counter: counter,
-    jsonPreview: messageString.length > 300 
-      ? messageString.substring(0, 150) + '...[truncated]...' + messageString.substring(messageString.length - 150)
-      : messageString
-  });
-  
   // Encrypt with AES-GCM
-  console.debug('[Crypto:PACKET] Encrypting message data');
   const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
   
-  // Create packet
-  const packet = {
+  // Create packet with the correct field names
+  return {
     type: 'Data',
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes256gcm', // Server expects 'aes256gcm'
-    padding: null // Optional padding for length concealment
+    encryption_algorithm: 'aes256gcm', // Server expects this format
+    padding: null // Optional padding
   };
-  
-  // ENHANCED LOGGING: Log final packet structure
-  console.debug('[Crypto:PACKET] Encrypted packet created:', {
-    packetType: packet.type,
-    encryptedLength: packet.encrypted.length,
-    nonceLength: packet.nonce.length,
-    algorithm: packet.encryption_algorithm,
-    hasPadding: packet.padding !== null,
-    packetSize: JSON.stringify(packet).length,
-    compressionRatio: messageString.length > 0 ? 
-                    (JSON.stringify(packet).length / messageString.length).toFixed(2) : 
-                    'N/A'
-  });
-  
-  return packet;
 }
 
 /**
@@ -531,32 +280,12 @@ export async function processEncryptedPacket(
       return null;
     }
     
-    // Log packet being processed for debugging
-    console.debug('[Crypto] Processing encrypted packet:', {
-      packetType: packet.type,
-      encryptedLength: packet.encrypted.length,
-      nonceLength: packet.nonce.length,
-      encryptionAlgorithm: packet.encryption_algorithm || packet.encryption || 'unknown',
-      counter: packet.counter
-    });
-    
     // Convert arrays to Uint8Arrays
     const ciphertext = new Uint8Array(packet.encrypted);
     const nonce = new Uint8Array(packet.nonce);
     
     // Support both field names for backward compatibility
-    // Log which field name is being used for debugging
-    let algorithm: string;
-    if (packet.encryption_algorithm !== undefined) {
-      algorithm = packet.encryption_algorithm;
-      console.debug('[Crypto] Using encryption_algorithm field:', algorithm);
-    } else if (packet.encryption !== undefined) {
-      algorithm = packet.encryption;
-      console.debug('[Crypto] Using deprecated encryption field:', algorithm);
-    } else {
-      algorithm = 'aes256gcm'; // Default
-      console.debug('[Crypto] No algorithm field found, using default:', algorithm);
-    }
+    const algorithm = packet.encryption_algorithm || packet.encryption || 'aes256gcm';
     
     // Decrypt the data
     const decryptedString = await decryptWithAesGcm(
@@ -567,16 +296,7 @@ export async function processEncryptedPacket(
     ) as string;
     
     // Parse the decrypted JSON
-    const parsedData = JSON.parse(decryptedString);
-    
-    // Log decryption success with parsed data type
-    console.debug('[Crypto] Successfully processed encrypted packet:', {
-      resultType: typeof parsedData,
-      hasId: !!parsedData.id,
-      dataType: parsedData.type || 'unknown'
-    });
-    
-    return parsedData;
+    return JSON.parse(decryptedString);
   } catch (error) {
     console.error('[Crypto] Failed to process encrypted packet:', error);
     return null;
@@ -584,80 +304,155 @@ export async function processEncryptedPacket(
 }
 
 /**
- * Derive a session key from ECDH shared secret using HKDF
- * Following the server implementation: derive_session_key()
+ * Convert Ed25519 public key to Curve25519 public key for ECDH
+ * This function implements the conversion algorithm used by libsodium/tweetnacl
  * 
- * @param sharedSecret The shared secret from ECDH
- * @param salt A salt for the key derivation
- * @returns A 32-byte session key
+ * @param edPublicKey Ed25519 public key (32 bytes)
+ * @returns Curve25519 public key or null if conversion fails
  */
-export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
-  if (!sharedSecret || sharedSecret.length === 0) {
-    throw new Error('Invalid shared secret');
+export function convertEd25519PublicKeyToCurve25519(edPublicKey: Uint8Array): Uint8Array | null {
+  if (edPublicKey.length !== 32) {
+    console.error("[Crypto] Invalid Ed25519 public key length:", edPublicKey.length);
+    return null;
   }
   
-  // Log key derivation input for debugging
-  console.debug('[Crypto] Deriving session key:', {
-    sharedSecretLength: sharedSecret.length,
-    sharedSecretPrefix: Array.from(sharedSecret.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(''),
-    saltLength: salt.length,
-    saltPrefix: Array.from(salt.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
-  });
-  
-  if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-    try {
-      // Import shared secret as a key
-      const baseKey = await window.crypto.subtle.importKey(
-        'raw',
-        sharedSecret,
-        { name: 'HKDF' },
-        false,
-        ['deriveBits']
-      );
-      
-      // Derive key using HKDF with SHA-256
-      const derivedBits = await window.crypto.subtle.deriveBits(
-        {
-          name: 'HKDF',
-          hash: 'SHA-256',
-          salt: salt,
-          info: new TextEncoder().encode('AERONYX-SESSION-KEY')
-        },
-        baseKey,
-        256 // 32 bytes (256 bits)
-      );
-      
-      const derivedKey = new Uint8Array(derivedBits);
-      
-      // Log derived key for debugging
-      console.debug('[Crypto] Session key derived:', {
-        derivedKeyLength: derivedKey.length,
-        derivedKeyPrefix: Array.from(derivedKey.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
-      });
-      
-      return derivedKey;
-    } catch (error) {
-      console.warn('[Crypto] Web Crypto API HKDF failed, using fallback:', error);
-      // Fall back to a simplified HMAC-based KDF implementation
+  try {
+    // Use tweetnacl's built-in conversion function
+    const curveKey = nacl.convertPublicKey(edPublicKey);
+    if (!curveKey) {
+      console.error("[Crypto] Failed to convert Ed25519 public key to Curve25519");
+      return null;
     }
+    return curveKey;
+  } catch (error) {
+    console.error("[Crypto] Error converting Ed25519 public key:", error);
+    return null;
+  }
+}
+
+/**
+ * Convert Ed25519 secret key to Curve25519 secret key for ECDH
+ * This function implements the conversion algorithm used by libsodium/tweetnacl
+ * 
+ * @param edSecretKey64 Ed25519 secret key (64 bytes)
+ * @returns Curve25519 secret key (32 bytes)
+ */
+export function convertEd25519SecretKeyToCurve25519(edSecretKey64: Uint8Array): Uint8Array {
+  if (edSecretKey64.length !== 64) {
+    throw new Error(`Invalid Ed25519 secret key length: ${edSecretKey64.length} (expected 64 bytes)`);
   }
   
-  // Fallback implementation using TweetNaCl
-  // This is a simplified HKDF implementation
-  const hmacKey = nacl.hash(new Uint8Array([...salt, ...sharedSecret]));
-  const info = new TextEncoder().encode('AERONYX-SESSION-KEY');
-  const prk = nacl.hash(new Uint8Array([...hmacKey, ...info]));
+  // Extract the seed (first 32 bytes) from the Ed25519 secret key
+  const seed = edSecretKey64.slice(0, 32);
   
-  // Return first 32 bytes as the session key
-  const derivedKey = prk.slice(0, 32);
+  // Use tweetnacl to derive Curve25519 keys
+  const curveKeyPair = nacl.box.keyPair.fromSecretKey(
+    nacl.hash(seed).slice(0, 32)
+  );
   
-  // Log derived key for debugging
-  console.debug('[Crypto] Session key derived (fallback):', {
-    derivedKeyLength: derivedKey.length,
-    derivedKeyPrefix: Array.from(derivedKey.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
+  return curveKeyPair.secretKey;
+}
+
+/**
+ * Derive ECDH shared secret compatible with the Rust server's method
+ * 
+ * @param clientEdSecretKey64 Client's 64-byte Ed25519 Secret Key
+ * @param serverEdPublicKey32 Server's 32-byte Ed25519 Public Key
+ * @returns 32-byte shared secret, or null on conversion failure
+ */
+export function deriveECDHSharedSecret(
+  clientEdSecretKey64: Uint8Array,
+  serverEdPublicKey32: Uint8Array
+): Uint8Array | null {
+  if (clientEdSecretKey64.length !== 64) {
+    throw new Error(`Invalid client secret key length: ${clientEdSecretKey64.length}`);
+  }
+  if (serverEdPublicKey32.length !== 32) {
+    throw new Error(`Invalid server public key length: ${serverEdPublicKey32.length}`);
+  }
+
+  // 1. Convert keys to Curve25519 format
+  const clientCurveSecretKey = convertEd25519SecretKeyToCurve25519(clientEdSecretKey64);
+  const serverCurvePublicKey = convertEd25519PublicKeyToCurve25519(serverEdPublicKey32);
+
+  if (!serverCurvePublicKey) {
+    console.error("[Crypto] Failed to convert server public key for ECDH.");
+    return null;
+  }
+
+  console.debug("[Crypto] Keys converted for ECDH:", {
+    clientCurveSecretKeyLength: clientCurveSecretKey.length,
+    serverCurvePublicKeyLength: serverCurvePublicKey.length,
+  });
+
+  // 2. Perform ECDH using nacl.box.before
+  const sharedSecret = nacl.box.before(serverCurvePublicKey, clientCurveSecretKey);
+  
+  console.debug("[Crypto] Raw ECDH Shared Secret Derived:", {
+    length: sharedSecret.length,
+    prefix: Buffer.from(sharedSecret.slice(0, 8)).toString('hex')
   });
   
-  return derivedKey;
+  return sharedSecret;
+}
+
+/**
+ * Derive a session key from ECDH shared secret using HKDF-SHA256 (Web Crypto API)
+ * Matches the server's use of HKDF.
+ * 
+ * @param sharedSecret The raw 32-byte shared secret from ECDH
+ * @param salt A salt (usually empty or specific string, must match server)
+ * @returns Promise resolving to a 32-byte session key
+ */
+export async function deriveSessionKeyHKDF(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
+  if (!sharedSecret || sharedSecret.length !== 32) {
+    throw new Error('Invalid shared secret for HKDF');
+  }
+
+  console.debug('[Crypto] Deriving session key via HKDF:', {
+    sharedSecretPrefix: Buffer.from(sharedSecret.slice(0, 8)).toString('hex'),
+    saltLength: salt.length,
+    saltPrefix: salt.length > 0 ? Buffer.from(salt.slice(0, 8)).toString('hex') : 'empty',
+    info: 'AERONYX-SESSION-KEY'
+  });
+
+  if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
+    throw new Error("Web Crypto API not available for HKDF");
+  }
+
+  try {
+    // Import shared secret as the base key material for HKDF
+    const baseKey = await window.crypto.subtle.importKey(
+      'raw',
+      sharedSecret,
+      { name: 'HKDF' },
+      false, // not extractable
+      ['deriveBits']
+    );
+
+    // Derive the key bits using HKDF
+    const derivedBits = await window.crypto.subtle.deriveBits(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256', // Matches server
+        salt: salt,       // Use the provided salt (empty buffer if server uses None)
+        info: new TextEncoder().encode('AERONYX-SESSION-KEY') // MUST match server's info
+      },
+      baseKey,
+      256 // Derive 256 bits (32 bytes)
+    );
+
+    const derivedKey = new Uint8Array(derivedBits);
+    console.debug('[Crypto] HKDF Session Key Derived:', {
+      derivedKeyLength: derivedKey.length,
+      derivedKeyPrefix: Buffer.from(derivedKey.slice(0, 8)).toString('hex')
+    });
+    
+    return derivedKey;
+  } catch (error) {
+    console.error('[Crypto] HKDF key derivation failed:', error);
+    throw new Error(`HKDF derivation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /**
@@ -678,13 +473,8 @@ export async function testEncryptionCompat(sessionKey: Uint8Array): Promise<bool
     
     // Stringify for encryption
     const testString = JSON.stringify(testData);
-    console.debug('[Crypto] Test data:', {
-      original: testData,
-      stringified: testString
-    });
     
     // Encrypt
-    console.debug('[Crypto] Encrypting test data...');
     const { ciphertext, nonce } = await encryptWithAesGcm(testString, sessionKey);
     
     // Create packet
@@ -696,15 +486,7 @@ export async function testEncryptionCompat(sessionKey: Uint8Array): Promise<bool
       encryption_algorithm: "aes256gcm"
     };
     
-    console.debug('[Crypto] Test packet created:', {
-      packetType: packet.type,
-      encryptedLength: packet.encrypted.length,
-      nonceLength: packet.nonce.length,
-      algorithm: packet.encryption_algorithm
-    });
-    
     // Decrypt
-    console.debug('[Crypto] Attempting to decrypt test packet...');
     const decrypted = await decryptWithAesGcm(
       new Uint8Array(packet.encrypted),
       new Uint8Array(packet.nonce),
@@ -714,7 +496,6 @@ export async function testEncryptionCompat(sessionKey: Uint8Array): Promise<bool
     
     // Parse and verify
     const parsedDecrypted = JSON.parse(decrypted as string);
-    console.debug('[Crypto] Decryption test result:', parsedDecrypted);
     
     // Check if decrypted data matches original
     const success = 
