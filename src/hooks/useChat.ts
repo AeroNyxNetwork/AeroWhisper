@@ -54,7 +54,7 @@ const toSocketMessage = (message: ChatMessageType): SocketMessageType => ({
     ? message.timestamp 
     : message.timestamp.toISOString(), // Convert Date to ISO string if it's a Date object
   isEncrypted: message.isEncrypted ?? true,
-  status: message.status as string,
+  status: message.status // Don't cast to string, preserve the original type
 });
 
 /**
