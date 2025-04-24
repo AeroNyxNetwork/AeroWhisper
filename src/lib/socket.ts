@@ -1,3 +1,5 @@
+// src/lib/socket.ts
+
 import { EventEmitter } from 'events';
 import * as bs58 from 'bs58';
 import { Buffer } from 'buffer'; // Ensure buffer polyfill is available
