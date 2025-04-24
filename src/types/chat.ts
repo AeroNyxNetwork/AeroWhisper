@@ -71,12 +71,7 @@ export interface Participant {
 }
 
 // Connection status
-export type ConnectionStatus = 
-  | 'connecting' 
-  | 'connected' 
-  | 'p2p-connecting' 
-  | 'p2p-connected' 
-  | 'disconnected';
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'p2p-connecting' | 'p2p-connected';
 
 // Chat room info
 export interface ChatInfo {
