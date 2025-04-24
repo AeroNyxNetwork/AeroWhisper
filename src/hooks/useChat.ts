@@ -62,13 +62,13 @@ export const useChat = (chatId: string | null) => {
    * Creates a new message object with the specified content and status
    */
   const createMessage = useCallback((content: string, status: MessageStatus = 'sending'): MessageType => ({
-    id: `temp-${uuid()}`,
-    content,
-    senderId: user?.id || user?.publicKey || '',
-    senderName: user?.displayName || 'Me',
-    timestamp: new Date().toISOString(),
-    isEncrypted: true,
-    status
+      id: `temp-${uuid()}`,
+      content,
+      senderId: user?.id || user?.publicKey || '',
+      senderName: user?.displayName || 'Anonymous', // Ensure a default value
+      timestamp: new Date().toISOString(),
+      isEncrypted: true,
+      status
   }), [user]);
 
   /**
