@@ -44,15 +44,17 @@ const mapSocketStatus = (socketStatus: SocketConnectionStatus): HookConnectionSt
  * This ensures all required fields are present when sending to the socket
  */
 const toSocketMessage = (message: ChatMessageType): SocketMessageType => ({
-    ...message,
-    senderName: message.senderName || 'Anonymous', // Ensure senderName is never undefined
-    // Add any other required fields with defaults
-    id: message.id,
-    content: message.content,
-    senderId: message.senderId,
-    timestamp: message.timestamp,
-    isEncrypted: message.isEncrypted ?? true,
-    status: message.status as string,
+  ...message,
+  senderName: message.senderName || 'Anonymous', // Ensure senderName is never undefined
+  // Add any other required fields with defaults
+  id: message.id,
+  content: message.content,
+  senderId: message.senderId,
+  timestamp: typeof message.timestamp === 'string' 
+    ? message.timestamp 
+    : message.timestamp.toISOString(), // Convert Date to ISO string if it's a Date object
+  isEncrypted: message.isEncrypted ?? true,
+  status: message.status as string,
 });
 
 /**
