@@ -207,7 +207,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
       
       // Create user from keypair, preserving existing user data if possible
-      const user = createUserFromKeypair(keypair, authState.user);
+      const user = createUserFromKeypair(keypair, authState.user || undefined);
       updateAuthState({ 
         status: 'authenticated', 
         user,
