@@ -177,7 +177,7 @@ export function calculateConnectionTimeout(
   delay: number,
   config: ReconnectionConfig
 ): number {
-  const factor = config.timeoutFactor || DEFAULT_RECONNECTION_CONFIG.timeoutFactor;
+  const factor = config.timeoutFactor || DEFAULT_RECONNECTION_CONFIG.timeoutFactor || 1.5;
   return Math.round(delay * factor);
 }
 
