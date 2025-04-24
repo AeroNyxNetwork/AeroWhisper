@@ -115,15 +115,15 @@ export function isParticipantsPayload(payload: any): payload is ParticipantsPayl
 }
 
 // Optional: Helper type guard for individual Participant objects if deep checking is needed
-// function isParticipant(participant: any): participant is Participant {
-//     if (!isObject(participant)) return false;
-//     return (
-//         isString(participant.id) &&
-//         isString(participant.name) &&
-//         isString(participant.publicKey) &&
-//         (participant.status === 'online' || participant.status === 'offline' || participant.status === 'away')
-//     );
-// }
+function isParticipant(participant: any): participant is Participant {
+    if (!isObject(participant)) return false;
+    return (
+        isString(participant.id) &&
+        isString(participant.name) &&
+        isString(participant.publicKey) &&
+        (participant.status === 'online' || participant.status === 'offline' || participant.status === 'away')
+    );
+}
 
 /**
  * Type guard for WebRTCSignalPayload objects.
@@ -187,7 +187,6 @@ export function isKeyRotationResponsePayload(payload: any): payload is KeyRotati
      );
 }
 
-
 /**
  * Generic structure validation fallback (optional).
  * Checks only for the existence of a 'type' property.
@@ -196,4 +195,178 @@ export function isKeyRotationResponsePayload(payload: any): payload is KeyRotati
  */
 export function validateMessageStructure(message: any): boolean {
     return isObject(message) && typeof message.type === 'string';
+}
+
+/**
+ * Validate a generic payload against expected schema
+ * This is a more flexible validation approach for dynamic payloads
+ * @param payload Payload to validate
+ * @param schema Schema defining required properties and their types
+ * @returns True if payload matches schema
+ */
+export function validatePayload(
+    payload: any, 
+    schema: Record<string, 'string' | 'number' | 'boolean' | 'object' | 'array' | 'any'>
+): boolean {
+    if (!isObject(payload)) return false;
+    
+    for (const [key, type] of Object.entries(schema)) {
+        // Check if required key exists
+        if (!(key in payload)) return false;
+        
+        const value = payload[key];
+        
+        // Check type
+        switch (type) {
+            case 'string':
+                if (typeof value !== 'string') return false;
+                break;
+            case 'number':
+                if (typeof value !== 'number' || isNaN(value)) return false;
+                break;
+            case 'boolean':
+                if (typeof value !== 'boolean') return false;
+                break;
+            case 'object':
+                if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+                break;
+            case 'array':
+                if (!Array.isArray(value)) return false;
+                break;
+            case 'any':
+                if (value === undefined) return false;
+                break;
+            default:
+                return false; // Unexpected schema type
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * Validate nested data structure recursively
+ * @param data Data to validate
+ * @param schema Nested schema with type information
+ * @returns True if data matches schema
+ */
+export function validateNestedStructure(
+    data: any,
+    schema: {
+        type: 'object' | 'array' | 'string' | 'number' | 'boolean' | 'any';
+        properties?: Record<string, any>;
+        items?: any;
+        required?: boolean;
+    }
+): boolean {
+    // Handle null/undefined
+    if (data === null || data === undefined) {
+        return schema.required === false;
+    }
+    
+    // Check type
+    switch (schema.type) {
+        case 'string':
+            return typeof data === 'string';
+            
+        case 'number':
+            return typeof data === 'number' && !isNaN(data);
+            
+        case 'boolean':
+            return typeof data === 'boolean';
+            
+        case 'object':
+            if (!isObject(data)) return false;
+            
+            // If properties are defined, check each one
+            if (schema.properties) {
+                for (const [key, propSchema] of Object.entries(schema.properties)) {
+                    // Skip if property is not required and is missing
+                    if (!(key in data) && !propSchema.required) continue;
+                    
+                    // Validate the property recursively
+                    if (!validateNestedStructure(data[key], propSchema)) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+            
+        case 'array':
+            if (!Array.isArray(data)) return false;
+            
+            // If items schema is defined, check each item
+            if (schema.items) {
+                for (const item of data) {
+                    if (!validateNestedStructure(item, schema.items)) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+            
+        case 'any':
+            return true;
+            
+        default:
+            return false;
+    }
+}
+
+// --- Additional Security Validation Functions ---
+
+/**
+ * Validate a string parameter to prevent XSS and injection attacks
+ * @param input String to validate
+ * @param maxLength Maximum allowed length (default: 1000)
+ * @returns Sanitized string or null if invalid
+ */
+export function validateAndSanitizeString(input: string, maxLength: number = 1000): string | null {
+    if (typeof input !== 'string') return null;
+    
+    // Limit length
+    if (input.length > maxLength) return null;
+    
+    // Remove dangerous HTML tags and attributes
+    // This is a simple approach - use a dedicated library for production
+    const sanitized = input
+        .replace(/<(|\/|[^>\/bi]|\/[^>bi]|[^\/>][^>]+|\/[^>][^>]+)>/g, '')
+        .replace(/javascript:/gi, 'blocked-js:')
+        .replace(/data:/gi, 'blocked-data:')
+        .replace(/on\w+=/gi, 'blocked-event=');
+    
+    return sanitized;
+}
+
+/**
+ * Validate a numeric parameter within range
+ * @param input Value to validate
+ * @param min Minimum allowed value (default: 0)
+ * @param max Maximum allowed value (default: Number.MAX_SAFE_INTEGER)
+ * @returns Validated number or null if invalid
+ */
+export function validateNumericRange(
+    input: number, 
+    min: number = 0, 
+    max: number = Number.MAX_SAFE_INTEGER
+): number | null {
+    if (typeof input !== 'number' || isNaN(input)) return null;
+    if (input < min || input > max) return null;
+    return input;
+}
+
+/**
+ * Validate an object ID (for protection against database ID attacks)
+ * @param id ID to validate
+ * @param pattern Optional regex pattern (default: alphanumeric + common delimiters)
+ * @returns Validated ID or null if invalid
+ */
+export function validateId(
+    id: string, 
+    pattern: RegExp = /^[a-zA-Z0-9_\-.:]+$/
+): string | null {
+    if (typeof id !== 'string') return null;
+    if (!pattern.test(id)) return null;
+    if (id.length > 100) return null; // Reasonable maximum length
+    return id;
 }
