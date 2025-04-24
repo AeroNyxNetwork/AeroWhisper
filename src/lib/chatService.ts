@@ -9,6 +9,8 @@ interface CreateChatRoomParams {
   useP2P: boolean;
   createdAt: string;
   createdBy?: string;
+  encryptionType?: 'standard' | 'high' | 'maximum'; // Added this line
+  messageRetention?: number; // Added this line
 }
 
 /**
@@ -51,6 +53,25 @@ export const createChatRoom = async (params: CreateChatRoomParams): Promise<Chat
   
   // Save to localStorage
   localStorage.setItem('aero-chat-rooms', JSON.stringify(updatedRooms));
+  
+  // Store chat info with extended properties
+  try {
+    const chatInfo = {
+      id: room.id,
+      name: room.name,
+      createdAt: room.createdAt,
+      isEphemeral: room.isEphemeral,
+      useP2P: room.useP2P,
+      createdBy: room.createdBy,
+      encryptionType: params.encryptionType || 'standard',
+      messageRetention: params.messageRetention || 0
+    };
+    
+    // Store the chat info separately
+    localStorage.setItem(`aero-chat-info-${room.id}`, JSON.stringify(chatInfo));
+  } catch (e) {
+    console.error('Failed to store chat info', e);
+  }
   
   // In a real implementation, we would make an API call here
   // Simulate network delay
@@ -96,6 +117,9 @@ export const deleteChatRoom = async (id: string): Promise<boolean> => {
     
     // Save to localStorage
     localStorage.setItem('aero-chat-rooms', JSON.stringify(updatedRooms));
+    
+    // Remove chat info
+    localStorage.removeItem(`aero-chat-info-${id}`);
     
     // Simulate network delay
     await new Promise(resolve => setTimeout(resolve, 500));
