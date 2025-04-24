@@ -1,7 +1,7 @@
 // src/utils/cryptoUtils.ts
 
-import * as bs58 from 'bs58';
 import * as nacl from 'tweetnacl';
+import * as bs58 from 'bs58';
 import { Buffer } from 'buffer';
 
 /**
@@ -59,16 +59,27 @@ export async function isAesGcmSupported(): Promise<boolean> {
 }
 
 /**
+ * Convert a number array to Uint8Array
+ * @param arr Array of numbers
+ * @returns Uint8Array representation
+ */
+export function numberArrayToUint8Array(arr: number[]): Uint8Array {
+  return new Uint8Array(arr);
+}
+
+/**
  * Encrypt data using AES-GCM via Web Crypto API
  * This is a unified implementation that should be used throughout the application
  * 
  * @param plaintext Data to encrypt (string or Uint8Array)
  * @param key 32-byte encryption key
+ * @param nonce Optional nonce (will be generated if not provided)
  * @returns Object containing encrypted data and nonce
  */
 export async function encryptWithAesGcm(
   plaintext: string | Uint8Array,
-  key: Uint8Array
+  key: Uint8Array,
+  nonce?: Uint8Array
 ): Promise<{ ciphertext: Uint8Array, nonce: Uint8Array }> {
   if (!key || key.length !== 32) {
     throw new Error(`Invalid encryption key: length=${key?.length ?? 'null'} (expected 32 bytes)`);
@@ -79,8 +90,8 @@ export async function encryptWithAesGcm(
     ? new TextEncoder().encode(plaintext)
     : plaintext;
   
-  // Generate a 12-byte nonce for AES-GCM
-  const nonce = generateNonce(12);
+  // Generate a 12-byte nonce for AES-GCM if not provided
+  const nonceToUse = nonce || generateNonce(12);
   
   try {
     // Web Crypto API implementation
@@ -100,7 +111,7 @@ export async function encryptWithAesGcm(
       const ciphertextBuffer = await window.crypto.subtle.encrypt(
         {
           name: 'AES-GCM',
-          iv: nonce,
+          iv: nonceToUse,
           tagLength: 128 // 16 bytes tag, standard for AES-GCM
         },
         cryptoKey,
@@ -115,7 +126,7 @@ export async function encryptWithAesGcm(
         ciphertextFirstBytes: Array.from(ciphertext.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')
       });
       
-      return { ciphertext, nonce };
+      return { ciphertext, nonce: nonceToUse };
     } else {
       console.error('[Crypto:ENCRYPT] Web Crypto API not available for encryption');
       throw new Error('Web Crypto API not available');
@@ -256,81 +267,6 @@ export function signChallenge(
 }
 
 /**
- * Create a proper data packet for encrypted messaging
- * Using the consistent field name "encryption_algorithm" expected by the server
- * with value "aes256gcm" as required by the server
- * 
- * @param data The data to encrypt (object or string)
- * @param sessionKey The session key for encryption
- * @param counter Message counter for replay protection
- * @returns Promise resolving to a properly formatted data packet
- */
-export async function createEncryptedPacket(
-  data: any,
-  sessionKey: Uint8Array,
-  counter: number
-): Promise<any> {
-  // Convert to string if needed
-  const messageString = typeof data === 'string' ? data : JSON.stringify(data);
-  
-  // Encrypt with AES-GCM
-  const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
-  
-  // Create packet with the correct field names
-  return {
-    type: 'Data',
-    encrypted: Array.from(ciphertext),
-    nonce: Array.from(nonce),
-    counter: counter,
-    encryption_algorithm: 'aes256gcm', // Server expects this format
-    padding: null // Optional padding
-  };
-}
-
-/**
- * Process an encrypted packet
- * 
- * @param packet The encrypted packet to process
- * @param sessionKey The session key for decryption
- * @returns Promise resolving to the decrypted data or null on failure
- */
-export async function processEncryptedPacket(
-  packet: any,
-  sessionKey: Uint8Array
-): Promise<any | null> {
-  try {
-    // Basic packet validation
-    if (!packet || packet.type !== 'Data' || 
-        !Array.isArray(packet.encrypted) || 
-        !Array.isArray(packet.nonce)) {
-      console.warn('[Crypto] Invalid packet format:', packet);
-      return null;
-    }
-    
-    // Convert arrays to Uint8Arrays
-    const ciphertext = new Uint8Array(packet.encrypted);
-    const nonce = new Uint8Array(packet.nonce);
-    
-    // Support both field names for backward compatibility
-    const algorithm = packet.encryption_algorithm || packet.encryption || 'aes256gcm';
-    
-    // Decrypt the data
-    const decryptedString = await decryptWithAesGcm(
-      ciphertext,
-      nonce,
-      sessionKey,
-      'string'
-    ) as string;
-    
-    // Parse the decrypted JSON
-    return JSON.parse(decryptedString);
-  } catch (error) {
-    console.error('[Crypto] Failed to process encrypted packet:', error);
-    return null;
-  }
-}
-
-/**
  * Convert Ed25519 public key to Curve25519 public key for ECDH
  * This function implements the conversion algorithm used by libsodium/tweetnacl
  * 
@@ -373,206 +309,438 @@ export function convertEd25519SecretKeyToCurve25519(edSecretKey64: Uint8Array): 
   const seed = edSecretKey64.slice(0, 32);
   
   // Use tweetnacl to derive Curve25519 keys
-  const curveKeyPair = nacl.box.keyPair.fromSecretKey(
-    nacl.hash(seed).slice(0, 32)
-  );
+  const hash = nacl.hash(seed);
+  const curve25519SecretKey = hash.slice(0, 32);
   
-  return curveKeyPair.secretKey;
+  // Apply clamping as required for Curve25519
+  curve25519SecretKey[0] &= 248;
+  curve25519SecretKey[31] &= 127;
+  curve25519SecretKey[31] |= 64;
+  
+  return curve25519SecretKey;
 }
 
 /**
- * Derive ECDH shared secret compatible with the Rust server's method
- * 
- * @param clientEdSecretKey64 Client's 64-byte Ed25519 Secret Key
- * @param serverEdPublicKey32 Server's 32-byte Ed25519 Public Key
- * @returns 32-byte shared secret, or null on conversion failure
+ * Derive raw ECDH shared secret
+ * @param curveSecretKey Curve25519 secret key (32 bytes)
+ * @param curvePublicKey Curve25519 public key (32 bytes)
+ * @returns Shared secret (32 bytes)
  */
-export function deriveECDHSharedSecret(
-  clientEdSecretKey64: Uint8Array,
-  serverEdPublicKey32: Uint8Array
-): Uint8Array | null {
-  if (clientEdSecretKey64.length !== 64) {
-    throw new Error(`Invalid client secret key length: ${clientEdSecretKey64.length}`);
+export function deriveECDHRawSharedSecret(
+  curveSecretKey: Uint8Array,
+  curvePublicKey: Uint8Array
+): Uint8Array {
+  if (curveSecretKey.length !== 32) {
+    throw new Error(`Invalid Curve25519 secret key length: ${curveSecretKey.length} (expected 32 bytes)`);
   }
-  if (serverEdPublicKey32.length !== 32) {
-    throw new Error(`Invalid server public key length: ${serverEdPublicKey32.length}`);
-  }
-
-  // 1. Convert keys to Curve25519 format
-  const clientCurveSecretKey = convertEd25519SecretKeyToCurve25519(clientEdSecretKey64);
-  const serverCurvePublicKey = convertEd25519PublicKeyToCurve25519(serverEdPublicKey32);
-
-  if (!serverCurvePublicKey) {
-    console.error("[Crypto] Failed to convert server public key for ECDH.");
-    return null;
-  }
-
-  console.debug("[Crypto] Keys converted for ECDH:", {
-    clientCurveSecretKeyLength: clientCurveSecretKey.length,
-    serverCurvePublicKeyLength: serverCurvePublicKey.length,
-  });
-
-  // 2. Perform ECDH using nacl.box.before
-  const sharedSecret = nacl.box.before(serverCurvePublicKey, clientCurveSecretKey);
   
-  console.debug("[Crypto] Raw ECDH Shared Secret Derived:", {
-    length: sharedSecret.length,
-    prefix: Buffer.from(sharedSecret.slice(0, 8)).toString('hex')
-  });
+  if (curvePublicKey.length !== 32) {
+    throw new Error(`Invalid Curve25519 public key length: ${curvePublicKey.length} (expected 32 bytes)`);
+  }
   
-  return sharedSecret;
-}
-
-/**
- * Derive a session key from ECDH shared secret using HKDF-SHA256 (Web Crypto API)
- * Matches the server's use of HKDF.
- * 
- * @param sharedSecret The raw 32-byte shared secret from ECDH
- * @param salt A salt (usually empty or specific string, must match server)
- * @returns Promise resolving to a 32-byte session key
- */
-export async function deriveSessionKeyHKDF(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
-  if (!sharedSecret || sharedSecret.length !== 32) {
-    throw new Error('Invalid shared secret for HKDF');
-  }
-
-  console.debug('[Crypto] Deriving session key via HKDF:', {
-    sharedSecretPrefix: Buffer.from(sharedSecret.slice(0, 8)).toString('hex'),
-    saltLength: salt.length,
-    saltPrefix: salt.length > 0 ? Buffer.from(salt.slice(0, 8)).toString('hex') : 'empty',
-    info: 'AERONYX-SESSION-KEY'
-  });
-
-  if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
-    throw new Error("Web Crypto API not available for HKDF");
-  }
-
   try {
-    // Import shared secret as the base key material for HKDF
+    // Use nacl.scalarMult for the ECDH computation
+    const sharedSecret = nacl.scalarMult(curveSecretKey, curvePublicKey);
+    
+    console.debug('[Crypto] Derived ECDH shared secret:', {
+      secretKeyHex: Buffer.from(curveSecretKey.slice(0, 4)).toString('hex') + '...',
+      publicKeyHex: Buffer.from(curvePublicKey.slice(0, 4)).toString('hex') + '...',
+      sharedSecretHex: Buffer.from(sharedSecret.slice(0, 4)).toString('hex') + '...'
+    });
+    
+    return sharedSecret;
+  } catch (error) {
+    console.error('[Crypto] Error deriving ECDH shared secret:', error);
+    throw new Error(`ECDH failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Derive a key with HKDF (HMAC-based Key Derivation Function)
+ * @param inputKeyMaterial The input key material (e.g., ECDH shared secret)
+ * @param salt Optional salt (default: empty array)
+ * @param info Optional context and application specific information (default: 'AERONYX-SESSION-KEY')
+ * @param length Output key length in bytes (default: 32)
+ * @returns Derived key as Uint8Array
+ */
+export async function deriveKeyWithHKDF(
+  inputKeyMaterial: Uint8Array,
+  salt: Uint8Array = new Uint8Array(0),
+  info: Uint8Array = new TextEncoder().encode('AERONYX-SESSION-KEY'),
+  length: number = 32
+): Promise<Uint8Array> {
+  if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
+    throw new Error('Web Crypto API not available for HKDF');
+  }
+  
+  try {
+    // Import the input key material
     const baseKey = await window.crypto.subtle.importKey(
       'raw',
-      sharedSecret,
+      inputKeyMaterial,
       { name: 'HKDF' },
-      false, // not extractable
+      false,
       ['deriveBits']
     );
-
-    // Derive the key bits using HKDF
+    
+    // Derive bits using HKDF
     const derivedBits = await window.crypto.subtle.deriveBits(
       {
         name: 'HKDF',
-        hash: 'SHA-256', // Matches server
-        salt: salt,       // Use the provided salt (empty buffer if server uses None)
-        info: new TextEncoder().encode('AERONYX-SESSION-KEY') // MUST match server's info
+        hash: 'SHA-256', // Use SHA-256 as the hash function
+        salt: salt,
+        info: info
       },
       baseKey,
-      256 // Derive 256 bits (32 bytes)
+      length * 8 // Convert bytes to bits
     );
-
-    const derivedKey = new Uint8Array(derivedBits);
-    console.debug('[Crypto] HKDF Session Key Derived:', {
-      derivedKeyLength: derivedKey.length,
-      derivedKeyPrefix: Buffer.from(derivedKey.slice(0, 8)).toString('hex')
-    });
     
-    return derivedKey;
+    return new Uint8Array(derivedBits);
   } catch (error) {
-    console.error('[Crypto] HKDF key derivation failed:', error);
-    throw new Error(`HKDF derivation failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error('[Crypto] Error deriving key with HKDF:', error);
+    throw new Error(`HKDF failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 /**
- * Derive a session key from ECDH shared secret
- * (This is an alias to deriveSessionKeyHKDF for backward compatibility)
- * 
- * @param sharedSecret The raw 32-byte shared secret from ECDH
- * @param salt A salt (usually empty or specific string, must match server)
- * @returns Promise resolving to a 32-byte session key
+ * Create an encrypted data packet for sending over the network
+ * @param data Data to encrypt (object or string)
+ * @param sessionKey Session key for encryption
+ * @param counter Message counter (for replay protection)
+ * @returns Data packet with encrypted content
  */
-export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
-  return deriveSessionKeyHKDF(sharedSecret, salt);
+export async function createEncryptedDataPacket(
+  data: any,
+  sessionKey: Uint8Array,
+  counter: number
+): Promise<any> {
+  // Convert data to string if it's an object
+  const messageString = typeof data === 'string' ? data : JSON.stringify(data);
+  
+  // Generate nonce and encrypt
+  const nonce = generateNonce();
+  const { ciphertext } = await encryptWithAesGcm(messageString, sessionKey, nonce);
+  
+  // Create the data packet
+  return {
+    type: 'Data',
+    encrypted: Array.from(ciphertext),
+    nonce: Array.from(nonce),
+    counter: counter,
+    encryption_algorithm: 'aes256gcm' // Use consistent field name as required by server
+  };
 }
 
 /**
- * Helper function to derive ECDH shared secret and session key in one step
- * 
- * @param clientSecretKey Client's Ed25519 secret key (64 bytes)
- * @param serverPublicKey Server's Ed25519 public key (32 bytes)
- * @returns Promise resolving to session key or null on failure
+ * Process an encrypted data packet
+ * @param packet Encrypted data packet
+ * @param sessionKey Session key for decryption
+ * @returns Decrypted data (parsed from JSON) or null on failure
  */
-export async function deriveFullSessionKey(
-  clientSecretKey: Uint8Array,
-  serverPublicKey: Uint8Array
-): Promise<Uint8Array | null> {
+export async function processEncryptedDataPacket(
+  packet: any,
+  sessionKey: Uint8Array
+): Promise<any | null> {
   try {
-    // 1. Derive raw ECDH shared secret
-    const sharedSecret = deriveECDHSharedSecret(clientSecretKey, serverPublicKey);
-    if (!sharedSecret) {
-      throw new Error('Failed to derive ECDH shared secret');
+    if (!packet || !packet.encrypted || !packet.nonce) {
+      console.warn('[Crypto] Invalid data packet structure:', packet);
+      return null;
     }
     
-    // 2. Derive final session key using HKDF
-    const salt = new Uint8Array(); // Empty salt
-    return await deriveSessionKeyHKDF(sharedSecret, salt);
+    // Convert arrays to Uint8Arrays
+    const encrypted = new Uint8Array(packet.encrypted);
+    const nonce = new Uint8Array(packet.nonce);
+    
+    // Support both field names for backward compatibility
+    const algorithm = packet.encryption_algorithm || packet.encryption;
+    if (algorithm && algorithm !== 'aes256gcm') {
+      console.warn(`[Crypto] Unsupported encryption algorithm: ${algorithm}`);
+      return null;
+    }
+    
+    // Decrypt the data
+    const decryptedText = await decryptWithAesGcm(encrypted, nonce, sessionKey, 'string') as string;
+    
+    // Parse JSON
+    try {
+      return JSON.parse(decryptedText);
+    } catch (parseError) {
+      console.error('[Crypto] Failed to parse decrypted data as JSON:', parseError);
+      return null;
+    }
   } catch (error) {
-    console.error('[Crypto] Failed to derive full session key:', error);
+    console.error('[Crypto] Failed to process encrypted data packet:', error);
     return null;
   }
 }
 
 /**
- * Test function to verify encryption compatibility with server
- * 
- * @param sessionKey Session key to use for testing
- * @returns true if the test passed, false otherwise
+ * Generate a keypair for use with the application
+ * @returns Generated keypair
  */
-export async function testEncryptionCompat(sessionKey: Uint8Array): Promise<boolean> {
+export function generateKeyPair(): { publicKey: Uint8Array; secretKey: Uint8Array; publicKeyBase58: string } {
   try {
-    console.debug('[Crypto] Running encryption compatibility test');
-    // Create test data
-    const testData = {
-      type: "test",
-      message: "Encryption compatibility test",
+    // Generate Ed25519 keypair
+    const keypair = nacl.sign.keyPair();
+    
+    // Encode public key to base58 for easier sharing
+    const publicKeyBase58 = bs58.encode(keypair.publicKey);
+    
+    return {
+      publicKey: keypair.publicKey,
+      secretKey: keypair.secretKey,
+      publicKeyBase58
+    };
+  } catch (error) {
+    console.error('[Crypto] Error generating keypair:', error);
+    throw new Error(`Keypair generation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Generate a unique session ID
+ * @returns Random session ID string
+ */
+export function generateSessionId(): string {
+  // Generate 16 random bytes
+  const bytes = generateNonce(16);
+  
+  // Encode in base58 for readability
+  return bs58.encode(bytes);
+}
+
+/**
+ * Test encryption compatibility with server
+ * @param key Session key to test with
+ * @returns Promise resolving to true if test passes
+ */
+export async function testEncryptionCompat(key: Uint8Array): Promise<boolean> {
+  try {
+    // Create test message
+    const testMessage = {
+      type: 'test',
+      value: 'test-value',
       timestamp: Date.now()
     };
     
-    // Stringify for encryption
-    const testString = JSON.stringify(testData);
+    // Encrypt with our utilities
+    const encryptedPacket = await createEncryptedDataPacket(testMessage, key, 0);
     
-    // Encrypt
-    const { ciphertext, nonce } = await encryptWithAesGcm(testString, sessionKey);
+    // Decrypt with our utilities
+    const decryptedMessage = await processEncryptedDataPacket(encryptedPacket, key);
     
-    // Create packet
-    const packet = {
-      type: "Data",
-      encrypted: Array.from(ciphertext),
-      nonce: Array.from(nonce),
-      counter: 1,
-      encryption_algorithm: "aes256gcm"
-    };
+    // Verify result
+    if (!decryptedMessage || 
+        decryptedMessage.type !== testMessage.type || 
+        decryptedMessage.value !== testMessage.value) {
+      console.error('[Crypto] Encryption test failed: mismatch between original and decrypted data');
+      return false;
+    }
     
-    // Decrypt
-    const decrypted = await decryptWithAesGcm(
-      new Uint8Array(packet.encrypted),
-      new Uint8Array(packet.nonce),
-      sessionKey,
-      'string'
-    );
-    
-    // Parse and verify
-    const parsedDecrypted = JSON.parse(decrypted as string);
-    
-    // Check if decrypted data matches original
-    const success = 
-      parsedDecrypted.type === testData.type && 
-      parsedDecrypted.message === testData.message;
-    
-    console.debug(`[Crypto] Encryption compatibility test ${success ? 'PASSED' : 'FAILED'}`);
-    
-    return success;
+    console.log('[Crypto] Encryption compatibility test passed');
+    return true;
   } catch (error) {
     console.error('[Crypto] Encryption compatibility test failed:', error);
     return false;
   }
+}
+
+/**
+ * Test different encryption formats to find a compatible one
+ * @returns Promise resolving to an object with test results
+ */
+export async function findCompatibleEncryptionFormat(): Promise<any> {
+  const testKey = new Uint8Array(32);
+  if (typeof window !== 'undefined' && window.crypto) {
+    window.crypto.getRandomValues(testKey);
+  }
+  
+  const results = {
+    aesGcmSupported: await isAesGcmSupported(),
+    fieldTests: {
+      encryption: false,
+      encryption_algorithm: false
+    },
+    recommendedField: 'unknown'
+  };
+  
+  try {
+    // Test with 'encryption' field
+    const test1 = await testEncryptionFormat({ test: 'test1' }, 'encryption');
+    results.fieldTests.encryption = test1.success;
+    
+    // Test with 'encryption_algorithm' field
+    const test2 = await testEncryptionFormat({ test: 'test2' }, 'encryption_algorithm');
+    results.fieldTests.encryption_algorithm = test2.success;
+    
+    // Determine recommended field
+    if (results.fieldTests.encryption_algorithm) {
+      results.recommendedField = 'encryption_algorithm';
+    } else if (results.fieldTests.encryption) {
+      results.recommendedField = 'encryption';
+    }
+  } catch (error) {
+    console.error('[Crypto] Error finding compatible encryption format:', error);
+  }
+  
+  return results;
+}
+
+/**
+ * Test encryption with specific field name
+ * @param data Test data to encrypt
+ * @param fieldName Field name to use ('encryption' or 'encryption_algorithm')
+ * @returns Test result with success status
+ */
+export async function testEncryptionFormat(
+  data: any,
+  fieldName: 'encryption' | 'encryption_algorithm'
+): Promise<{success: boolean, error?: string}> {
+  try {
+    // Generate test key
+    const testKey = new Uint8Array(32);
+    if (typeof window !== 'undefined' && window.crypto) {
+      window.crypto.getRandomValues(testKey);
+    }
+    
+    // Create encrypted data packet
+    const nonce = generateNonce();
+    const messageString = JSON.stringify(data);
+    const { ciphertext } = await encryptWithAesGcm(messageString, testKey, nonce);
+    
+    // Create test packet with specified field name
+    const packet = {
+      type: 'Data',
+      encrypted: Array.from(ciphertext),
+      nonce: Array.from(nonce),
+      counter: 0
+    };
+    
+    // Add field with correct name
+    packet[fieldName] = 'aes256gcm';
+    
+    // Try to decrypt
+    const decrypted = await processEncryptedDataPacket(packet, testKey);
+    
+    return {
+      success: decrypted !== null && JSON.stringify(decrypted) === JSON.stringify(data)
+    };
+  } catch (error) {
+    console.error(`[Crypto] Test failed for field '${fieldName}':`, error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+/**
+ * Securely wipe sensitive data from memory
+ * @param data Uint8Array to wipe
+ */
+export function secureWipe(data: Uint8Array): void {
+  if (!data || !(data instanceof Uint8Array)) return;
+  
+  // First overwrite with random data
+  if (typeof window !== 'undefined' && window.crypto) {
+    window.crypto.getRandomValues(data);
+  } else {
+    for (let i = 0; i < data.length; i++) {
+      data[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  
+  // Then zero out
+  for (let i = 0; i < data.length; i++) {
+    data[i] = 0;
+  }
+}
+
+/**
+ * Verify signature using Ed25519
+ * @param message Message that was signed
+ * @param signature Signature to verify (Base58 encoded or Uint8Array)
+ * @param publicKey Ed25519 public key (Base58 encoded or Uint8Array)
+ * @returns True if signature is valid
+ */
+export function verifySignature(
+  message: Uint8Array | string,
+  signature: string | Uint8Array,
+  publicKey: string | Uint8Array
+): boolean {
+  try {
+    // Convert message to Uint8Array if it's a string
+    const messageBytes = typeof message === 'string' 
+      ? new TextEncoder().encode(message) 
+      : message;
+    
+    // Convert signature to Uint8Array if it's Base58 encoded
+    const signatureBytes = typeof signature === 'string' 
+      ? bs58.decode(signature) 
+      : signature;
+    
+    // Convert public key to Uint8Array if it's Base58 encoded
+    const publicKeyBytes = typeof publicKey === 'string' 
+      ? bs58.decode(publicKey) 
+      : publicKey;
+    
+    // Verify the signature
+    return nacl.sign.detached.verify(messageBytes, signatureBytes, publicKeyBytes);
+  } catch (error) {
+    console.error('[Crypto] Signature verification failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Calculate SHA-256 hash of data
+ * @param data Data to hash (string or Uint8Array)
+ * @returns Promise resolving to hash as Uint8Array
+ */
+export async function sha256(data: string | Uint8Array): Promise<Uint8Array> {
+  if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
+    throw new Error('Web Crypto API not available for SHA-256');
+  }
+  
+  try {
+    // Convert string to Uint8Array if necessary
+    const dataBytes = typeof data === 'string' 
+      ? new TextEncoder().encode(data) 
+      : data;
+    
+    // Calculate hash
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', dataBytes);
+    return new Uint8Array(hashBuffer);
+  } catch (error) {
+    console.error('[Crypto] SHA-256 hash calculation failed:', error);
+    throw new Error(`SHA-256 failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Generate a random string for various purposes
+ * @param length Length of the random string
+ * @param charset Character set to use (default: alphanumeric)
+ * @returns Random string of specified length
+ */
+export function generateRandomString(
+  length: number = 16,
+  charset: string = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+): string {
+  const randomValues = new Uint8Array(length);
+  
+  if (typeof window !== 'undefined' && window.crypto) {
+    window.crypto.getRandomValues(randomValues);
+  } else {
+    for (let i = 0; i < length; i++) {
+      randomValues[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += charset.charAt(randomValues[i] % charset.length);
+  }
+  
+  return result;
 }
