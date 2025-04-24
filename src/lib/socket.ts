@@ -111,14 +111,18 @@ export interface AeroNyxSocketTestingInterface {
  * Internal connection state for state machine pattern
  * Using numeric enum values to avoid type comparison issues
  */
-enum InternalConnectionState {
-  DISCONNECTED = 0,
-  CONNECTING = 1,
-  AUTHENTICATING = 2,
-  CONNECTED = 3,
-  RECONNECTING = 4,
-  CLOSING = 5
-}
+
+type InternalConnectionStateType = 'disconnected' | 'connecting' | 'authenticating' | 'connected' | 'reconnecting' | 'closing';
+
+const InternalConnectionState = {
+  DISCONNECTED: 'disconnected' as InternalConnectionStateType,
+  CONNECTING: 'connecting' as InternalConnectionStateType,
+  AUTHENTICATING: 'authenticating' as InternalConnectionStateType,
+  CONNECTED: 'connected' as InternalConnectionStateType,
+  RECONNECTING: 'reconnecting' as InternalConnectionStateType,
+  CLOSING: 'closing' as InternalConnectionStateType
+};
+
 
 // Map of numeric states to their string representation for logging/debugging
 const CONNECTION_STATE_NAMES: Record<InternalConnectionState, string> = {
@@ -191,8 +195,8 @@ export class AeroNyxSocket extends EventEmitter {
   private socket: WebSocket | null = null;
   private chatId: string | null = null;
   private publicKey: string | null = null; // Client's Ed25519 public key (Base58)
-  private serverUrl: string = process.env.NEXT_PUBLIC_AERONYX_SERVER_URL || 'wss://aeronyx-server.example.com';
-  private connectionState: InternalConnectionState = InternalConnectionState.DISCONNECTED;
+  private serverUrl: string = process.env.NEXT_PUBLIC_AERONYX_SERVER_URL || 'wss://p2p.aeronyx.network';
+  private connectionState: InternalConnectionStateType = InternalConnectionState.DISCONNECTED;
   private autoReconnect: boolean = true;
   private forceReconnect: boolean = false; // Flag to force reconnect attempt
   private stateTransitionLock: Promise<void> = Promise.resolve();
@@ -1906,9 +1910,9 @@ export class AeroNyxSocket extends EventEmitter {
           // If connect() fails, its error handling (via onclose/onerror) should trigger scheduleReconnect again if appropriate.
           // We might need to explicitly call scheduleReconnect here if connect promise rejection doesn't guarantee onclose.
            if (this.connectionState !== InternalConnectionState.CONNECTED) {
-               this.safeChangeState(InternalConnectionState.DISCONNECTED); // Ensure state reflects failure
-               this.scheduleReconnect(); // Schedule the next attempt
-           }
+            this.safeChangeState(InternalConnectionState.DISCONNECTED); // Ensure state reflects failure
+            this.scheduleReconnect(); // Schedule the next attempt
+          }
         }
       } else {
            console.error("[Socket] Cannot schedule reconnect: Missing chatId or publicKey.");
