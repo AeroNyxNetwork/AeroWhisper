@@ -48,7 +48,6 @@ const mapMessageStatus = (status: MessageStatus | undefined): "sending" | "sent"
     if (!status) return undefined;
     
     // If status is "read", map it to "delivered" as that's the closest match
-    // in the SocketMessageType's allowed status values
     if (status === "read") return "delivered";
     
     // For other values that are common between both types, return as is
@@ -146,7 +145,7 @@ export const useChat = (chatId: string | null) => {
      */
     const createSocketError = useCallback((
         error: unknown, 
-        type: string = 'connection', 
+        type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message' | 'internal' | 'security' = 'connection', 
         code: string = 'ERROR', 
         retry: boolean = false
     ): SocketError => {
