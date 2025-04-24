@@ -96,7 +96,11 @@ export const Header: React.FC = () => {
                 <Avatar 
                   size="sm" 
                   name={user?.displayName || 'User'} 
-                  src={user?.avatarUrl} 
+                  // Replace avatarUrl with photoURL or remove src prop if it doesn't exist
+                  // Option 1: If the user has a photoURL property
+                  src={user?.photoURL} 
+                  // Option 2: If there's no avatar URL property at all
+                  // Remove the src prop entirely 
                   bg="purple.500"
                 />
               </MenuButton>
