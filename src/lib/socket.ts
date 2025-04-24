@@ -18,7 +18,6 @@ import {
   processEncryptedDataPacket,
   testEncryptionCompat,
   numberArrayToUint8Array,
-  getStoredKeypair, // ASSUMPTION: Implemented securely (e.g., IndexedDB)
   // Type guards for message validation
   isMessageType,
   isChatInfoPayload,
