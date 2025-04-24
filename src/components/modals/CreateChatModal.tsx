@@ -1,3 +1,4 @@
+// src/components/modals/CreateChatModal.tsx
 import React, { useState } from 'react';
 import { useRouter } from 'next/router';
 import {
@@ -20,7 +21,11 @@ import {
   Box,
   Flex,
   Divider,
+  Select,
+  Collapse,
+  Icon,
 } from '@chakra-ui/react';
+import { FaChevronDown, FaChevronUp } from 'react-icons/fa';
 import { createChatRoom } from '../../lib/chatService';
 import { generateSessionId } from '../../utils/crypto';
 
@@ -33,10 +38,17 @@ export const CreateChatModal: React.FC<CreateChatModalProps> = ({ isOpen, onClos
   const router = useRouter();
   const { colorMode } = useColorMode();
   const toast = useToast();
+  
+  // Basic settings
   const [chatName, setChatName] = useState('');
   const [isEphemeral, setIsEphemeral] = useState(true);
   const [useP2P, setUseP2P] = useState(true);
   const [loading, setLoading] = useState(false);
+  
+  // Advanced settings
+  const [advancedOptions, setAdvancedOptions] = useState(false);
+  const [encryptionType, setEncryptionType] = useState<'standard' | 'high' | 'maximum'>('standard');
+  const [messageRetention, setMessageRetention] = useState('0'); // 0 = forever
 
   const handleCreateChat = async () => {
     if (!chatName.trim()) {
@@ -57,6 +69,8 @@ export const CreateChatModal: React.FC<CreateChatModalProps> = ({ isOpen, onClos
         name: chatName,
         isEphemeral,
         useP2P,
+        encryptionType,
+        messageRetention: parseInt(messageRetention),
         createdAt: new Date().toISOString(),
       });
 
@@ -106,8 +120,18 @@ export const CreateChatModal: React.FC<CreateChatModalProps> = ({ isOpen, onClos
             </FormControl>
 
             <Divider />
-
-            <Text fontWeight="semibold" mb={2}>Security Options</Text>
+            
+            <Flex align="center" w="100%" justify="space-between">
+              <Text fontWeight="semibold">Security Options</Text>
+              <Button 
+                size="sm" 
+                variant="ghost" 
+                rightIcon={<Icon as={advancedOptions ? FaChevronUp : FaChevronDown} />}
+                onClick={() => setAdvancedOptions(!advancedOptions)}
+              >
+                Advanced Options
+              </Button>
+            </Flex>
             
             <FormControl display="flex" alignItems="center">
               <FormLabel htmlFor="ephemeral-chat" mb="0">
@@ -146,6 +170,42 @@ export const CreateChatModal: React.FC<CreateChatModalProps> = ({ isOpen, onClos
                 Enable direct peer-to-peer connection for maximum privacy
               </Text>
             </Box>
+            
+            {/* Advanced options */}
+            <Collapse in={advancedOptions} animateOpacity style={{ width: '100%' }}>
+              <VStack spacing={4} w="100%" align="start" mt={2}>
+                <FormControl>
+                  <FormLabel>Encryption Level</FormLabel>
+                  <Select
+                    value={encryptionType}
+                    onChange={(e) => setEncryptionType(e.target.value as any)}
+                  >
+                    <option value="standard">Standard (AES-256-GCM)</option>
+                    <option value="high">High (ChaCha20-Poly1305)</option>
+                    <option value="maximum">Maximum (Dual Encryption + Forward Secrecy)</option>
+                  </Select>
+                  <Text fontSize="xs" mt={1} color={colorMode === 'dark' ? 'gray.400' : 'gray.500'}>
+                    Higher encryption levels may not be available on all browsers or may affect performance
+                  </Text>
+                </FormControl>
+                
+                <FormControl>
+                  <FormLabel>Message Retention</FormLabel>
+                  <Select 
+                    value={messageRetention}
+                    onChange={(e) => setMessageRetention(e.target.value)}
+                  >
+                    <option value="0">Forever</option>
+                    <option value="1">1 day</option>
+                    <option value="7">7 days</option>
+                    <option value="30">30 days</option>
+                  </Select>
+                  <Text fontSize="xs" mt={1} color={colorMode === 'dark' ? 'gray.400' : 'gray.500'}>
+                    Specifies how long messages will be stored in the chat history
+                  </Text>
+                </FormControl>
+              </VStack>
+            </Collapse>
           </VStack>
         </ModalBody>
 
