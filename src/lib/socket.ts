@@ -92,6 +92,18 @@ export interface SocketError {
 }
 
 /**
+ * Testing interface for non-production environments
+ */
+export interface AeroNyxSocketTestingInterface {
+  getState: () => string;
+  simulateServerMessage: (message: any) => Promise<void>;
+  getQueueInfo: () => { size: number, processing: boolean };
+  getNetworkQuality: () => 'excellent' | 'good' | 'poor' | 'bad';
+  getSessionInfo: () => { hasSessionKey: boolean, sessionId: string | null, lastKeyRotation: number, messageCounter: number };
+  clearQueue: () => boolean;
+}
+
+/**
  * Internal connection state for state machine pattern
  */
 enum ConnectionState {
@@ -246,12 +258,70 @@ export class AeroNyxSocket extends EventEmitter {
 
     // Add necessary browser lifecycle listeners
     if (this.isBrowserEnvironment) {
-      window.addEventListener('beforeunload', this.handleBeforeUnload);
-      window.addEventListener('online', this.handleNetworkChange);
-      window.addEventListener('offline', this.handleNetworkChange);
-      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+      window.addEventListener('beforeunload', this.handleBeforeUnload.bind(this));
+      window.addEventListener('online', this.handleNetworkChange.bind(this));
+      window.addEventListener('offline', this.handleNetworkChange.bind(this));
+      document.addEventListener('visibilitychange', this.handleVisibilityChange.bind(this));
     }
     console.log('[Socket] AeroNyx socket initialized.');
+  }
+
+  /**
+   * Handle browser closing event - attempt graceful shutdown
+   */
+  private handleBeforeUnload(): void {
+    console.debug('[Socket] Window beforeunload event detected');
+    if (this.isConnected()) {
+      try {
+        // Quickly send disconnect without waiting for promise to resolve
+        const disconnectMsg = formatDisconnectMessage(1000, "Browser page closed");
+        this.socket?.send(JSON.stringify(disconnectMsg));
+      } catch (e) {
+        // Ignore errors during page unload
+      }
+    }
+  }
+
+  /**
+   * Handle browser online/offline events
+   */
+  private handleNetworkChange(event: Event): void {
+    const isOnline = event.type === 'online';
+    console.debug(`[Socket] Network ${isOnline ? 'online' : 'offline'} event detected`);
+    
+    if (isOnline) {
+      // If reconnection is enabled and we're not already connected, try to reconnect
+      if (this.autoReconnect && 
+         (this.connectionState === ConnectionState.DISCONNECTED ||
+          this.connectionState === ConnectionState.RECONNECTING)) {
+        this.scheduleReconnect();
+      }
+    } else {
+      // If we're offline, check connection health which may trigger reconnection
+      if (this.connectionState === ConnectionState.CONNECTED) {
+        this.checkConnectionHealth();
+      }
+    }
+  }
+
+  /**
+   * Handle browser visibility change events
+   */
+  private handleVisibilityChange(): void {
+    const isVisible = document.visibilityState === 'visible';
+    console.debug(`[Socket] Document visibility changed: ${isVisible ? 'visible' : 'hidden'}`);
+    
+    if (isVisible) {
+      // When tab becomes visible, check connection health
+      if (this.connectionState === ConnectionState.CONNECTED) {
+        this.checkConnectionHealth();
+      } else if (this.autoReconnect && 
+                (this.connectionState === ConnectionState.DISCONNECTED || 
+                 this.connectionState === ConnectionState.RECONNECTING)) {
+        // Try reconnecting if not already connected
+        this.scheduleReconnect();
+      }
+    }
   }
 
   /**
@@ -284,6 +354,50 @@ export class AeroNyxSocket extends EventEmitter {
     console.debug('[Socket] Received worker message:', event.data?.type);
     // Process results from worker (e.g., decryption result, signature result)
     // This would involve matching request IDs and resolving promises or emitting events.
+  }
+
+  /**
+   * Create a standardized socket error object
+   */
+  private createSocketError(
+    type: SocketError['type'],
+    message: string,
+    code: string,
+    details?: string,
+    retry: boolean = true,
+    originalError?: any
+  ): SocketError {
+    return {
+      type,
+      message,
+      code,
+      details,
+      retry,
+      originalError
+    };
+  }
+
+  /**
+   * Securely wipe sensitive data from memory
+   * @param data The data to wipe
+   */
+  private secureWipe(data: Uint8Array | null): void {
+    if (!data) return;
+    
+    // Overwrite with random data
+    if (this.hasWebCrypto) {
+      window.crypto.getRandomValues(data);
+    } else {
+      // Fallback for environments without WebCrypto
+      for (let i = 0; i < data.length; i++) {
+        data[i] = Math.floor(Math.random() * 256);
+      }
+    }
+    
+    // Overwrite with zeros
+    for (let i = 0; i < data.length; i++) {
+      data[i] = 0;
+    }
   }
 
   // --- Public Methods ---
@@ -402,8 +516,8 @@ export class AeroNyxSocket extends EventEmitter {
   }
 
   /**
- * Cleans up all timers, socket listeners, and resets state variables.
- */
+   * Cleans up all timers, socket listeners, and resets state variables.
+   */
   private cleanupConnection(emitEvents: boolean = true): void {
     const wasConnected = this.connectionState === ConnectionState.CONNECTED;
     
@@ -443,7 +557,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.sessionKey = null; // Clear sensitive data
     this.serverPublicKey = null;
     this.sessionId = null;
-    clearConnectionTimeout;
+    this.messageCounter = 0;
     this.processedMessageIds.clear();
     this.processingQueue = false;
   
@@ -1064,7 +1178,7 @@ export class AeroNyxSocket extends EventEmitter {
       if (!decryptedSessionKey || decryptedSessionKey.length !== 32) throw new Error('Decrypted session key invalid');
       this.sessionKey = decryptedSessionKey;
       this.sessionId = message.session_id;
-      clearConnectionTimeout; // Reset counter for new session
+      this.messageCounter = 0; // Reset counter for new session
       this.processedMessageIds.clear(); // Clear replay cache for new session
       this.lastKeyRotation = Date.now(); // Mark initial key time
       console.log('[Socket] Session key decrypted and stored successfully.');
@@ -1104,75 +1218,44 @@ export class AeroNyxSocket extends EventEmitter {
     }
   }
 
-  // src/lib/socket.ts
-
-  /** Cleans up all timers, socket listeners, and resets state variables. */
-  private cleanupConnection(emitEvents: boolean = true): void {
-    const wasConnected = this.connectionState === ConnectionState.CONNECTED;
-    
-    console.debug('[Socket] Cleaning up connection resources...');
-    
-    // 1. Clear all timers
-    this.clearConnectionTimeout();
-    this.stopKeepAliveServices();
-    this.stopKeyRotationTimer();
-    
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
-    }
-    
-    // 2. Clean up socket
-    if (this.socket) {
-      // Remove all event listeners
-      this.socket.onopen = null;
-      this.socket.onclose = null;
-      this.socket.onmessage = null;
-      this.socket.onerror = null;
-      
-      // Close if still open
-      if (isSocketOpen(this.socket)) {
-        try {
-          this.socket.close(1000, "Client cleanup");
-        } catch (e) {
-          console.warn("[Socket] Error closing WebSocket during cleanup:", e);
-        }
+  /**
+   * Handles incoming encrypted data packets
+   * @param message The encrypted Data packet
+   */
+  private async handleDataPacket(message: any): Promise<void> {
+    try {
+      // Ensure we have a session key to decrypt the data
+      if (!this.sessionKey) {
+        throw new Error('Cannot decrypt Data packet: Session key is missing');
       }
+
+      // Process the encrypted data packet through our crypto utils
+      const decryptedData = await processEncryptedDataPacket(message, this.sessionKey);
       
-      this.socket = null;
+      // Validate counter to prevent replay attacks
+      if (message.counter !== undefined && typeof message.counter === 'number') {
+        // Additional counter-based replay protection could be implemented here
+      }
+
+      // Check for replay using message ID cache
+      if (this.shouldPreventReplay(decryptedData)) {
+        return; // Skip processing if message is a replay
+      }
+
+      // Process the decrypted data based on its type
+      await this.routeDecryptedMessage(decryptedData);
+      
+    } catch (error) {
+      console.error('[Socket] Error processing Data packet:', error);
+      this.emit('error', this.createSocketError(
+        'data',
+        'Failed to process encrypted data packet',
+        'DATA_PROCESS_ERROR',
+        error instanceof Error ? error.message : String(error),
+        false, // Decrypt failures generally not retryable (usually indicates protocol/key mismatch)
+        error
+      ));
     }
-    
-    // 3. Reset state variables
-    this.sessionKey = null; // Clear sensitive data
-    this.serverPublicKey = null;
-    this.sessionId = null;
-    this.messageCounter = 0;
-    this.processedMessageIds.clear();
-    this.processingQueue = false;
-  
-    // 4. Reset connection promise state if connection failed/closed prematurely
-    if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
-      this.rejectConnection(new Error("Connection closed during setup"));
-    } else {
-      // Clear promise handlers if disconnected after successful connection or during closing
-      this.connectionPromise = null;
-      this.connectionResolve = null;
-      this.connectionReject = null;
-    }
-  
-    // 5. Emit events if needed (usually only if previously connected)
-    if (emitEvents && wasConnected) {
-      console.log("[Socket] Emitting 'disconnected' status due to cleanup after being connected.");
-      this.emit('connectionStatus', 'disconnected');
-      this.emit('disconnected', 1000, "Client cleanup"); // Emit generic code
-    }
-  
-    // 6. Ensure final state is DISCONNECTED unless explicitly closing
-    if (this.connectionState !== ConnectionState.CLOSING) {
-      this.safeChangeState(ConnectionState.DISCONNECTED);
-    }
-  
-    console.debug('[Socket] Connection cleanup complete.');
   }
 
   // Add this missing method referenced above
@@ -1214,6 +1297,7 @@ export class AeroNyxSocket extends EventEmitter {
       this.emit('data', decryptedData); // Still emit for application layer
     }
   }
+  
   /**
    * WebRTC signaling handler
    */
@@ -1387,6 +1471,9 @@ export class AeroNyxSocket extends EventEmitter {
   /**
    * Handles server Disconnect messages.
    */
+  /**
+   * Handles server Disconnect messages.
+   */
   private handleDisconnect(message: DisconnectMessage): void {
     console.warn(`[Socket] Received Disconnect from server: Reason=${message.reason}, Message=${message.message}`);
     const previousState = this.connectionState;
@@ -1546,12 +1633,11 @@ export class AeroNyxSocket extends EventEmitter {
     this.startHeartbeat();
   }
 
-   private stopKeepAliveServices(): void {
-        this.stopPingInterval();
-        this.stopKeepAliveMonitoring();
-        this.stopHeartbeat(); // Includes clearing ping timeouts
-    }
-
+  private stopKeepAliveServices(): void {
+    this.stopPingInterval();
+    this.stopKeepAliveMonitoring();
+    this.stopHeartbeat(); // Includes clearing ping timeouts
+  }
 
   private startPingInterval(): void {
     this.stopPingInterval();
@@ -1623,28 +1709,28 @@ export class AeroNyxSocket extends EventEmitter {
     this.clearAllPingTimeouts(); // Also clear ping timeouts when stopping heartbeat
   }
 
-   /** Starts the session key rotation timer */
-    private startKeyRotationTimer(): void {
-        this.stopKeyRotationTimer();
-        console.debug(`[Socket] Starting session key rotation timer (Interval: ${KEY_ROTATION_INTERVAL_MS}ms)`);
-        this.keyRotationTimer = setInterval(() => {
-            if (this.connectionState === ConnectionState.CONNECTED) {
-                 console.log('[Socket] Triggering scheduled session key rotation.');
-                 this.rotateSessionKey().catch(err => {
-                     console.error('[Socket] Scheduled key rotation failed:', err);
-                 });
-            }
-        }, KEY_ROTATION_INTERVAL_MS);
-    }
+  /** Starts the session key rotation timer */
+  private startKeyRotationTimer(): void {
+    this.stopKeyRotationTimer();
+    console.debug(`[Socket] Starting session key rotation timer (Interval: ${KEY_ROTATION_INTERVAL_MS}ms)`);
+    this.keyRotationTimer = setInterval(() => {
+      if (this.connectionState === ConnectionState.CONNECTED) {
+          console.log('[Socket] Triggering scheduled session key rotation.');
+          this.rotateSessionKey().catch(err => {
+              console.error('[Socket] Scheduled key rotation failed:', err);
+          });
+      }
+    }, KEY_ROTATION_INTERVAL_MS);
+  }
 
-    /** Stops the key rotation timer */
-    private stopKeyRotationTimer(): void {
-        if (this.keyRotationTimer) {
-            clearInterval(this.keyRotationTimer);
-            this.keyRotationTimer = null;
-            console.debug('[Socket] Stopped key rotation timer.');
-        }
+  /** Stops the key rotation timer */
+  private stopKeyRotationTimer(): void {
+    if (this.keyRotationTimer) {
+      clearInterval(this.keyRotationTimer);
+      this.keyRotationTimer = null;
+      console.debug('[Socket] Stopped key rotation timer.');
     }
+  }
 
   private clearAllPingTimeouts(): void {
     if (this.pingTimeouts.size > 0) {
@@ -2044,3 +2130,4 @@ export class AeroNyxSocket extends EventEmitter {
       }
     }, CONNECTION_TIMEOUT_MS);
   }
+}
