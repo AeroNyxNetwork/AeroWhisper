@@ -77,7 +77,7 @@ export enum SendResult {
 /**
  * Connection status types for external consumers
  */
-export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting';
+export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'p2p-connecting';
 
 /**
  * Socket error types
