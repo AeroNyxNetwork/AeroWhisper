@@ -1,73 +1,11 @@
 // src/lib/webrtc.ts
-
-/**
-* AeroNyx Client Development Guidelines
-* =====================================
-* 
-* Encryption Algorithm Requirements
-* ---------------------------------
-* When implementing the AeroNyx client, pay close attention to encryption algorithm naming.
-* 
-* Server expects: aes256gcm
-* NOT: aes-gcm, AES-GCM, or other variations
-* 
-* The server recognizes:
-* - `aes256gcm` (preferred)
-* - `aesgcm`
-* - `aes`
-* 
-* For consistency, always use `aes256gcm` in all client code.
-* 
-* Implementation Examples
-* ----------------------
-* 
-* 1. Authentication Request:
-* 
-* ```
-* const authRequest = {
-*   type: "Auth",
-*   public_key: publicKey,
-*   version: "1.0",
-*   features: ["aes256gcm", "chacha20poly1305", "webrtc"],
-*   encryption_algorithm: "aes256gcm", // Correct format
-*   nonce: generateRandomNonce()
-* };
-* ```
-* 
-* 2. Data Packet Format:
-* 
-* ```
-* const packet = {
-*   type: "Data",
-*   encrypted: Array.from(encrypted),
-*   nonce: Array.from(nonce),
-*   counter: counter,
-*   encryption_algorithm: "aes256gcm" // Must include correct algorithm name
-* };
-* ```
-* 
-* 3. Handling Server Response:
-* 
-* ```
-* function handleIpAssign(response) {
-*   const { encryption_algorithm } = response;
-*   // Store exactly as received from server
-*   sessionStore.setEncryptionAlgorithm(encryption_algorithm);
-* }
-* ```
-* 
-* Common Issues
-* ------------
-* 
-* 1. Using incorrect algorithm name format (`aes-gcm` vs `aes256gcm`)
-* 2. Not including algorithm field in data packets
-* 3. Not preserving algorithm name from server response
-* 4. Inconsistent algorithm naming across client codebase
-*/
 import { EventEmitter } from 'events';
-import { AeroNyxSocket } from './socket';
-import * as bs58 from 'bs58';
-import { encryptWithAesGcm, decryptWithAesGcm, generateNonce } from '../utils/cryptoUtils';
+import { AeroNyxSocket, SendResult } from './socket';
+import {
+    encryptWithAesGcm,
+    decryptWithAesGcm,
+    generateNonce
+} from '../utils/cryptoUtils';
 
 /**
  * WebRTC connection states for type safety
@@ -77,20 +15,30 @@ export type ConnectionState = 'new' | 'connecting' | 'connected' | 'disconnected
 /**
  * Event types for the WebRTC manager
  */
-export type WebRTCEvent = 
-  | 'connectionStateChanged' 
-  | 'message' 
-  | 'error' 
-  | 'iceCandidate' 
-  | 'dataChannelOpen' 
+export type WebRTCEvent =
+  | 'connectionStateChanged'
+  | 'message'
+  | 'error'
+  | 'iceCandidate'
+  | 'dataChannelOpen'
   | 'dataChannelClose'
   | 'negotiationNeeded';
+
+/**
+ * WebRTC error types with structured information
+ */
+export interface WebRTCError {
+  type: 'connection' | 'signaling' | 'dataChannel' | 'decryption' | 'parsing' | 'negotiation';
+  message: string;
+  details?: any;
+  recoverable: boolean;
+}
 
 /**
  * Configuration options for WebRTC connections
  */
 export interface WebRTCConfig {
-  iceServers: RTCIceServer[];
+  iceServers?: RTCIceServer[];
   iceCandidatePoolSize?: number;
   bundlePolicy?: RTCBundlePolicy;
   iceTransportPolicy?: RTCIceTransportPolicy;
@@ -98,53 +46,81 @@ export interface WebRTCConfig {
   reconnectAttempts?: number;
   reconnectInterval?: number;
   dataChannelOptions?: RTCDataChannelInit;
+  bufferThreshold?: number; // Threshold for data channel buffer
+  enableEncryption?: boolean; // Flag to force encryption
 }
 
-// Default configuration for WebRTC connections
+// Default configuration with updated STUN/TURN servers
 const DEFAULT_CONFIG: WebRTCConfig = {
   iceServers: [
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    // Add fallback STUN servers
+    { urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
     { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:global.stun.twilio.com:3478' },
-    // You could add TURN servers here for better connectivity through firewalls
-    // Example: { urls: 'turn:your-turn-server.com', username: 'username', credential: 'password' }
+    // TURN servers would be added here for NAT traversal
   ],
   iceCandidatePoolSize: 10,
   bundlePolicy: 'max-bundle',
-  reconnectAttempts: 5,
-  reconnectInterval: 2000,
+  sdpSemantics: 'unified-plan',
+  reconnectAttempts: 3,
+  reconnectInterval: 3000,
   dataChannelOptions: {
-    ordered: true,       // Guarantee message order
-    maxRetransmits: 3,   // Retry failed messages 3 times
-  }
+    ordered: true,
+    maxRetransmits: 5,
+    negotiated: false,
+  },
+  bufferThreshold: 16 * 1024 * 1024, // 16MB buffer threshold
+  enableEncryption: true // Enable encryption by default
 };
 
 /**
- * WebRTCManager - Manages peer-to-peer connections with advanced error handling
- * and connection state management
+ * Represents the structure of signaling messages sent via the WebSocket
+ */
+interface WebRTCSignal {
+    type: 'offer' | 'answer' | 'ice-candidate';
+    sdp?: string;
+    candidate?: RTCIceCandidateInit;
+    timestamp?: number; // Timestamp to help with signal ordering
+}
+
+/**
+ * Message envelope for P2P encrypted communication
+ */
+interface EncryptedMessageEnvelope {
+  type: 'encrypted';
+  nonce: number[];
+  encrypted: number[];
+  counter: number;
+  timestamp: number; // For replay protection
+}
+
+/**
+ * WebRTCManager - Manages peer-to-peer connections using a provided AeroNyxSocket for signaling.
  */
 export class WebRTCManager extends EventEmitter {
   private peerConnection: RTCPeerConnection | null = null;
   private dataChannel: RTCDataChannel | null = null;
-  private sessionKey: Uint8Array | null = null;
+  private p2pEncryptionKey: Uint8Array | null = null;
   private socket: AeroNyxSocket | null = null;
+  private localPeerId: string | null = null;
   private remotePeerId: string | null = null;
   private connectionState: ConnectionState = 'new';
   private config: WebRTCConfig;
   private reconnectAttempts: number = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private isInitiator: boolean = false;
-  private pendingCandidates: RTCIceCandidate[] = [];
-  private channelLabel: string = 'chat';
+  private pendingCandidates: Set<string> = new Set(); // Use Set for faster lookups and deduplication
+  private pendingCandidateObjects: RTCIceCandidateInit[] = [];
+  private channelLabel: string = 'aero-p2p-chat';
   private isReconnecting: boolean = false;
-  private queuedMessages: Array<{ data: any, attempts: number }> = [];
-  private maxQueueSize: number = 100;
   private remoteDescriptionSet: boolean = false;
-  private processedMessageIds: Set<string> = new Set(); // For preventing replay attacks
-  private messageCounter: number = 0; // Message counter for replay protection
-  
+  private p2pMessageCounter: number = 0;
+  private processedP2PMessages: Map<number, number> = new Map(); // For replay protection: counter -> timestamp
+  private stateTransitionLock: Promise<void> = Promise.resolve(); // Prevent race conditions in state changes
+  private lastSignalTimestamp: number = 0; // Track timing of signals to prevent reordering
+  private messageQueue: Array<{message: any, timestamp: number}> = []; // Queue for messages when channel not ready
+  private readonly MAX_PROCESSED_MESSAGES = 100; // Maximum number of processed message counters to keep
+  private readonly MESSAGE_EXPIRY_MS = 60 * 1000; // Expire message replay protection after 1 minute
+
   /**
    * Create a new WebRTC manager
    * @param config - Optional configuration for WebRTC
@@ -152,419 +128,536 @@ export class WebRTCManager extends EventEmitter {
   constructor(config?: Partial<WebRTCConfig>) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
-    
-    // Set max listeners to avoid Node.js warning
     this.setMaxListeners(20);
+    console.log('[WebRTC] Manager created.');
   }
-  
+
   /**
-   * Initialize with the signaling server (AeroNyx socket)
-   * @param socket - The signaling socket
-   * @param sessionKey - Encryption key for the session
+   * Initialize with the signaling socket and peer IDs.
+   * @param socket - The signaling socket instance (AeroNyxSocket).
+   * @param localPeerId - The public key or unique ID of the local user.
+   * @param p2pKey - The pre-negotiated 32-byte key for encrypting the data channel.
    */
-  initialize(socket: AeroNyxSocket, sessionKey: Uint8Array): void {
-    this.socket = socket;
-    this.sessionKey = sessionKey;
-    
-    // Clear any existing state
-    this.reset();
-    
-    // Handle incoming signaling messages
-    socket.on('data', (data: any) => {
-      if (data.type === 'webrtc-signal') {
-        this.handleSignalingMessage(data.signal, data.sender);
-      }
-    });
-    
-    // Handle WebRTC signaling events
-    socket.on('webrtcSignal', (data: any) => {
-      if (data.recipient === this.remotePeerId || !this.remotePeerId) {
-        this.handleSignalingMessage(data.signal, data.sender);
-      }
-    });
-    
-    // Gracefully handle socket disconnects
-    socket.on('disconnected', () => {
-      this.handleSocketDisconnect();
-    });
-    
-    this.setConnectionState('new');
-    console.log('[WebRTC] Initialized with signaling server');
-  }
-  
-  /**
-   * Handle socket disconnection
-   */
-  private handleSocketDisconnect(): void {
-    console.log('[WebRTC] Signaling socket disconnected');
-    
-    if (this.connectionState === 'connected') {
-      // If we're connected via WebRTC, we can continue without signaling
-      console.log('[WebRTC] P2P connection remains active without signaling');
-    } else if (this.connectionState === 'connecting') {
-      // If connecting, signal that connection attempt may fail
-      this.emit('error', {
-        type: 'signaling',
-        message: 'Signaling server disconnected during connection setup',
-        recoverable: true
-      });
+  initialize(socket: AeroNyxSocket, localPeerId: string, p2pKey: Uint8Array | null): void {
+    if (!socket || !localPeerId) {
+      throw new Error('WebRTC manager requires a valid socket instance and localPeerId');
     }
+
+    // Validate P2P encryption key
+    if (this.config.enableEncryption && (!p2pKey || p2pKey.length !== 32)) {
+      console.warn('[WebRTC] Invalid P2P key provided when encryption is enabled. Secure communication not possible.');
+      if (p2pKey && p2pKey.length !== 32) {
+        // Further warning for wrong size key which is a specific security risk
+        console.error('[WebRTC] P2P key has invalid length. Must be exactly 32 bytes.');
+      }
+      this.p2pEncryptionKey = null;
+    } else {
+      this.p2pEncryptionKey = p2pKey;
+      console.log(`[WebRTC] Initialized with P2P encryption key: ${p2pKey ? 'Yes' : 'No'}`);
+    }
+
+    this.reset(); // Clear previous state
+    this.socket = socket;
+    this.localPeerId = localPeerId;
+
+    // Remove existing listeners to prevent duplicates
+    socket.off('webrtcSignal', this.handleSignalingMessage);
+    socket.off('disconnected', this.handleSocketDisconnect);
+    
+    // Add new listeners
+    socket.on('webrtcSignal', this.handleSignalingMessage);
+    socket.on('disconnected', this.handleSocketDisconnect);
+
+    this.setConnectionState('new');
+    console.log('[WebRTC] Initialized and listening for signals.');
   }
-  
+
   /**
-   * Reset the connection state
+   * Handles the disconnection of the underlying signaling socket.
+   */
+  private handleSocketDisconnect = (): void => {
+    console.warn('[WebRTC] Signaling socket disconnected.');
+    
+    // Only trigger a state change if we're in a connecting state
+    if (this.connectionState === 'connecting') {
+      this.emitError({
+        type: 'signaling',
+        message: 'Signaling server disconnected during P2P connection setup.',
+        recoverable: false
+      });
+      
+      this.setConnectionState('failed');
+    }
+    
+    // If we're already connected via P2P, we might survive a temporary signaling disconnection
+    // Don't change state in that case, but log the condition
+    if (this.connectionState === 'connected' && this.isDataChannelOpen()) {
+      console.log('[WebRTC] P2P connection remains active despite signaling disconnection.');
+    }
+  };
+
+  /**
+   * Emits a standardized error event
+   */
+  private emitError(error: WebRTCError): void {
+    console.error(`[WebRTC] ${error.type} error: ${error.message}`, 
+      error.details ? (typeof error.details === 'object' ? JSON.stringify(error.details) : error.details) : '');
+    this.emit('error', error);
+  }
+
+  /**
+   * Resets the WebRTC connection state and resources.
    */
   private reset(): void {
-    if (this.dataChannel) {
-      try {
-        this.dataChannel.close();
-      } catch (e) {
-        // Ignore errors closing data channel
-      }
-      this.dataChannel = null;
-    }
-    
-    if (this.peerConnection) {
-      try {
-        this.peerConnection.close();
-      } catch (e) {
-        // Ignore errors closing peer connection
-      }
-      this.peerConnection = null;
-    }
-    
+    console.debug('[WebRTC] Resetting connection state.');
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     
+    this.cleanupPeerConnection();
+    
     this.reconnectAttempts = 0;
     this.isReconnecting = false;
-    this.pendingCandidates = [];
+    this.pendingCandidates.clear();
+    this.pendingCandidateObjects = [];
     this.remoteDescriptionSet = false;
+    this.isInitiator = false;
+    this.remotePeerId = null;
+    this.p2pMessageCounter = 0;
+    this.processedP2PMessages.clear();
+    this.lastSignalTimestamp = 0;
+    this.messageQueue = [];
     this.setConnectionState('new');
   }
-  
+
   /**
-   * Create a new peer connection to initiate the connection
-   * @param peerId - ID of the peer to connect to
+   * Initiates a P2P connection to a remote peer.
+   * @param remotePeerId - ID of the peer to connect to.
    */
-  async connectToPeer(peerId: string): Promise<void> {
-    if (!this.socket || !this.sessionKey) {
-      throw new Error('WebRTC manager not initialized. Call initialize() first');
+  async connectToPeer(remotePeerId: string): Promise<void> {
+    if (!this.socket || !this.localPeerId) {
+      throw new Error('WebRTC manager not initialized.');
     }
     
-    // Clean up any existing connections
-    this.cleanupConnection();
-    
-    this.remotePeerId = peerId;
+    // Reset if in an incompatible state
+    if (this.connectionState !== 'new' && 
+        this.connectionState !== 'disconnected' && 
+        this.connectionState !== 'closed') {
+      console.warn(`[WebRTC] connectToPeer called in invalid state: ${this.connectionState}. Resetting first.`);
+      this.reset();
+    }
+
+    console.log(`[WebRTC] Initiating connection to peer: ${remotePeerId}`);
+    this.remotePeerId = remotePeerId;
     this.isInitiator = true;
-    this.setConnectionState('connecting');
-    
+    await this.setConnectionState('connecting');
+
     try {
-      // Create RTCPeerConnection
+      // Create and configure peer connection
       this.peerConnection = new RTCPeerConnection({
         iceServers: this.config.iceServers,
         iceCandidatePoolSize: this.config.iceCandidatePoolSize,
         bundlePolicy: this.config.bundlePolicy,
+        iceTransportPolicy: this.config.iceTransportPolicy
       });
-      
+
       this.setupPeerConnectionHandlers();
-      
-      // Create data channel
+
+      // Create the data channel as the initiator
+      console.debug('[WebRTC] Creating data channel:', this.channelLabel);
       this.dataChannel = this.peerConnection.createDataChannel(
-        this.channelLabel, 
+        this.channelLabel,
         this.config.dataChannelOptions
       );
-      
-      this.setupDataChannel();
-      
+      this.setupDataChannelHandlers();
+
       // Create and send offer
+      console.debug('[WebRTC] Creating offer...');
       const offer = await this.peerConnection.createOffer();
       await this.peerConnection.setLocalDescription(offer);
-      
-      this.sendSignal(peerId, {
+      console.debug('[WebRTC] Local description (offer) set.');
+
+      // Send the offer via the signaling socket
+      await this.sendSignal(this.remotePeerId, {
         type: 'offer',
         sdp: offer.sdp,
+        timestamp: Date.now()
       });
-      
-      // Log success
-      console.log(`[WebRTC] Connection attempt initiated to peer: ${peerId}`);
+      console.log(`[WebRTC] Offer sent to peer: ${this.remotePeerId}`);
+
     } catch (error) {
-      this.setConnectionState('failed');
-      console.error('[WebRTC] Error creating connection:', error);
+      console.error('[WebRTC] Error initiating connection:', error);
+      await this.setConnectionState('failed');
       
-      this.emit('error', {
+      this.emitError({
         type: 'connection',
-        message: 'Failed to create peer connection',
+        message: 'Failed to create P2P connection offer',
         details: error instanceof Error ? error.message : String(error),
         recoverable: true
       });
       
+      this.cleanupPeerConnection();
       throw error;
     }
   }
-  
+
   /**
-   * Set up event handlers for peer connection
+   * Sets up event handlers for the RTCPeerConnection.
    */
   private setupPeerConnectionHandlers(): void {
     if (!this.peerConnection) return;
-    
-    // Handle connection state changes
+
     this.peerConnection.onconnectionstatechange = () => {
-      if (this.peerConnection) {
-        this.setConnectionState(this.peerConnection.connectionState as ConnectionState);
-        
-        // If connection fails, retry if appropriate
-        if (this.peerConnection.connectionState === 'failed' || 
-            this.peerConnection.connectionState === 'disconnected') {
-          this.handleConnectionFailure();
-        }
+      if (!this.peerConnection) return;
+      
+      const newState = this.peerConnection.connectionState as ConnectionState;
+      console.log(`[WebRTC] PeerConnection state changed to: ${newState}`);
+      this.setConnectionState(newState);
+
+      if (newState === 'failed' || newState === 'disconnected') {
+        this.handleConnectionFailure();
+      } else if (newState === 'connected') {
+        this.reconnectAttempts = 0;
+        this.isReconnecting = false;
+        this.processQueuedMessages();
       }
     };
-    
-    // Handle ICE connection state changes for more detailed connection monitoring
+
     this.peerConnection.oniceconnectionstatechange = () => {
-      if (this.peerConnection) {
-        console.log(`[WebRTC] ICE connection state: ${this.peerConnection.iceConnectionState}`);
-        
-        if (this.peerConnection.iceConnectionState === 'failed') {
-          // ICE failures are more specific than general connection failures
-          this.handleIceFailure();
-        } else if (this.peerConnection.iceConnectionState === 'disconnected') {
-          // Connection may recover from disconnected state
-          console.log('[WebRTC] ICE disconnected - may recover automatically');
-        }
+      if (!this.peerConnection) return;
+      
+      console.log(`[WebRTC] ICE connection state: ${this.peerConnection.iceConnectionState}`);
+      if (this.peerConnection.iceConnectionState === 'failed') {
+        this.handleIceFailure();
       }
     };
-    
-    // Handle ICE gathering state changes for debugging
+
     this.peerConnection.onicegatheringstatechange = () => {
-      if (this.peerConnection) {
-        console.log(`[WebRTC] ICE gathering state: ${this.peerConnection.iceGatheringState}`);
-      }
+      if (!this.peerConnection) return;
+      console.log(`[WebRTC] ICE gathering state: ${this.peerConnection.iceGatheringState}`);
     };
-    
-    // Handle ICE candidates
+
     this.peerConnection.onicecandidate = (event) => {
-      if (event.candidate && this.socket && this.remotePeerId) {
-        try {
-          this.sendSignal(this.remotePeerId, {
-            type: 'ice-candidate',
-            candidate: event.candidate,
-          });
-          
-          this.emit('iceCandidate', event.candidate);
-        } catch (error) {
-          console.error('[WebRTC] Error sending ICE candidate:', error);
-        }
-      } else if (event.candidate === null) {
-        console.log('[WebRTC] ICE candidate gathering complete');
+      if (event.candidate && this.remotePeerId) {
+        console.debug('[WebRTC] Gathered ICE candidate:', event.candidate.type, event.candidate.sdpMLineIndex);
+        
+        // Send candidate to remote peer
+        this.sendSignal(this.remotePeerId, {
+          type: 'ice-candidate',
+          candidate: event.candidate.toJSON(),
+          timestamp: Date.now()
+        }).catch(err => {
+          console.error("[WebRTC] Failed to send ICE candidate signal:", err);
+        });
+        
+        this.emit('iceCandidate', event.candidate);
+      } else if (!event.candidate) {
+        console.log('[WebRTC] ICE candidate gathering complete.');
       }
     };
-    
-    // Handle incoming data channels
+
     this.peerConnection.ondatachannel = (event) => {
-      console.log('[WebRTC] Received data channel:', event.channel.label);
-      this.dataChannel = event.channel;
-      this.setupDataChannel();
+      console.log(`[WebRTC] Received remote data channel: ${event.channel.label}`);
+      
+      if (event.channel.label === this.channelLabel) {
+        this.dataChannel = event.channel;
+        this.setupDataChannelHandlers();
+      } else {
+        console.warn(`[WebRTC] Received data channel with unexpected label: ${event.channel.label}`);
+        // Consider security implications of unexpected channels - close them?
+        try { event.channel.close(); } catch (e) {}
+      }
     };
-    
-    // Handle negotiation needed events
+
     this.peerConnection.onnegotiationneeded = async () => {
-      console.log('[WebRTC] Negotiation needed');
+      console.log('[WebRTC] Negotiation needed.');
       this.emit('negotiationNeeded');
       
-      // If we're the initiator, create a new offer
+      // Only initiator handles renegotiation to prevent offer collisions
       if (this.isInitiator && this.peerConnection && this.remotePeerId) {
-        try {
-          const offer = await this.peerConnection.createOffer();
-          await this.peerConnection.setLocalDescription(offer);
+        // Check for stable state to avoid triggering during existing negotiation
+        if (this.peerConnection.signalingState === 'stable') {
+          console.log('[WebRTC] Initiator creating new offer due to negotiation needed.');
           
-          this.sendSignal(this.remotePeerId, {
-            type: 'offer',
-            sdp: offer.sdp,
-          });
-        } catch (error) {
-          console.error('[WebRTC] Error during renegotiation:', error);
-          this.emit('error', {
-            type: 'negotiation',
-            message: 'Failed to create offer during renegotiation',
-            details: error instanceof Error ? error.message : String(error),
-            recoverable: true
-          });
+          try {
+            const offer = await this.peerConnection.createOffer();
+            await this.peerConnection.setLocalDescription(offer);
+            await this.sendSignal(this.remotePeerId, { 
+              type: 'offer', 
+              sdp: offer.sdp,
+              timestamp: Date.now()
+            });
+          } catch (error) {
+            console.error('[WebRTC] Error during renegotiation:', error);
+            this.emitError({
+              type: 'negotiation',
+              message: 'Renegotiation failed',
+              details: error,
+              recoverable: true
+            });
+          }
+        } else {
+          console.warn(`[WebRTC] Negotiation needed, but signaling state is not stable: ${this.peerConnection.signalingState}`);
         }
       }
     };
   }
-  
+
   /**
-   * Set up the data channel event handlers
+   * Sets up event handlers for the RTCDataChannel.
    */
-  private setupDataChannel(): void {
+  private setupDataChannelHandlers(): void {
     if (!this.dataChannel) return;
-    
-    // When data channel opens
+
     this.dataChannel.onopen = () => {
-      console.log('[WebRTC] Data channel opened');
-      this.setConnectionState('connected');
-      this.emit('dataChannelOpen');
+      console.log(`[WebRTC] Data channel '${this.channelLabel}' opened.`);
       
-      // Send any queued messages
-      this.sendQueuedMessages();
-    };
-    
-    // When data channel closes
-    this.dataChannel.onclose = () => {
-      console.log('[WebRTC] Data channel closed');
-      
-      // Only trigger disconnected state if we're actually connected
-      // This prevents double state changes with the connection state handler
-      if (this.connectionState === 'connected') {
-        this.setConnectionState('disconnected');
+      if (this.connectionState !== 'connected') {
+        this.setConnectionState('connected');
       }
       
+      this.emit('dataChannelOpen');
+      this.processQueuedMessages();
+    };
+
+    this.dataChannel.onclose = () => {
+      console.warn(`[WebRTC] Data channel '${this.channelLabel}' closed.`);
       this.emit('dataChannelClose');
       
-      // Try to reopen the data channel if appropriate
-      this.handleDataChannelClose();
+      // Try to reopen data channel if peer connection is still alive
+      if (this.peerConnection && 
+          this.peerConnection.connectionState === 'connected' && 
+          this.isInitiator) {
+        console.log('[WebRTC] Attempting to reopen data channel...');
+        try {
+          this.dataChannel = this.peerConnection.createDataChannel(
+            this.channelLabel,
+            this.config.dataChannelOptions
+          );
+          this.setupDataChannelHandlers();
+        } catch (error) {
+          console.error('[WebRTC] Failed to reopen data channel:', error);
+        }
+      }
     };
-    
-    // Handle data channel errors
-    this.dataChannel.onerror = (error) => {
-      console.error('[WebRTC] Data channel error:', error);
-      this.emit('error', {
+
+    this.dataChannel.onerror = (event) => {
+      console.error(`[WebRTC] Data channel '${this.channelLabel}' error:`, event);
+      
+      this.emitError({
         type: 'dataChannel',
-        message: 'Data channel encountered an error',
-        details: error.toString(),
+        message: 'Data channel error occurred',
+        details: event.toString(),
         recoverable: true
       });
     };
-    
-    // Handle incoming messages
-    this.dataChannel.onmessage = async (event) => {
+
+    this.dataChannel.onmessage = async (event: MessageEvent) => {
+      console.debug('[WebRTC] Received raw message on data channel.');
+      
       try {
-        // Parse the incoming message
-        const message = JSON.parse(event.data);
-        
-        // Process with our aes256gcm handler
-        if (this.sessionKey) {
-          const decryptedData = await this.processEncryptedMessage(message, this.sessionKey);
-          if (decryptedData) {
-            this.processDecryptedMessage(decryptedData);
+        const receivedData = JSON.parse(event.data);
+
+        // Process encrypted messages
+        if (this.p2pEncryptionKey) {
+          if (receivedData.type === 'encrypted' && 
+              receivedData.nonce && 
+              receivedData.encrypted && 
+              typeof receivedData.counter === 'number') {
+            
+            // Check for replay attacks
+            if (this.processedP2PMessages.has(receivedData.counter)) {
+              console.warn(`[WebRTC] Rejected replayed P2P message with counter: ${receivedData.counter}`);
+              return;
+            }
+            
+            try {
+              console.debug('[WebRTC] Decrypting P2P message...');
+              const nonce = new Uint8Array(receivedData.nonce);
+              const ciphertext = new Uint8Array(receivedData.encrypted);
+              
+              const decryptedPayload = await decryptWithAesGcm(
+                ciphertext, 
+                nonce, 
+                this.p2pEncryptionKey, 
+                'string'
+              ) as string;
+              
+              const actualMessage = JSON.parse(decryptedPayload);
+              
+              // Store counter for replay protection
+              this.processedP2PMessages.set(receivedData.counter, Date.now());
+              this.cleanupProcessedMessages();
+              
+              console.debug('[WebRTC] P2P message decrypted successfully.');
+              this.emit('message', actualMessage);
+            } catch (decryptionError) {
+              console.error('[WebRTC] Failed to decrypt P2P message:', decryptionError);
+              this.emitError({
+                type: 'decryption',
+                message: 'Failed to decrypt P2P message',
+                details: decryptionError,
+                recoverable: true
+              });
+            }
+          } else {
+            console.warn('[WebRTC] Received unencrypted/malformed message when encryption was expected.');
           }
         } else {
-          console.warn('[WebRTC] Cannot decrypt message: No session key available');
+          // If not using encryption, emit raw data
+          console.debug('[WebRTC] Emitting unencrypted P2P message.');
+          this.emit('message', receivedData);
         }
       } catch (error) {
-        console.error('[WebRTC] Error processing message:', error);
-        this.emit('error', {
+        console.error('[WebRTC] Error processing data channel message:', error);
+        this.emitError({
           type: 'parsing',
-          message: 'Failed to parse received message',
-          details: error instanceof Error ? error.message : String(error),
+          message: 'Failed to parse P2P message',
+          details: error,
           recoverable: true
         });
       }
     };
-    
-    // Buffer amount low event - for flow control
-    this.dataChannel.onbufferedamountlow = () => {
-      // Resume sending if we were paused due to buffer full
-      this.sendQueuedMessages();
-    };
   }
-  
+
   /**
-   * Handle the closure of a data channel
+   * Process any queued messages when data channel opens
    */
-  private handleDataChannelClose(): void {
-    console.log('[WebRTC] Data channel closed, attempting to reestablish if appropriate');
+  private async processQueuedMessages(): Promise<void> {
+    if (!this.isDataChannelOpen() || this.messageQueue.length === 0) return;
     
-    // Only attempt to reestablish if we're the initiator and still in a connected state
-    if (this.isInitiator && this.peerConnection && this.connectionState === 'connected') {
+    console.log(`[WebRTC] Processing ${this.messageQueue.length} queued messages`);
+    
+    // Use a copy and clear the original queue to prevent race conditions
+    const queueCopy = [...this.messageQueue];
+    this.messageQueue = [];
+    
+    // Sort by timestamp to maintain order
+    queueCopy.sort((a, b) => a.timestamp - b.timestamp);
+    
+    for (const item of queueCopy) {
       try {
-        // Create a new data channel
-        this.dataChannel = this.peerConnection.createDataChannel(
-          this.channelLabel, 
-          this.config.dataChannelOptions
-        );
-        
-        console.log('[WebRTC] Recreated data channel after closure');
-        this.setupDataChannel();
+        await this.sendMessage(item.message);
       } catch (error) {
-        console.error('[WebRTC] Failed to recreate data channel:', error);
-        
-        // If we can't recreate the data channel, mark the connection as having an issue
-        if (this.connectionState === 'connected') {
-          this.setConnectionState('disconnected');
-          this.handleConnectionFailure();
-        }
+        console.error('[WebRTC] Failed to send queued message:', error);
       }
-    } else if (this.connectionState === 'connected') {
-      // If we're not the initiator but still connected, wait for the other peer to recreate the channel
-      console.log('[WebRTC] Waiting for initiator to recreate data channel');
     }
+    
+    console.log(`[WebRTC] Finished processing queued messages`);
   }
-  
+
   /**
-   * Process decrypted message
-   * @param data The parsed message
+   * Clean up old processed message counters to prevent memory leaks
    */
-  private processDecryptedMessage(data: any): void {
-    // Check for message ID to prevent replay attacks
-    if (data.id && this.processedMessageIds.has(data.id)) {
-      console.warn('[WebRTC] Detected message replay attempt, ignoring');
-      return;
+  private cleanupProcessedMessages(): void {
+    if (this.processedP2PMessages.size <= this.MAX_PROCESSED_MESSAGES) return;
+    
+    const now = Date.now();
+    const expiredEntries: number[] = [];
+    
+    // Find expired entries
+    this.processedP2PMessages.forEach((timestamp, counter) => {
+      if (now - timestamp > this.MESSAGE_EXPIRY_MS) {
+        expiredEntries.push(counter);
+      }
+    });
+    
+    // Remove expired entries
+    for (const counter of expiredEntries) {
+      this.processedP2PMessages.delete(counter);
     }
     
-    // Store message ID to prevent replay attacks
-    if (data.id) {
-      this.processedMessageIds.add(data.id);
+    // If still too many entries, remove oldest
+    if (this.processedP2PMessages.size > this.MAX_PROCESSED_MESSAGES) {
+      const entries = Array.from(this.processedP2PMessages.entries())
+        .sort((a, b) => a[1] - b[1]);
       
-      // Limit the size of the set
-      if (this.processedMessageIds.size > 10000) {
-        const oldestId = this.processedMessageIds.values().next().value;
-        this.processedMessageIds.delete(oldestId);
+      const overflow = this.processedP2PMessages.size - this.MAX_PROCESSED_MESSAGES;
+      const toRemove = entries.slice(0, overflow).map(entry => entry[0]);
+      
+      for (const counter of toRemove) {
+        this.processedP2PMessages.delete(counter);
       }
     }
-    
-    // Emit event based on message type
-    if (data.type === 'message') {
-      this.emit('message', {
-        id: data.id || `p2p-msg-${Date.now()}`,
-        content: data.content,
-        senderId: data.senderId,
-        senderName: data.senderName || 'Unknown',
-        timestamp: data.timestamp || new Date().toISOString(),
-        isEncrypted: true,
-        metaData: {
-          encryptionType: 'P2P',
-          isP2P: true
+  }
+
+  /**
+   * Handles connection failures (disconnected or failed states).
+   */
+  private handleConnectionFailure(): void {
+    if (this.isReconnecting) return;
+
+    // Check if reconnection is configured and attempts remain
+    if (this.config.reconnectAttempts && 
+        this.reconnectAttempts < this.config.reconnectAttempts) {
+      
+      this.isReconnecting = true;
+      this.reconnectAttempts++;
+      const delay = this.config.reconnectInterval || 3000;
+      
+      console.warn(`[WebRTC] P2P connection failed/disconnected. Attempting reconnect ${this.reconnectAttempts}/${this.config.reconnectAttempts} in ${delay}ms...`);
+      
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      
+      this.reconnectTimer = setTimeout(() => {
+        this.isReconnecting = false;
+        
+        if (this.remotePeerId) {
+          console.log(`[WebRTC] Executing reconnect attempt ${this.reconnectAttempts}...`);
+          
+          this.connectToPeer(this.remotePeerId).catch(err => {
+            console.error(`[WebRTC] Reconnect attempt ${this.reconnectAttempts} failed:`, err);
+            
+            // Schedule next attempt if possible
+            if (this.reconnectAttempts < (this.config.reconnectAttempts ?? 0)) {
+              this.handleConnectionFailure();
+            } else {
+              this.setConnectionState('failed');
+            }
+          });
+        } else {
+          console.error("[WebRTC] Cannot reconnect: remotePeerId is null.");
+          this.setConnectionState('failed');
         }
-      });
+      }, delay);
     } else {
-      // For other types, just forward the data
-      this.emit('data', data);
+      console.error('[WebRTC] P2P connection failed. Max reconnect attempts reached or reconnection disabled.');
+      this.setConnectionState('failed');
+      this.cleanupPeerConnection();
     }
   }
-  
+
   /**
-   * Handle ICE connection failures
+   * Handles ICE connection failures specifically. Attempts ICE restart.
    */
   private handleIceFailure(): void {
-    console.log('[WebRTC] ICE connection failed, attempting recovery');
+    console.warn('[WebRTC] ICE connection failed. Attempting ICE restart...');
     
-    // ICE failures can sometimes be recovered by restarting ICE
     if (this.peerConnection && this.remotePeerId) {
       try {
-        // Check if restartIce is supported
-        if (this.peerConnection.restartIce) {
-          this.peerConnection.restartIce();
-          console.log('[WebRTC] ICE restart initiated');
-        } else {
-          // If restartIce is not supported, create a new offer with ICE restart flag
-          this.renegotiateWithIceRestart();
+        // Restart ICE
+        this.peerConnection.restartIce();
+        console.log('[WebRTC] ICE restart initiated.');
+        
+        // For older browsers that don't support restartIce method
+        if (typeof this.peerConnection.restartIce !== 'function' && this.isInitiator) {
+          console.log('[WebRTC] Using createOffer with ice restart for older browsers');
+          this.peerConnection.createOffer({ iceRestart: true })
+            .then(offer => this.peerConnection?.setLocalDescription(offer))
+            .then(() => {
+              if (this.peerConnection?.localDescription && this.remotePeerId) {
+                this.sendSignal(this.remotePeerId, {
+                  type: 'offer',
+                  sdp: this.peerConnection.localDescription.sdp,
+                  timestamp: Date.now()
+                });
+              }
+            })
+            .catch(error => {
+              console.error('[WebRTC] Failed to restart ICE via createOffer:', error);
+              this.handleConnectionFailure();
+            });
         }
       } catch (error) {
         console.error('[WebRTC] Failed to restart ICE:', error);
@@ -574,650 +667,524 @@ export class WebRTCManager extends EventEmitter {
       this.handleConnectionFailure();
     }
   }
-  
+
   /**
-   * Renegotiate with ICE restart for browsers without restartIce method
+   * Handles incoming signaling messages received via the AeroNyxSocket.
+   * @param signalData The raw signal data object from the socket event.
    */
-  private async renegotiateWithIceRestart(): Promise<void> {
-    if (!this.peerConnection || !this.remotePeerId) return;
-    
-    try {
-      // Create a new offer with ICE restart flag
-      const offer = await this.peerConnection.createOffer({ iceRestart: true });
-      await this.peerConnection.setLocalDescription(offer);
-      
-      this.sendSignal(this.remotePeerId, {
-        type: 'offer',
-        sdp: offer.sdp,
-      });
-      
-      console.log('[WebRTC] Sent new offer with ICE restart');
-    } catch (error) {
-      console.error('[WebRTC] Failed to create offer with ICE restart:', error);
-      this.handleConnectionFailure();
+  private handleSignalingMessage = async (signalData: any): Promise<void> => {
+    // Validate signal structure
+    if (!signalData || typeof signalData !== 'object' || 
+        !signalData.type || !signalData.sender || !signalData.signal) {
+      console.warn('[WebRTC] Received invalid signaling message structure:', signalData);
+      return;
     }
-  }
-  
-  /**
-   * Handle general connection failures
-   */
-  private handleConnectionFailure(): void {
-    // If we're already reconnecting, don't start another attempt
-    if (this.isReconnecting) return;
-    
-    // Check if we've exceeded the max reconnect attempts
-    if (this.reconnectAttempts >= (this.config.reconnectAttempts || 5)) {
-      console.log('[WebRTC] Max reconnection attempts reached, giving up');
-      this.setConnectionState('failed');
-      this.emit('error', {
-        type: 'connection',
-        message: `Failed to reconnect after ${this.reconnectAttempts} attempts`,
-        recoverable: false
-      });
+
+    const { sender, signal, recipient, timestamp } = signalData;
+
+    // Ensure the message is intended for us
+    if (recipient && recipient !== this.localPeerId) {
+      console.debug(`[WebRTC] Ignoring signal intended for another peer: ${recipient}`);
+      return;
+    }
+
+    // Check for out-of-order delivery using timestamps
+    if (timestamp && timestamp < this.lastSignalTimestamp) {
+      console.warn(`[WebRTC] Ignoring out-of-order signal from ${sender} (timestamp: ${timestamp}, last: ${this.lastSignalTimestamp})`);
       return;
     }
     
-    // Start reconnection procedure
-    this.isReconnecting = true;
-    this.reconnectAttempts++;
-    
-    console.log(`[WebRTC] Connection failure, attempting reconnect (${this.reconnectAttempts}/${this.config.reconnectAttempts})`);
-    
-    // Schedule reconnection attempt
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
+    if (timestamp) {
+      this.lastSignalTimestamp = timestamp;
     }
-    
-    this.reconnectTimer = setTimeout(() => {
-      this.attemptReconnection();
-    }, this.config.reconnectInterval);
-  }
-  
-  /**
-   * Attempt to reconnect to the peer
-   */
-  private async attemptReconnection(): Promise<void> {
-    if (!this.remotePeerId) {
-      this.isReconnecting = false;
+
+    // Set remotePeerId for initial offer
+    if (!this.remotePeerId && signal.type === 'offer') {
+      console.log(`[WebRTC] Received initial offer from ${sender}. Setting remotePeerId.`);
+      this.remotePeerId = sender;
+    } else if (sender !== this.remotePeerId && this.remotePeerId) {
+      console.warn(`[WebRTC] Ignoring signal from unexpected sender ${sender}. Current remote peer is ${this.remotePeerId}.`);
       return;
     }
-    
-    console.log(`[WebRTC] Attempting to reconnect to peer: ${this.remotePeerId}`);
-    
-    // Clean up existing connection
-    this.cleanupConnection(false);
-    
-    // Create a new connection
+
+    console.debug(`[WebRTC] Processing signal type '${signal.type}' from peer ${sender}`);
+
     try {
-      await this.connectToPeer(this.remotePeerId);
-      this.isReconnecting = false;
+      // Ensure peerConnection exists for answer and ice candidates
+      if ((signal.type === 'answer' || signal.type === 'ice-candidate') && !this.peerConnection) {
+        console.warn(`[WebRTC] Received ${signal.type} but peerConnection is null. Ignoring.`);
+        return;
+      }
+
+      switch (signal.type) {
+        case 'offer':
+          await this.handleOfferSignal(signal, sender);
+          break;
+        case 'answer':
+          await this.handleAnswerSignal(signal);
+          break;
+        case 'ice-candidate':
+          await this.handleIceCandidateSignal(signal);
+          break;
+        default:
+          console.warn(`[WebRTC] Received unknown signal type: ${signal.type}`);
+      }
     } catch (error) {
-      console.error('[WebRTC] Reconnection attempt failed:', error);
+      console.error(`[WebRTC] Error handling signal type ${signal.type}:`, error);
       
-      // If we haven't reached max attempts, schedule another try
-      if (this.reconnectAttempts < (this.config.reconnectAttempts || 5)) {
-        this.reconnectTimer = setTimeout(() => {
-          this.attemptReconnection();
-        }, this.config.reconnectInterval);
-      } else {
-        this.isReconnecting = false;
-        this.setConnectionState('failed');
-      }
-    }
-  }
-  
-  /**
-   * Clean up the existing connection
-   * @param resetState - Whether to reset the connection state (default: true)
-   */
-  private cleanupConnection(resetState: boolean = true): void {
-    if (this.dataChannel) {
-      try {
-        this.dataChannel.close();
-      } catch (e) {
-        // Ignore errors closing data channel
-      }
-      this.dataChannel = null;
-    }
-    
-    if (this.peerConnection) {
-      try {
-        this.peerConnection.close();
-      } catch (e) {
-        // Ignore errors closing peer connection
-      }
-      this.peerConnection = null;
-    }
-    
-    // Keep previous state for reconnection attempts
-    if (resetState) {
-      this.reset();
-    }
-  }
-  
-  /**
-   * Handle incoming WebRTC signaling messages
-   * @param signal - The signaling message
-   * @param sender - ID of the sender
-   */
-  private async handleSignalingMessage(signal: any, sender: string): Promise<void> {
-    if (!this.sessionKey) {
-      console.error('[WebRTC] Cannot handle signaling message: No session key');
-      return;
-    }
-    
-    try {
-      // If this is a new connection request (offer)
-      if (signal.type === 'offer') {
-        await this.handleOfferMessage(signal, sender);
-      }
-      // If this is an answer to our offer
-      else if (signal.type === 'answer' && this.peerConnection) {
-        await this.handleAnswerMessage(signal);
-      }
-      // If this is an ICE candidate
-      else if (signal.type === 'ice-candidate' && this.peerConnection) {
-        await this.handleIceCandidateMessage(signal);
-      }
-    } catch (error) {
-      console.error('[WebRTC] Error handling signaling message:', error);
-      this.emit('error', {
+      this.emitError({
         type: 'signaling',
-        message: 'Failed to process signaling message',
+        message: `Failed to process ${signal.type} signal`,
         details: error instanceof Error ? error.message : String(error),
         recoverable: true
       });
+      
+      if (signal.type === 'offer' || signal.type === 'answer') {
+        this.handleConnectionFailure();
+      }
     }
-  }
-  
+  };
+
   /**
-   * Handle an offer message from another peer
-   * @param signal - The offer message
-   * @param sender - ID of the sender
+   * Handles an incoming Offer signal.
+   * @param signal The offer signal part.
+   * @param sender The peer ID of the sender.
    */
-  private async handleOfferMessage(signal: any, sender: string): Promise<void> {
+  private async handleOfferSignal(signal: WebRTCSignal, sender: string): Promise<void> {
+    // Handle signaling state conflicts (glare)
+    if (this.peerConnection && this.peerConnection.signalingState !== 'stable') {
+      console.warn(`[WebRTC] Received offer but signaling state is ${this.peerConnection.signalingState}. Handling potential glare.`);
+      
+      // Basic glare handling: initiator keeps their offer, non-initiator accepts incoming
+      if (this.isInitiator) {
+        console.log("[WebRTC] Glare detected: Initiator ignoring incoming offer.");
+        return;
+      } else {
+        console.log("[WebRTC] Glare detected: Non-initiator resetting and accepting incoming offer.");
+        this.reset();
+      }
+    }
+
     this.remotePeerId = sender;
     this.isInitiator = false;
-    this.setConnectionState('connecting');
-    
-    // Create new peer connection if needed
+    await this.setConnectionState('connecting');
+
+    // Create peer connection if it doesn't exist
     if (!this.peerConnection) {
       this.peerConnection = new RTCPeerConnection({
         iceServers: this.config.iceServers,
         iceCandidatePoolSize: this.config.iceCandidatePoolSize,
         bundlePolicy: this.config.bundlePolicy,
+        iceTransportPolicy: this.config.iceTransportPolicy
       });
-      
       this.setupPeerConnectionHandlers();
-      
-      // Handle incoming data channels
-      this.peerConnection.ondatachannel = (event) => {
-        this.dataChannel = event.channel;
-        this.setupDataChannel();
-      };
     }
-    
+
     try {
-      // Set remote description (the offer)
-      await this.peerConnection.setRemoteDescription({
-        type: 'offer',
-        sdp: signal.sdp,
-      });
-      
+      console.debug('[WebRTC] Setting remote description (offer)...');
+      await this.peerConnection.setRemoteDescription(
+        new RTCSessionDescription({ type: 'offer', sdp: signal.sdp })
+      );
       this.remoteDescriptionSet = true;
-      
-      // Add any pending ICE candidates
-      this.addPendingCandidates();
-      
-      // Create and send answer
+      console.debug('[WebRTC] Remote description (offer) set.');
+
+      // Process any queued candidates
+      await this.addPendingCandidates();
+
+      console.debug('[WebRTC] Creating answer...');
       const answer = await this.peerConnection.createAnswer();
       await this.peerConnection.setLocalDescription(answer);
-      
-      this.sendSignal(sender, {
-        type: 'answer',
+      console.debug('[WebRTC] Local description (answer) set.');
+
+      // Send the answer back
+      await this.sendSignal(sender, { 
+        type: 'answer', 
         sdp: answer.sdp,
+        timestamp: Date.now()
       });
-      
-      console.log(`[WebRTC] Sent answer to peer: ${sender}`);
+      console.log(`[WebRTC] Answer sent to peer: ${sender}`);
     } catch (error) {
-      console.error('[WebRTC] Error handling offer:', error);
+      console.error('[WebRTC] Error processing offer:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handles an incoming Answer signal.
+   * @param signal The answer signal part.
+   */
+  private async handleAnswerSignal(signal: WebRTCSignal): Promise<void> {
+    if (!this.peerConnection) {
+      throw new Error("PeerConnection not initialized for answer");
+    }
+    
+    // Verify we're in the right state to receive an answer
+    if (this.peerConnection.signalingState !== 'have-local-offer') {
+      console.warn(`[WebRTC] Received answer in unexpected signaling state: ${this.peerConnection.signalingState}. Ignoring.`);
+      return;
+    }
+
+    try {
+      console.debug('[WebRTC] Setting remote description (answer)...');
+      await this.peerConnection.setRemoteDescription(
+        new RTCSessionDescription({ type: 'answer', sdp: signal.sdp })
+      );
+      this.remoteDescriptionSet = true;
+      console.debug('[WebRTC] Remote description (answer) set.');
+
+      // Process any queued candidates
+      await this.addPendingCandidates();
+    } catch (error) {
+      console.error('[WebRTC] Error processing answer:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handles an incoming ICE Candidate signal.
+   * @param signal The candidate signal part.
+   */
+  private async handleIceCandidateSignal(signal: WebRTCSignal): Promise<void> {
+    if (!this.peerConnection) {
+      throw new Error("PeerConnection not initialized for candidate");
+    }
+    
+    if (!signal.candidate) {
+      console.warn("[WebRTC] Received empty ICE candidate signal.");
+      return;
+    }
+
+    try {
+      const candidateJson = JSON.stringify(signal.candidate);
       
-      this.setConnectionState('failed');
-      this.emit('error', {
+      // Check for duplicate candidates (efficient with Set)
+      if (this.pendingCandidates.has(candidateJson)) {
+        console.debug('[WebRTC] Ignoring duplicate ICE candidate.');
+        return;
+      }
+      
+      const candidate = new RTCIceCandidate(signal.candidate);
+      
+      // Queue candidate if remote description isn't set yet
+      if (!this.remoteDescriptionSet || 
+          this.peerConnection.signalingState !== 'stable') {
+        console.debug('[WebRTC] Queuing ICE candidate (Remote desc not set or state not stable).');
+        this.pendingCandidates.add(candidateJson);
+        this.pendingCandidateObjects.push(signal.candidate);
+      } else {
+        console.debug('[WebRTC] Adding ICE candidate immediately.');
+        await this.peerConnection.addIceCandidate(candidate);
+        console.debug('[WebRTC] Added ICE candidate.');
+      }
+    } catch (error) {
+      console.error('[WebRTC] Error processing ICE candidate:', error);
+      // Don't throw here since candidate errors are often recoverable
+    }
+  }
+
+  /**
+   * Adds any queued ICE candidates after the remote description is set.
+   */
+  private async addPendingCandidates(): Promise<void> {
+    if (!this.peerConnection || this.pendingCandidateObjects.length === 0) {
+      return;
+    }
+
+    console.debug(`[WebRTC] Adding ${this.pendingCandidateObjects.length} pending ICE candidates...`);
+    
+    const candidatesToAdd = [...this.pendingCandidateObjects];
+    this.pendingCandidateObjects = [];
+    this.pendingCandidates.clear();
+
+    const addPromises = candidatesToAdd.map(async (candidateInit) => {
+      try {
+        // Ensure remote description is set before adding
+        if (this.peerConnection?.remoteDescription) {
+          const candidate = new RTCIceCandidate(candidateInit);
+          await this.peerConnection.addIceCandidate(candidate);
+          return true;
+        } else {
+          console.warn("[WebRTC] Cannot add pending candidate: Remote description still not set.");
+          // Re-queue if necessary
+          const candidateJson = JSON.stringify(candidateInit);
+          this.pendingCandidates.add(candidateJson);
+          this.pendingCandidateObjects.push(candidateInit);
+          return false;
+        }
+      } catch (error) {
+        console.error('[WebRTC] Error adding pending ICE candidate:', error);
+        return false;
+      }
+    });
+
+    // Wait for all candidates to be processed
+    await Promise.allSettled(addPromises);
+    
+    console.debug(`[WebRTC] Finished processing pending candidates. ${this.pendingCandidateObjects.length} remaining.`);
+  }
+
+  /**
+   * Sends a signaling message via the AeroNyxSocket.
+   * @param recipientPeerId The ID of the recipient peer.
+   * @param signal The WebRTCSignal payload (offer, answer, candidate).
+   */
+  private async sendSignal(recipientPeerId: string, signal: WebRTCSignal): Promise<void> {
+    if (!this.socket || !this.localPeerId) {
+      console.error('[WebRTC] Cannot send signal: Socket or localPeerId missing.');
+      throw new Error('Socket or localPeerId missing');
+    }
+
+    console.debug(`[WebRTC] Sending signal type '${signal.type}' to peer ${recipientPeerId}`);
+    
+    try {
+      // Use the socket's method for sending WebRTC signals
+      const result = await this.socket.sendWebRTCSignal(
+        recipientPeerId,
+        signal.type as any, // Type coercion needed due to signal.type definition
+        signal
+      );
+
+      if (result === SendResult.FAILED) {
+        throw new Error(`Failed to send signal type '${signal.type}' via socket.`);
+      } else if (result === SendResult.QUEUED) {
+        console.warn(`[WebRTC] Signal type '${signal.type}' was queued by the socket.`);
+      }
+    } catch (error) {
+      console.error(`[WebRTC] Error sending signal type '${signal.type}':`, error);
+      
+      this.emitError({
         type: 'signaling',
-        message: 'Failed to process offer',
-        details: error instanceof Error ? error.message : String(error),
+        message: 'Failed to send signal',
+        details: error,
         recoverable: true
       });
       
       throw error;
     }
   }
-  
-  /**
-   * Handle an answer message from the peer
-   * @param signal - The answer message
-   */
-  private async handleAnswerMessage(signal: any): Promise<void> {
-    try {
-      await this.peerConnection!.setRemoteDescription({
-        type: 'answer',
-        sdp: signal.sdp,
-      });
-      
-      this.remoteDescriptionSet = true;
-      
-      // Add any pending ICE candidates
-      this.addPendingCandidates();
-      
-      console.log('[WebRTC] Applied remote description (answer)');
-    } catch (error) {
-      console.error('[WebRTC] Error handling answer:', error);
-      
-      this.emit('error', {
-        type: 'signaling',
-        message: 'Failed to process answer',
-        details: error instanceof Error ? error.message : String(error),
-        recoverable: true
-      });
-      
-      // If we can't set the remote description, the connection might fail
-      // Let the connection state handler deal with the failure
-    }
-  }
-  
-  /**
-   * Handle an ICE candidate message from the peer
-   * @param signal - The ICE candidate message
-   */
-  private async handleIceCandidateMessage(signal: any): Promise<void> {
-    try {
-      const candidate = new RTCIceCandidate(signal.candidate);
-      
-      // If remote description is not set yet, queue the candidate
-      if (!this.remoteDescriptionSet) {
-        console.log('[WebRTC] Queuing ICE candidate until remote description is set');
-        this.pendingCandidates.push(candidate);
-        return;
-      }
-      
-      // Add the candidate to the peer connection
-      await this.peerConnection!.addIceCandidate(candidate);
-      console.log('[WebRTC] Added ICE candidate');
-    } catch (error) {
-      console.error('[WebRTC] Error handling ICE candidate:', error);
-      
-      this.emit('error', {
-        type: 'signaling',
-        message: 'Failed to process ICE candidate',
-        details: error instanceof Error ? error.message : String(error),
-        recoverable: true
-      });
-    }
-  }
-  
-  /**
-   * Add any pending ICE candidates after remote description is set
-   */
-  private async addPendingCandidates(): Promise<void> {
-    if (!this.peerConnection || !this.remoteDescriptionSet || this.pendingCandidates.length === 0) {
-      return;
-    }
-    
-    console.log(`[WebRTC] Adding ${this.pendingCandidates.length} pending ICE candidates`);
-    
-    for (const candidate of this.pendingCandidates) {
-      try {
-        await this.peerConnection.addIceCandidate(candidate);
-      } catch (error) {
-        console.error('[WebRTC] Error adding pending ICE candidate:', error);
-      }
-    }
-    
-    // Clear the pending candidates
-    this.pendingCandidates = [];
-  }
-  
-  /**
-   * Send a WebRTC signaling message through the AeroNyx server
-   * @param recipient - ID of the recipient
-   * @param signal - The signaling message to send
-   */
-  private sendSignal(recipient: string, signal: any): void {
-    if (!this.socket || !this.sessionKey) {
-      console.error('[WebRTC] Cannot send signal: No socket or session key');
-      return;
-    }
-    
-    this.socket.send({
-      type: 'webrtc-signal',
-      recipient,
-      signal,
-    });
-  }
 
   /**
-   * Send a message through the WebRTC data channel with aes256gcm encryption
-   * @param message - The message to send
-   * @param maxAttempts - Maximum number of retry attempts if sending fails
-   * @returns true if sent successfully, false otherwise
+   * Sends an application message over the encrypted data channel.
+   * @param message The application message object to send.
+   * @param options Optional configuration for message sending
+   * @returns Promise resolving to true if sent successfully, false otherwise.
    */
-  async sendMessage(message: any, maxAttempts: number = 3): Promise<boolean> {
-    console.debug('[WebRTC:SEND] Sending message attempt:', {
-      dataChannelState: this.dataChannel?.readyState || 'none',
-      messageType: message.type || 'unknown',
-      messageId: message.id || 'none',
-      hasSessionKey: !!this.sessionKey,
-      sessionKeyLength: this.sessionKey?.length || 0,
-      maxAttempts
-    });
-  
-    // If not connected, queue message and return false
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      console.debug('[WebRTC:SEND] Data channel not open, queueing message');
-      this.queueMessage(message, maxAttempts);
-      return false;
-    }
-    
-    if (this.sessionKey) {
-      console.debug('[WebRTC:SEND] Session key available, proceeding with encryption');
-      return await this.sendEncryptedMessage(
-        message, 
-        this.sessionKey, 
-        this.dataChannel,
-        this.messageCounter++
-      );
-    } else {
-      console.error('[WebRTC:SEND] Cannot send message: No session key available');
-      return false;
-    }
-  }
-
-  
-  /**
-   * Send a message through the WebRTC data channel with aes256gcm encryption
-   * @param message - The message to send
-   * @param sessionKey - The encryption key
-   * @param dataChannel - The WebRTC data channel
-   * @param messageCounter - Counter for replay protection
-   * @returns true if sent successfully, false otherwise
-   */
-  private async sendEncryptedMessage(
-    message: any,
-    sessionKey: Uint8Array,
-    dataChannel: RTCDataChannel,
-    messageCounter: number
+  async sendMessage(
+    message: any, 
+    options: { 
+      priority?: 'high' | 'normal' | 'low',
+      queueIfUnavailable?: boolean 
+    } = {}
   ): Promise<boolean> {
-    if (dataChannel.readyState !== 'open') {
-      console.error('[WebRTC:SEND:ENCRYPTED] Cannot send message: Data channel not open');
-      return false;
-    }
+    const { priority = 'normal', queueIfUnavailable = true } = options;
     
-    try {
-      if (!sessionKey || sessionKey.length !== 32) {
-        throw new Error(`Invalid session key: length=${sessionKey?.length ?? 'null'} (expected 32 bytes)`);
+    // Queue message if data channel not ready
+    if (!this.isDataChannelOpen()) {
+      if (queueIfUnavailable && this.connectionState !== 'failed' && this.connectionState !== 'closed') {
+        console.log('[WebRTC] Data channel not open. Queuing message.');
+        this.messageQueue.push({
+          message,
+          timestamp: Date.now()
+        });
+        return true; // Message queued
+      } else {
+        console.warn('[WebRTC] Cannot send P2P message: Data channel not open.');
+        return false;
       }
+    }
+
+    if (!this.dataChannel) return false;
+
+    try {
+      let payloadToSend: string;
       
-      // Prepare the message for encryption
-      const messageString = JSON.stringify(message);
+      if (this.p2pEncryptionKey) {
+        // Encrypt the message
+        console.debug('[WebRTC] Encrypting P2P message...');
+        const messageString = JSON.stringify(message);
+        
+        // Generate nonce or use the provided one
+        const nonce = await generateNonce();
+        
+        // Encrypt the message
+        const { ciphertext, nonce: usedNonce } = await encryptWithAesGcm(messageString, this.p2pEncryptionKey, nonce);
+        
+        // Prepare envelope with encryption metadata
+        const envelope: EncryptedMessageEnvelope = {
+          type: 'encrypted',
+          nonce: Array.from(usedNonce),
+          encrypted: Array.from(ciphertext),
+          counter: this.p2pMessageCounter++,
+          timestamp: Date.now()
+        };
+        
+        payloadToSend = JSON.stringify(envelope);
+        console.debug('[WebRTC] P2P message encrypted.');
+      } else {
+        // Send unencrypted
+        if (this.config.enableEncryption) {
+          console.warn('[WebRTC] Encryption enabled but no key available. Sending unencrypted message.');
+        } else {
+          console.debug('[WebRTC] Sending P2P message unencrypted (encryption not enabled).');
+        }
+        payloadToSend = JSON.stringify(message);
+      }
+
+      // Check buffer threshold based on priority
+      const threshold = this.config.bufferThreshold || 16 * 1024 * 1024;
+      const priorityFactor = priority === 'high' ? 0.8 : (priority === 'low' ? 0.3 : 0.5);
+      const effectiveThreshold = threshold * priorityFactor;
       
-      // Encrypt with AES-GCM
-      console.debug('[WebRTC:SEND:ENCRYPTED] Encrypting message with AES-GCM');
-      const { ciphertext, nonce } = await encryptWithAesGcm(messageString, sessionKey);
-      
-      // Create packet with the correct field naming
-      const encryptedMessage = JSON.stringify({
-        type: 'Data',
-        encrypted: Array.from(ciphertext),
-        nonce: Array.from(nonce),
-        counter: messageCounter,
-        encryption_algorithm: 'aes256gcm', // Server expects this format
-        padding: null
-      });
-      
+      if (this.dataChannel.bufferedAmount > effectiveThreshold) {
+        console.warn(`[WebRTC] Data channel buffer high (${this.dataChannel.bufferedAmount} bytes). Implementing backpressure.`);
+        
+        // Implement backpressure using Promise
+        await new Promise<void>((resolve, reject) => {
+          const checkBuffer = () => {
+            if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+              reject(new Error('Data channel closed while waiting for buffer to clear'));
+              return;
+            }
+            
+            if (this.dataChannel.bufferedAmount < effectiveThreshold / 2) {
+              resolve();
+            } else {
+              setTimeout(checkBuffer, 50);
+            }
+          };
+          
+          checkBuffer();
+        });
+        
+        // Recheck data channel after waiting
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+          console.error("[WebRTC] Data channel closed while waiting for buffer to clear.");
+          return false;
+        }
+      }
+
       // Send the message
-      dataChannel.send(encryptedMessage);
-      
-      console.debug('[WebRTC:SEND:ENCRYPTED] Message sent successfully');
+      this.dataChannel.send(payloadToSend);
+      console.debug('[WebRTC] P2P message sent successfully.');
       return true;
     } catch (error) {
-      console.error('[WebRTC:SEND:ENCRYPTED] Error sending encrypted message:', error);
+      console.error('[WebRTC] Error sending P2P message:', error);
+      
+      this.emitError({
+        type: 'dataChannel',
+        message: 'Failed to send P2P message',
+        details: error,
+        recoverable: true
+      });
+      
       return false;
     }
   }
 
   /**
-   * Process an encrypted message received through WebRTC
-   * @param encryptedData - The encrypted message data
-   * @param sessionKey - The decryption key
-   * @returns Decrypted message object or null if decryption fails
+   * Sets the internal connection state and emits an event with thread safety.
+   * @param state The new connection state.
    */
-  private async processEncryptedMessage(
-    encryptedData: any,
-    sessionKey: Uint8Array
-  ): Promise<any | null> {
-    try {
-      // Validate the message format
-      if (!encryptedData || !encryptedData.type || encryptedData.type !== 'Data') {
-        console.warn('[WebRTC] Received message in incorrect format:', encryptedData);
-        return null;
+  private async setConnectionState(state: ConnectionState): Promise<void> {
+    // Create a safe promise chain to prevent race conditions
+    this.stateTransitionLock = this.stateTransitionLock.then(async () => {
+      if (this.connectionState !== state) {
+        console.log(`[WebRTC] P2P Connection state changed: ${this.connectionState} -> ${state}`);
+        this.connectionState = state;
+        this.emit('connectionStateChanged', state);
       }
-      
-      // Extract the encrypted data and nonce
-      if (!Array.isArray(encryptedData.encrypted) || !Array.isArray(encryptedData.nonce)) {
-        console.warn('[WebRTC] Missing encrypted data or nonce');
-        return null;
-      }
-      
-      // Convert arrays back to Uint8Arrays
-      const encryptedUint8 = new Uint8Array(encryptedData.encrypted);
-      const nonceUint8 = new Uint8Array(encryptedData.nonce);
-      
-      // Support both field names for backward compatibility
-      let algorithm: string;
-      if (encryptedData.encryption_algorithm !== undefined) {
-        algorithm = encryptedData.encryption_algorithm;
-      } else if (encryptedData.encryption !== undefined) {
-        algorithm = encryptedData.encryption;
-      } else {
-        algorithm = 'aes256gcm'; // Default
-      }
-      
-      // Log decryption attempt
-      console.debug('[WebRTC] Attempting to decrypt message:', {
-        encryptedLength: encryptedUint8.length,
-        nonceLength: nonceUint8.length,
-        counter: encryptedData.counter,
-        algorithm: algorithm
-      });
-      
-      // Decrypt with AES-GCM
-      const decryptedText = await decryptWithAesGcm(
-        encryptedUint8,
-        nonceUint8,
-        sessionKey,
-        'string'
-      ) as string;
-      
-      // Parse the decrypted JSON
-      const parsedData = JSON.parse(decryptedText);
-      console.log('[WebRTC] Successfully decrypted message');
-      
-      return parsedData;
-    } catch (error) {
-      console.error('[WebRTC] Failed to process encrypted message:', error);
-      return null;
-    }
+    }).catch(err => {
+      console.error('[WebRTC] Error during state transition:', err);
+    });
+    
+    await this.stateTransitionLock;
   }
-  
+
   /**
-   * Queue a message to be sent when connection is restored
-   * @param message - The message to queue
-   * @param attempts - Number of remaining retry attempts
+   * Closes the peer connection and cleans up associated resources
    */
-  private queueMessage(message: any, attempts: number): void {
-    // Limit queue size to prevent memory issues
-    if (this.queuedMessages.length >= this.maxQueueSize) {
-      // Remove oldest message when queue is full
-      this.queuedMessages.shift();
-    }
-    
-    this.queuedMessages.push({ data: message, attempts });
-    console.log(`[WebRTC] Message queued. Total pending: ${this.queuedMessages.length}`);
-  }
-  
-  /**
-   * Send any queued messages
-   */
-  private sendQueuedMessages(): void {
-    if (this.queuedMessages.length === 0 || 
-        !this.dataChannel || 
-        this.dataChannel.readyState !== 'open') {
-      return;
-    }
-    
-    console.log(`[WebRTC] Sending ${this.queuedMessages.length} queued messages`);
-    
-    // Process a copy of the queue to avoid modification issues during iteration
-    const messages = [...this.queuedMessages];
-    this.queuedMessages = [];
-    
-    for (const { data, attempts } of messages) {
-      try {
-        const success = this.sendMessage(data, attempts - 1);
-        
-        // If sending fails, the message will be re-queued with decremented attempts
-        if (!success && attempts > 1) {
-          // Re-queuing happens in sendMessage
-        }
-      } catch (error) {
-        console.error('[WebRTC] Error sending queued message:', error);
-      }
-    }
-  }
-  
-  /**
-   * Close the WebRTC connection
-   */
-  disconnect(): void {
-    console.log('[WebRTC] Disconnecting WebRTC connection');
-    
-    // Clear any scheduled reconnection attempts
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    
-    // Close data channel
+  private cleanupPeerConnection(): void {
     if (this.dataChannel) {
-      try {
-        this.dataChannel.close();
-      } catch (e) {
-        // Ignore errors closing data channel
-      }
+      try { 
+        this.dataChannel.onopen = null;
+        this.dataChannel.onclose = null;
+        this.dataChannel.onerror = null;
+        this.dataChannel.onmessage = null;
+        this.dataChannel.close(); 
+      } catch (e) {}
       this.dataChannel = null;
     }
     
-    // Close peer connection
     if (this.peerConnection) {
       try {
+        this.peerConnection.onconnectionstatechange = null;
+        this.peerConnection.oniceconnectionstatechange = null;
+        this.peerConnection.onicegatheringstatechange = null;
+        this.peerConnection.onicecandidate = null;
+        this.peerConnection.ondatachannel = null;
+        this.peerConnection.onnegotiationneeded = null;
         this.peerConnection.close();
-      } catch (e) {
-        // Ignore errors closing peer connection
-      }
+      } catch (e) {}
       this.peerConnection = null;
     }
-    
-    this.remotePeerId = null;
-    this.setConnectionState('closed');
-    this.isReconnecting = false;
-    this.reconnectAttempts = 0;
-    this.pendingCandidates = [];
-    this.remoteDescriptionSet = false;
-    
-    // Discard pending messages
-    const discardedCount = this.queuedMessages.length;
-    if (discardedCount > 0) {
-      console.log(`[WebRTC] Discarded ${discardedCount} queued messages on disconnect`);
-      this.queuedMessages = [];
-    }
   }
-  
+
   /**
-   * Set connection state and emit event
-   * @param state - The new connection state
+   * Closes the WebRTC connection and cleans up resources.
    */
-  private setConnectionState(state: ConnectionState): void {
-    // Only emit event if state actually changes
-    if (this.connectionState !== state) {
-      this.connectionState = state;
-      console.log(`[WebRTC] Connection state changed to: ${state}`);
-      this.emit('connectionStateChanged', state);
+  disconnect(): void {
+    console.log('[WebRTC] Disconnecting P2P connection...');
+    
+    this.cleanupPeerConnection();
+    
+    if (this.socket) {
+      // Remove listeners specific to this P2P connection
+      this.socket.off('webrtcSignal', this.handleSignalingMessage);
+      this.socket.off('disconnected', this.handleSocketDisconnect);
+      this.socket = null;
     }
+    
+    this.localPeerId = null;
+    this.p2pEncryptionKey = null;
+    
+    this.setConnectionState('closed')
+      .then(() => console.log('[WebRTC] P2P connection disconnected.'))
+      .catch(err => console.error('[WebRTC] Error setting closed state:', err));
   }
-  
+
   /**
-   * Get the current connection state
-   * @returns The current connection state
+   * Gets the current P2P connection state.
    */
-  getConnectionState(): ConnectionState {
+  public getConnectionState(): ConnectionState {
     return this.connectionState;
   }
-  
+
   /**
-   * Check if connected directly with peer
-   * @returns true if directly connected, false otherwise
+   * Checks if the P2P data channel is open and ready for sending.
    */
-  isDirectlyConnected(): boolean {
-    return this.connectionState === 'connected' && 
-           !!this.dataChannel && 
-           this.dataChannel.readyState === 'open';
+  public isDataChannelOpen(): boolean {
+    return !!this.dataChannel && this.dataChannel.readyState === 'open';
   }
-  
+
   /**
-   * Get the remote peer ID
-   * @returns The remote peer ID or null if not connected
+   * Gets the remote peer ID.
    */
-  getRemotePeerId(): string | null {
+  public getRemotePeerId(): string | null {
     return this.remotePeerId;
   }
-  
+
   /**
-   * Get statistics about the connection
-   * @returns Promise resolving to RTCStatsReport
+   * Gets the remaining buffer amount in the data channel (bytes).
+   * Useful for flow control and backpressure monitoring.
    */
-  async getStats(): Promise<RTCStatsReport | null> {
-    if (!this.peerConnection) return null;
-    
-    try {
-      return await this.peerConnection.getStats();
-    } catch (error) {
-      console.error('[WebRTC] Error getting stats:', error);
-      return null;
-    }
+  public getBufferedAmount(): number {
+    return this.dataChannel?.bufferedAmount || 0;
   }
-  
+
   /**
-   * Check if the data channel is ready for sending data
+   * Gets encryption status to inform UI
    */
-  isReadyToSend(): boolean {
-    return !!this.dataChannel && 
-           this.dataChannel.readyState === 'open' && 
-           this.connectionState === 'connected';
-  }
-  
-  /**
-   * Force ICE restart to recover from network changes
-   */
-  restartIce(): void {
-    if (this.peerConnection && this.remotePeerId && this.isInitiator) {
-      try {
-        this.renegotiateWithIceRestart();
-      } catch (error) {
-        console.error('[WebRTC] Failed to restart ICE:', error);
-      }
-    } else {
-      console.log('[WebRTC] Cannot restart ICE: Not the initiator or no connection');
-    }
+  public isEncryptionEnabled(): boolean {
+    return !!this.p2pEncryptionKey;
   }
 }
