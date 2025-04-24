@@ -13,6 +13,9 @@ interface EnhancedChatViewProps {
   chatId: string;
 }
 
+// Define a custom type that includes the p2p connection states
+type ExtendedConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'p2p-connecting' | 'p2p-connected';
+
 export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) => {
   const { colorMode } = useColorMode();
   const theme = useTheme();
@@ -63,15 +66,15 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
 
   // Add connection status indicator
   const getConnectionStatusIndicator = () => {
-    switch(connectionStatus) {
-      case 'connecting':
-      case 'p2p-connecting':
-        return <ConnectionIndicator status="connecting" message="Connecting..." />;
-      case 'disconnected':
-        return <ConnectionIndicator status="error" message="Disconnected, trying to reconnect..." />;
-      default:
-        return null;
+    // Cast connectionStatus to the extended type that includes p2p states
+    const status = connectionStatus as ExtendedConnectionStatus;
+    
+    if (status === 'connecting' || status === 'p2p-connecting') {
+      return <ConnectionIndicator status="connecting" message="Connecting..." />;
+    } else if (status === 'disconnected') {
+      return <ConnectionIndicator status="error" message="Disconnected, trying to reconnect..." />;
     }
+    return null;
   };
 
   // Message retry handler
