@@ -109,14 +109,14 @@ export const useChat = (chatId: string | null) => {
     console.log(`[useChat] Effect triggered for chatId: ${chatId}`);
 
     // Initialize socket instance if it doesn't exist or chatId changed
-    if (!socketRef.current || socketRef.current.chatId !== chatId) {
+    if (!socketRef.current || socketRef.current.getChatId() !== chatId) {
         if (socketRef.current) {
-             console.log('[useChat] Chat ID changed, disconnecting previous socket.');
-             socketRef.current.disconnect();
+            console.log('[useChat] Chat ID changed, disconnecting previous socket.');
+            socketRef.current.disconnect();
         }
         console.log('[useChat] Creating new AeroNyxSocket instance.');
         socketRef.current = new AeroNyxSocket();
-        socketRef.current.chatId = chatId;
+        socketRef.current.setChatId(chatId);
     }
 
     const socket = socketRef.current;
