@@ -362,7 +362,7 @@ export function validateNumericRange(
  * @returns Validated ID or null if invalid
  */
 export function validateId(
-    id: string, 
+    id: unknown, 
     pattern: RegExp = /^[a-zA-Z0-9_\-.:]+$/
 ): string | null {
     if (typeof id !== 'string') return null;
@@ -370,3 +370,4 @@ export function validateId(
     if (id.length > 100) return null; // Reasonable maximum length
     return id;
 }
+
