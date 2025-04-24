@@ -1129,12 +1129,37 @@ export class AeroNyxSocket extends EventEmitter {
         this.emit('error', this.createSocketError('data', 'Decryption failed', 'DECRYPTION_FAILED'));
         return;
       }
-  
+      
+      // Check for replay attacks - adding replay protection
+      if (decryptedData.id && typeof decryptedData.id === 'string') {
+        if (this.processedMessageIds.has(decryptedData.id)) {
+          console.warn(`[Socket] Replay detected for message ID: ${decryptedData.id}. Ignoring.`);
+          return;
+        }
+        this.processedMessageIds.set(decryptedData.id, Date.now());
+        this.cleanupMessageIdCache(); // Clean up old entries
+      }
+
       this.lastMessageTime = Date.now(); // Update activity timer
       
-      // Process the message based on its type
-      await this.routeDecryptedMessage(decryptedData);
-      
+      // Process the message based on its type - using type guards for safety
+      if (isMessageType(decryptedData)) {
+        this.emit('message', decryptedData);
+      } else if (isChatInfoPayload(decryptedData)) {
+        this.emit('chatInfo', decryptedData.data);
+      } else if (isParticipantsPayload(decryptedData)) {
+        this.emit('participants', decryptedData.data);
+      } else if (isWebRTCSignalPayload(decryptedData)) {
+        this.emit('webrtcSignal', decryptedData);
+      } else if (isKeyRotationRequestPayload(decryptedData)) {
+        await this.handleKeyRotationRequest(decryptedData);
+      } else if (isKeyRotationResponsePayload(decryptedData)) {
+        await this.handleKeyRotationResponse(decryptedData);
+      } else {
+        // If structure is fundamentally valid
+        console.warn('[Socket] Received unrecognized message type:', decryptedData?.type);
+        this.emit('data', decryptedData); // Still emit for application layer
+      }
     } catch (error) {
       console.error('[Socket] Error processing data packet:', error);
       this.recordError(); // Record for health monitoring
