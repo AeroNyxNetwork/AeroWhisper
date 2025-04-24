@@ -114,6 +114,7 @@ export interface AeroNyxSocketTestingInterface {
 
 type InternalConnectionStateType = 'disconnected' | 'connecting' | 'authenticating' | 'connected' | 'reconnecting' | 'closing';
 
+
 const InternalConnectionState = {
   DISCONNECTED: 'disconnected' as InternalConnectionStateType,
   CONNECTING: 'connecting' as InternalConnectionStateType,
@@ -2089,7 +2090,7 @@ export class AeroNyxSocket extends EventEmitter {
 
   // --- Connection State Management ---
 
-  private async safeChangeState(newState: InternalConnectionState): Promise<void> {
+  private async safeChangeState(newState: InternalConnectionStateType): Promise<void> {
     // Create a new promise chain to handle the state change
     this.stateTransitionLock = this.stateTransitionLock.then(async () => {
       if (this.connectionState === newState) return; // No change
