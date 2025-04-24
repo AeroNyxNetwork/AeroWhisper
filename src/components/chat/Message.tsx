@@ -1,6 +1,7 @@
+// src/components/chat/Message.tsx
 import React, { useState } from 'react';
-import { Box, Text, Flex, Avatar, useColorMode, Tooltip, Icon } from '@chakra-ui/react';
-import { FaCheck, FaCheckDouble, FaClock } from 'react-icons/fa';
+import { Box, Text, Flex, Avatar, useColorMode, Tooltip, Icon, Button } from '@chakra-ui/react';
+import { FaCheck, FaCheckDouble, FaClock, FaTimes, FaLock } from 'react-icons/fa';
 import { formatDistanceToNow } from 'date-fns';
 import { MessageType } from '../../types/chat';
 
@@ -9,16 +10,16 @@ interface MessageProps {
   previousMessage?: MessageType | null;
   isOwnMessage?: boolean;
   showAvatar?: boolean;
+  onRetry?: (messageId: string, content: string) => void;
 }
 
 export const Message: React.FC<MessageProps> = ({ 
   message, 
   previousMessage = null, 
   isOwnMessage = false, 
-  showAvatar = true 
+  showAvatar = true,
+  onRetry
 }) => {
-
-  
   const { colorMode } = useColorMode();
   const [showDetails, setShowDetails] = useState(false);
 
@@ -43,18 +44,29 @@ export const Message: React.FC<MessageProps> = ({
   
   const timeAgo = formatDistanceToNow(messageDate, { addSuffix: true });
   
-  // Status indicator based on message state
+  // Improved status indicator
   const getStatusIndicator = () => {
-    if (message.status === 'sending') {
-      return <Icon as={FaClock} />;
-    } else if (message.status === 'sent') {
-      return <Icon as={FaCheck} />;
-    } else if (message.status === 'delivered') {
-      return <Icon as={FaCheckDouble} color="gray.500" />;
-    } else if (message.status === 'read') {
-      return <Icon as={FaCheckDouble} color="blue.500" />;
+    if (isOwnMessage) {
+      if (message.status === 'sending') {
+        return <Icon as={FaClock} color="gray.400" />;
+      } else if (message.status === 'sent') {
+        return <Icon as={FaCheck} color="gray.500" />;
+      } else if (message.status === 'delivered') {
+        return <Icon as={FaCheckDouble} color="gray.500" />;
+      } else if (message.status === 'read') {
+        return <Icon as={FaCheckDouble} color="blue.500" />;
+      } else if (message.status === 'failed') {
+        return <Icon as={FaTimes} color="red.500" />;
+      }
     }
     return null;
+  };
+  
+  // Add retry functionality
+  const handleRetry = () => {
+    if (onRetry && message.status === 'failed') {
+      onRetry(message.id, message.content);
+    }
   };
   
   return (
@@ -108,6 +120,8 @@ export const Message: React.FC<MessageProps> = ({
           }}
         >
           <Text mb={1}>{message.content}</Text>
+          
+          {/* Show encryption status and delivery status */}
           <Flex 
             justify="flex-end" 
             align="center"
@@ -115,7 +129,14 @@ export const Message: React.FC<MessageProps> = ({
             fontSize="xs"
           >
             <Text mr={1}>{timeAgo}</Text>
-            {isOwnMessage && getStatusIndicator()}
+            {getStatusIndicator()}
+            
+            {/* Show encryption icon */}
+            {message.isEncrypted && (
+              <Tooltip label="End-to-end encrypted" placement="top">
+                <Icon as={FaLock} fontSize="10px" ml={1} color="green.500" />
+              </Tooltip>
+            )}
           </Flex>
           
           {message.isEncrypted && (
@@ -142,6 +163,20 @@ export const Message: React.FC<MessageProps> = ({
           />
         )}
       </Flex>
+      
+      {/* Message retry button when failed */}
+      {message.status === 'failed' && isOwnMessage && (
+        <Button 
+          size="xs" 
+          variant="ghost" 
+          colorScheme="red" 
+          mt={1} 
+          alignSelf="flex-end"
+          onClick={handleRetry}
+        >
+          Retry
+        </Button>
+      )}
       
       {showDetails && (
         <Box 
