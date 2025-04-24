@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+// src/components/chat/EnhancedChatInterface.tsx
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   Box, 
   Flex,
@@ -41,7 +42,8 @@ import {
   SkeletonText,
   SkeletonCircle,
   Divider,
-  Portal
+  Portal,
+  Heading
 } from '@chakra-ui/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -899,7 +901,7 @@ export const EnhancedChatInterface: React.FC<EnhancedChatInterfaceProps> = ({ ch
       // Increment new message count if not at bottom
       setNewMessageCount(prev => prev + 1);
     }
-  }, [messages.length]);
+  }, [messages.length, isAtBottom]);
   
   // Handle connection error
   useEffect(() => {
