@@ -1,32 +1,29 @@
 // src/hooks/useChat.ts
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { v4 as uuid } from 'uuid';
-import { useAuth, User } from '../contexts/AuthContext'; // Import User type from AuthContext
+import { useAuth } from '../contexts/AuthContext';
 import {
-    MessageType as ChatMessageType, // Rename imported type to avoid conflict
+    MessageType as ChatMessageType,
     Participant,
     ChatInfo,
-    MessageStatus // Import the hook's internal status type
-} from '../types/chat'; // Adjust path if needed
+    MessageStatus
+} from '../types/chat';
 import {
     AeroNyxSocket,
     ConnectionStatus as SocketConnectionStatus,
     SendResult,
     SocketError
 } from '../lib/socket';
-// Import the specific message type definition expected by the socket's send method, if different
-// Assuming the socket's send method expects an object structurally similar to ChatMessageType
-// but potentially with a stricter status type or no status field needed for outgoing messages.
-// If socket.sendMessage expects a specific type from socket/types, import that instead.
-// For now, we assume the structure is compatible minus the 'status' field for outgoing.
-// import { MessagePayload as SocketMessagePayload } from '../lib/socket/types'; // Example if socket needs specific type
+// 从正确的位置导入 MessageType，或使用类型定义
+import { MessageType as SocketMessageType } from '../lib/socket/types';
 import { useToast } from '@chakra-ui/react';
 
 /**
- * Type mapping for user-facing connection status
+ * Type mapping to handle the two different MessageType interfaces
+ * This creates a clear separation between our hook's message type and the socket's message type
  */
-type HookConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
+type HookConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'p2p-connecting' | 'p2p-connected';
 
 /**
  * Maps internal socket status to user-facing connection status
@@ -44,26 +41,22 @@ const mapSocketStatus = (socketStatus: SocketConnectionStatus): HookConnectionSt
 };
 
 /**
- * Converts the hook's internal ChatMessageType to the payload expected by socket.send()
- * Specifically removes or adjusts fields not relevant for sending (like client-side status).
+ * Converts a ChatMessageType to a SocketMessageType
+ * This ensures all required fields are present when sending to the socket
  */
-const createSendPayload = (message: ChatMessageType): Omit<ChatMessageType, 'status'> & { type: 'message' } => {
-    // Omit 'status' as the socket layer/receiver handles delivery status.
-    // Add 'type: message' as the application-level identifier for the payload.
-    return {
-        type: 'message', // Add the application-level message type identifier
-        id: message.id,
-        content: message.content,
-        senderId: message.senderId,
-        senderName: message.senderName || 'Anonymous', // Ensure senderName exists
-        timestamp: typeof message.timestamp === 'string'
-            ? message.timestamp
-            : message.timestamp.toISOString(), // Ensure ISO string
-        isEncrypted: message.isEncrypted ?? true,
-        // DO NOT include message.status here - this was the source of the error
-    };
-};
-
+const toSocketMessage = (message: ChatMessageType): SocketMessageType => ({
+    ...message,
+    senderName: message.senderName || 'Anonymous', // Ensure senderName is never undefined
+    // Add any other required fields with defaults
+    id: message.id,
+    content: message.content,
+    senderId: message.senderId,
+    timestamp: typeof message.timestamp === 'string' 
+        ? message.timestamp 
+        : message.timestamp.toISOString(), // Convert Date to ISO string if it's a Date object
+    isEncrypted: message.isEncrypted ?? true,
+    status: message.status // 不进行类型转换，保留原始类型
+});
 
 /**
  * Custom hook for managing chat room connections and interactions
@@ -71,7 +64,7 @@ const createSendPayload = (message: ChatMessageType): Omit<ChatMessageType, 'sta
  * @returns Chat state and action methods
  */
 export const useChat = (chatId: string | null) => {
-    const { user } = useAuth(); // Use the User type from AuthContext
+    const { user } = useAuth();
     const router = useRouter();
     const toast = useToast();
 
@@ -86,40 +79,38 @@ export const useChat = (chatId: string | null) => {
 
     // --- Refs ---
     const socketRef = useRef<AeroNyxSocket | null>(null);
-
+    
     // --- Derived State ---
-    const isCreator = useMemo(() =>
-        // Ensure user object exists before accessing id
-        chatInfo?.createdBy === user?.id,
+    const isCreator = useMemo(() => 
+        chatInfo?.createdBy === user?.id, 
         [chatInfo?.createdBy, user?.id]
     );
 
     // --- Helper Functions ---
-
+    
     /**
-     * Creates a new message object for local state management
+     * Creates a new message object with the specified content and status
      */
-    const createLocalMessage = useCallback((content: string, status: MessageStatus = 'sending'): ChatMessageType => ({
+    const createMessage = useCallback((content: string, status: MessageStatus = 'sending'): ChatMessageType => ({
         id: `temp-${uuid()}`,
         content,
-        // Ensure user exists before accessing properties
-        senderId: user?.id || user?.publicKey || 'unknown-sender',
-        senderName: user?.displayName || 'Me',
-        timestamp: new Date().toISOString(), // Use ISO string directly
-        isEncrypted: true, // Assume it will be encrypted
+        senderId: user?.id || user?.publicKey || '',
+        senderName: user?.displayName || 'Anonymous', // Always provide a default
+        timestamp: new Date().toISOString(),
+        isEncrypted: true,
         status
-    }), [user]); // Depend on user object
+    }), [user]);
 
     /**
      * Handles socket errors based on their type and severity
      */
     const handleSocketError = useCallback((err: SocketError) => {
         console.error('[useChat] Socket error event received:', err);
-        setError(err); // Store the full error object
-
+        setError(err);
+        
         // Customize toast based on error type
         const errorCategory = err.type.charAt(0).toUpperCase() + err.type.slice(1);
-
+        
         toast({
             title: `${errorCategory} Error (${err.code})`,
             description: err.message || 'An unknown error occurred.',
@@ -130,36 +121,56 @@ export const useChat = (chatId: string | null) => {
     }, [toast]);
 
     /**
-     * Safely adds a message to the messages state, preventing duplicates and sorting.
+     * Creates a properly formatted SocketError object
+     */
+    const createSocketError = useCallback((
+        error: unknown, 
+        type: string = 'connection', 
+        code: string = 'ERROR', 
+        retry: boolean = false
+    ): SocketError => {
+        return {
+            type,
+            code,
+            message: error instanceof Error ? error.message : String(error),
+            retry
+        };
+    }, []);
+
+    /**
+     * Safely adds a message to the messages state
      */
     const addMessage = useCallback((message: ChatMessageType) => {
         setMessages(prev => {
-            // Skip if duplicate ID exists
+            // Skip if duplicate
             if (prev.some(m => m.id === message.id)) {
                 return prev;
             }
-            // Ensure message has a valid status
-            const messageWithStatus = { ...message, status: message.status ?? 'received' };
-            const newMessages = [...prev, messageWithStatus];
+            
+            // Create a new array with the message
+            const newMessages = [...prev, message];
+            
             // Sort by timestamp
-            return newMessages.sort((a, b) =>
-                new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-            );
+            return newMessages.sort((a, b) => {
+                const timeA = new Date(a.timestamp).getTime();
+                const timeB = new Date(b.timestamp).getTime();
+                return timeA - timeB;
+            });
         });
     }, []);
 
     /**
-     * Updates the status of a specific message in the local state.
+     * Updates message status
      */
     const updateMessageStatus = useCallback((messageId: string, status: MessageStatus) => {
-        setMessages(prev =>
+        setMessages(prev => 
             prev.map(m => m.id === messageId ? { ...m, status } : m)
         );
     }, []);
 
     // --- Socket Connection Effect ---
     useEffect(() => {
-        // Skip if essential info is missing
+        // Skip if no chatId or user
         if (!chatId || !user?.publicKey) {
             if (socketRef.current) {
                 console.log('[useChat] Chat ID or User missing, disconnecting existing socket.');
@@ -177,7 +188,7 @@ export const useChat = (chatId: string | null) => {
 
         console.log(`[useChat] Effect triggered for chatId: ${chatId}`);
 
-        // Initialize socket instance if needed (new chat or first load)
+        // Initialize socket instance if needed
         if (!socketRef.current || currentSocketChatId !== chatId) {
             if (socketRef.current) {
                 console.log('[useChat] Chat ID changed, disconnecting previous socket.');
@@ -185,8 +196,7 @@ export const useChat = (chatId: string | null) => {
             }
             console.log('[useChat] Creating new AeroNyxSocket instance.');
             socketRef.current = new AeroNyxSocket();
-            // socketRef.current.chatId = chatId; // Store chatId on socket instance if needed by socket logic
-            setCurrentSocketChatId(chatId); // Track the chat ID this socket is for
+            setCurrentSocketChatId(chatId);
         }
 
         const socket = socketRef.current;
@@ -195,8 +205,9 @@ export const useChat = (chatId: string | null) => {
         const handleConnect = ({ ip, sessionId }: { ip: string, sessionId: string }) => {
             console.log(`[useChat] Socket connected: IP=${ip}, SessionID=${sessionId}`);
             setError(null);
-            // Request initial data in parallel after connection established
-            Promise.allSettled([ // Use allSettled to avoid one failure blocking others
+            
+            // Request initial data in parallel
+            Promise.all([
                 socket?.requestChatInfo().catch(err => console.error("Failed to request chat info:", err)),
                 socket?.requestParticipants().catch(err => console.error("Failed to request participants:", err))
             ]);
@@ -204,7 +215,7 @@ export const useChat = (chatId: string | null) => {
 
         const handleDisconnect = (code: number, reason: string) => {
             console.warn(`[useChat] Socket disconnected event received: ${code} - ${reason}`);
-            // Status is handled by handleStatusChange
+            // Status handled by handleStatusChange
         };
 
         const handleStatusChange = (status: SocketConnectionStatus) => {
@@ -212,37 +223,26 @@ export const useChat = (chatId: string | null) => {
             setConnectionStatus(mapSocketStatus(status));
         };
 
-        // Type assertion needed here because socket.on expects specific payload types
-        // based on event name, which might differ from ChatMessageType slightly.
-        // Ensure the 'message' event payload from socket.ts matches ChatMessageType structure.
-        const handleMessage = (message: any) => {
-            // Add validation here if possible before casting
-            if (message && typeof message.id === 'string') {
-                 console.debug('[useChat] Received message:', message.id);
-                 // Ensure message has necessary fields, assign defaults if needed
-                 const completeMessage: ChatMessageType = {
-                    id: message.id,
-                    content: message.content ?? '',
-                    senderId: message.senderId ?? 'unknown',
-                    senderName: message.senderName ?? 'Anonymous',
-                    timestamp: message.timestamp ?? new Date().toISOString(),
-                    isEncrypted: message.isEncrypted ?? true,
-                    status: message.status ?? 'received' // Assign 'received' status
-                 };
-                 addMessage(completeMessage);
-            } else {
-                console.warn("[useChat] Received invalid message structure:", message);
-            }
+        const handleMessage = (message: ChatMessageType) => {
+            console.debug('[useChat] Received message:', message.id);
+            
+            // Add the received message with a default status if not provided
+            const completeMessage: ChatMessageType = {
+                ...message,
+                status: message.status ?? 'received'
+            };
+            
+            addMessage(completeMessage);
         };
 
         const handleParticipants = (participantsList: Participant[]) => {
-            console.debug('[useChat] Received participants list:', participantsList?.length ?? 0);
-            setParticipants(Array.isArray(participantsList) ? participantsList : []);
+            console.debug('[useChat] Received participants list:', participantsList.length);
+            setParticipants(participantsList);
         };
 
         const handleChatInfo = (info: ChatInfo) => {
             console.debug('[useChat] Received chat info:', info);
-            setChatInfo(info ?? null);
+            setChatInfo(info);
         };
 
         // --- Register Event Listeners ---
@@ -258,25 +258,29 @@ export const useChat = (chatId: string | null) => {
         if (socket.getConnectionStatus() === 'disconnected') {
             console.log('[useChat] Initiating socket connection...');
             setConnectionStatus('connecting');
+            
             socket.connect(chatId, user.publicKey)
                 .then(() => {
-                    console.log('[useChat] socket.connect() promise resolved (connection established).');
-                    // State transition handled by 'connected' event listener
+                    console.log('[useChat] socket.connect() promise resolved.');
                 })
                 .catch(connectError => {
                     console.error('[useChat] socket.connect() promise rejected:', connectError);
-                    // Error state is handled by the 'error' listener or 'disconnected' listener
-                    // Ensure status reflects failure if not already disconnected
-                    if (connectionStatus !== 'disconnected') {
-                        setConnectionStatus('disconnected');
-                    }
+                    
+                    setError(createSocketError(
+                        connectError, 
+                        'connection', 
+                        'CONNECT_FAILED', 
+                        true
+                    ));
+                    setConnectionStatus('disconnected');
                 });
         } else {
-            // If socket exists and is not disconnected, sync local state
+            // Update local state if socket already exists
             setConnectionStatus(mapSocketStatus(socket.getConnectionStatus()));
-            // If already connected, refresh data
+            
+            // Refresh data if connected
             if (socket.isConnected()) {
-                Promise.allSettled([
+                Promise.all([
                     socket.requestChatInfo().catch(err => console.error("Failed to request chat info:", err)),
                     socket.requestParticipants().catch(err => console.error("Failed to request participants:", err))
                 ]);
@@ -286,8 +290,10 @@ export const useChat = (chatId: string | null) => {
         // --- Cleanup Function ---
         return () => {
             console.log(`[useChat] Cleanup effect for chatId: ${chatId}`);
+            
             if (!socket) return;
-            // Remove listeners specific to this hook instance
+            
+            // Remove all event listeners
             socket.off('connected', handleConnect);
             socket.off('disconnected', handleDisconnect);
             socket.off('connectionStatus', handleStatusChange);
@@ -295,140 +301,207 @@ export const useChat = (chatId: string | null) => {
             socket.off('participants', handleParticipants);
             socket.off('chatInfo', handleChatInfo);
             socket.off('error', handleSocketError);
-
-            // Consider if socket should be disconnected here.
-            // If the socket instance is shared or managed globally, only remove listeners.
-            // If the socket instance is tied ONLY to this hook instance, disconnect it.
-            // Assuming for now the socket might be reused if navigating back quickly.
         };
-    // Ensure all dependencies used in the effect are listed
-    }, [chatId, user?.publicKey, user?.id, toast, handleSocketError, addMessage, currentSocketChatId]);
+    }, [
+        chatId, 
+        user?.publicKey, 
+        handleSocketError,
+        currentSocketChatId,
+        createSocketError,
+        addMessage
+    ]);
 
     // --- Public Actions ---
 
     /**
      * Sends a message to the chat room
+     * @param content Message content to send
+     * @returns Promise resolving to success status
      */
     const sendMessage = useCallback(async (content: string): Promise<boolean> => {
         console.debug('[useChat:SEND] Attempting to send message...');
+        
+        // Validate requirements
         if (!user || !socketRef.current || !chatId || content.trim() === '') {
-            console.error('[useChat:SEND] Cannot send: Missing user, socket, chatId, or content.');
-            toast({ title: "Cannot send message", description: "Connection not ready or content empty.", status: "warning" });
+            console.error('[useChat:SEND] Cannot send message: missing required data or connection.');
+            toast({ 
+                title: "Cannot send message", 
+                description: "Connection not ready or content empty.", 
+                status: "warning" 
+            });
             return false;
         }
 
-        // Create local message for optimistic UI
-        const localMessage = createLocalMessage(content, 'sending');
-        addMessage(localMessage); // Add to local state immediately
+        // Create message with optimistic ID
+        const messageToSend = createMessage(content, 'sending');
+        const tempId = messageToSend.id;
+
+        // Optimistic UI update
+        addMessage(messageToSend);
         setIsSendingMessage(true);
 
         try {
-            // Create the payload for the socket, omitting client-side status
-            const sendPayload = createSendPayload(localMessage);
-            const result = await socketRef.current.send(sendPayload); // Use send, not sendMessage
+            // Convert to socket message type before sending
+            const socketMessage = toSocketMessage(messageToSend);
+            const result = await socketRef.current.sendMessage(socketMessage);
 
-            // Update message status based on immediate send result
+            // Update message status based on result
             switch (result) {
                 case SendResult.SENT:
-                    updateMessageStatus(localMessage.id, 'sent');
+                    updateMessageStatus(tempId, 'sent');
                     break;
                 case SendResult.QUEUED:
-                    updateMessageStatus(localMessage.id, 'sending'); // Keep as sending/queued
-                    toast({ title: "Message queued", description: "Will send when connected.", status: "info", duration: 2000 });
+                    updateMessageStatus(tempId, 'sending');
+                    toast({ 
+                        title: "Message queued", 
+                        description: "Will send when connected.", 
+                        status: "info", 
+                        duration: 2000 
+                    });
                     break;
                 case SendResult.FAILED:
                 default:
-                    updateMessageStatus(localMessage.id, 'failed');
-                    toast({ title: "Failed to send message", status: "error" });
-                    return false; // Indicate failure
+                    updateMessageStatus(tempId, 'failed');
+                    toast({ 
+                        title: "Failed to send message", 
+                        status: "error" 
+                    });
+                    return false;
             }
-            return result !== SendResult.FAILED; // Return true if sent or queued
 
+            return result !== SendResult.FAILED;
         } catch (error) {
-            console.error('[useChat:SEND] Error during send operation:', error);
-            updateMessageStatus(localMessage.id, 'failed');
-            toast({ title: "Error sending message", description: error instanceof Error ? error.message : "Unknown error", status: "error" });
+            console.error('[useChat:SEND] Error sending message:', error);
+            
+            // Update failed message status
+            updateMessageStatus(tempId, 'failed');
+            
+            toast({ 
+                title: "Error sending message", 
+                description: error instanceof Error ? error.message : "Unknown error", 
+                status: "error" 
+            });
+            
             return false;
         } finally {
             setIsSendingMessage(false);
         }
-    }, [user, chatId, toast, createLocalMessage, addMessage, updateMessageStatus]); // Add necessary dependencies
+    }, [
+        user, 
+        chatId, 
+        toast, 
+        createMessage, 
+        addMessage, 
+        updateMessageStatus
+    ]);
 
     /**
      * Leaves the current chat room
+     * @returns Promise resolving to success status
      */
     const leaveChat = useCallback(async (): Promise<boolean> => {
         console.debug('[useChat:LEAVE] Attempting to leave chat room:', chatId);
-        if (!socketRef.current) {
-            console.warn("[useChat:LEAVE] Socket ref is null.");
-            return false;
-        }
+        
+        if (!socketRef.current) return false;
+        
         try {
             await socketRef.current.leaveChat();
-            toast({ title: "Left chat", status: "success", duration: 3000 });
-            // Reset local state after leaving
+            
+            toast({ 
+                title: "Left chat", 
+                status: "success",
+                duration: 3000
+            });
+            
+            // Reset state
             setMessages([]);
             setParticipants([]);
             setChatInfo(null);
-            setError(null);
-            // Optionally navigate away
-            // router.push('/dashboard');
+            
             return true;
         } catch (error) {
             console.error('[useChat:LEAVE] Failed to leave chat:', error);
-            toast({ title: "Error leaving chat", status: "error" });
+            
+            toast({ 
+                title: "Error leaving chat", 
+                status: "error" 
+            });
+            
             return false;
         }
-    }, [chatId, toast]); // Removed router dependency unless used
+    }, [chatId, toast]);
 
     /**
      * Deletes the current chat room (if user is creator)
+     * @returns Promise resolving to success status
      */
     const deleteChat = useCallback(async (): Promise<boolean> => {
         console.debug('[useChat:DELETE] Attempting to delete chat room:', chatId);
+        
         if (!socketRef.current || !isCreator) {
-            console.error('[useChat:DELETE] Not authorized or socket unavailable.');
-            toast({ title: "Cannot delete chat", description: "You are not the creator or connection unavailable.", status: "error" });
+            console.error('[useChat:DELETE] Not authorized or chat info unavailable.');
+            
+            toast({ 
+                title: "Cannot delete chat", 
+                description: "You are not the creator or chat info is missing.", 
+                status: "error"
+            });
+            
             return false;
         }
+        
         try {
             const result = await socketRef.current.deleteChat();
+            
             if (result === SendResult.SENT || result === SendResult.QUEUED) {
-                toast({ title: "Chat deletion requested", status: "info" });
-                // Optionally navigate away
-                // router.push('/dashboard');
+                toast({ 
+                    title: "Chat deletion requested", 
+                    status: "info" 
+                });
+                
                 return true;
             } else {
-                toast({ title: "Failed to request chat deletion", status: "error" });
+                toast({ 
+                    title: "Failed to request chat deletion", 
+                    status: "error" 
+                });
+                
                 return false;
             }
         } catch (error) {
             console.error('[useChat:DELETE] Failed to delete chat:', error);
-            toast({ title: "Error deleting chat", status: "error" });
+            
+            toast({ 
+                title: "Error deleting chat", 
+                status: "error" 
+            });
+            
             return false;
         }
-    }, [chatId, isCreator, toast]); // Removed router dependency unless used
+    }, [chatId, isCreator, toast]);
 
     /**
      * Refreshes the participants list from the server
      */
     const refreshParticipants = useCallback(async (): Promise<void> => {
         console.debug('[useChat:REFRESH] Refreshing participants list');
+        
         if (!socketRef.current?.isConnected()) {
             console.warn('[useChat:REFRESH] Cannot refresh participants: Not connected.');
             return;
         }
+        
         try {
-            const result = await socketRef.current.requestParticipants();
-            if (result === SendResult.FAILED) {
-                 toast({ title: "Failed to request participants refresh", status: "warning" });
-            }
+            await socketRef.current.requestParticipants();
         } catch (error) {
             console.error('[useChat:REFRESH] Failed to request participants refresh:', error);
-            toast({ title: "Error refreshing participants", status: "warning" });
+            
+            toast({ 
+                title: "Failed to refresh participants", 
+                status: "warning" 
+            });
         }
     }, [toast]);
-
 
     // --- Return Hook State and Actions ---
     return {
@@ -443,6 +516,6 @@ export const useChat = (chatId: string | null) => {
         isSendingMessage,
         error,
         isCreator,
-        socketInstance: socketRef.current // Expose socket instance if needed externally (use with caution)
+        socketInstance: socketRef.current
     };
 };
