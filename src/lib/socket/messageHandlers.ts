@@ -148,14 +148,22 @@ export async function processDataPacket(
     
     // Decrypt using aes256gcm
     const decryptedText = await decryptWithAesGcm(
-      encryptedUint8,
+      encryptedUint8, 
       nonceUint8,
       sessionKey,
       'string'   // Output as string
     );
     
-    // Parse the decrypted JSON
-    return JSON.parse(decryptedText);
+    // Parse the decrypted JSON - ensure we're working with a string
+    if (typeof decryptedText === 'string') {
+      return JSON.parse(decryptedText);
+    } else if (decryptedText instanceof Uint8Array) {
+      // Convert Uint8Array to string if needed
+      const textDecoder = new TextDecoder();
+      return JSON.parse(textDecoder.decode(decryptedText));
+    } else {
+      throw new Error('Unexpected decryption result type');
+    }
   } catch (error) {
     console.error('[Socket] Error processing data packet:', error);
     return null;
