@@ -675,7 +675,9 @@ export class WebRTCManager extends EventEmitter {
   private handleSignalingMessage = async (signalData: any): Promise<void> => {
     // Validate signal structure
     if (!signalData || typeof signalData !== 'object' || 
-        !signalData.type || !signalData.sender || !signalData.signal) {
+        typeof signalData.type !== 'string' || 
+        typeof signalData.sender !== 'string' || 
+        !signalData.signal || typeof signalData.signal !== 'object') {
       console.warn('[WebRTC] Received invalid signaling message structure:', signalData);
       return;
     }
@@ -1045,7 +1047,8 @@ private async handleOfferSignal(signal: WebRTCSignal, sender: string): Promise<v
         const nonce = await generateNonce();
         
         // Encrypt the message
-        const { ciphertext, nonce: usedNonce } = await encryptWithAesGcm(messageString, this.p2pEncryptionKey, nonce);
+        const { ciphertext, nonce: usedNonce }: { ciphertext: Uint8Array, nonce: Uint8Array } = 
+          await encryptWithAesGcm(messageString, this.p2pEncryptionKey, nonce);
         
         // Prepare envelope with encryption metadata
         const envelope: EncryptedMessageEnvelope = {
