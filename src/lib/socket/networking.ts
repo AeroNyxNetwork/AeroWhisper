@@ -1,5 +1,6 @@
 // src/lib/socket/networking.ts
 import { DisconnectMessage } from './types';
+import { PongMessage } from './types';
 
 /**
  * WebSocket ready states with named constants for better code readability
