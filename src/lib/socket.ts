@@ -1,5 +1,4 @@
 // src/lib/socket.ts
-
 import { EventEmitter } from 'events';
 import * as bs58 from 'bs58';
 import { Buffer } from 'buffer'; // Ensure buffer polyfill is available
@@ -17,19 +16,13 @@ import {
   createEncryptedDataPacket,
   processEncryptedDataPacket,
   testEncryptionCompat,
-  numberArrayToUint8Array,
-  // Type guards for message validation
-  isMessageType,
-  isChatInfoPayload,
-  isParticipantsPayload,
-  isWebRTCSignalPayload,
-  isKeyRotationRequestPayload,
-  isKeyRotationResponsePayload,
-  validateMessageStructure // Generic validation fallback if needed
+  numberArrayToUint8Array
+  // Remove duplicated type guards from here
 } from '../utils/cryptoUtils'; // Adjust path if needed
 
 import { getStoredKeypair } from '../utils/keyStorage';
 
+// Keep the validation imports but with aliases
 import {
   isMessageType as isMessageTypeValidation,
   isChatInfoPayload as isChatInfoPayloadValidation,
@@ -37,33 +30,40 @@ import {
   isWebRTCSignalPayload as isWebRTCSignalPayloadValidation,
   isKeyRotationRequestPayload as isKeyRotationRequestPayloadValidation,
   isKeyRotationResponsePayload as isKeyRotationResponsePayloadValidation,
-  validateMessageStructure // Generic validation fallback if needed
+  validateMessageStructure as validateMessageStructureValidation
 } from '../types/validation'; // Adjust path if needed
 
-// Import packet types (ensure these match the spec)
+// Import packet types and the actual validation functions we'll use
 import {
-    AuthMessage,
-    ChallengeMessage,
-    ChallengeResponse,
-    IpAssignMessage,
-    PingMessage,
-    PongMessage,
-    ErrorMessage,
-    DisconnectMessage,
-    isMessageType,
-    isChatInfoPayload,
-    isParticipantsPayload,
-    isWebRTCSignalPayload,
-    isKeyRotationRequestPayload, // Import if needed
-    isKeyRotationResponsePayload, // Import if needed
-    validateMessageStructure // Or use the unified validatePayload if preferred
-    // ... other packet types
+  AuthMessage,
+  ChallengeMessage,
+  ChallengeResponse,
+  IpAssignMessage,
+  PingMessage,
+  PongMessage,
+  ErrorMessage,
+  DisconnectMessage,
+  MessageType,
+  ChatInfo,
+  Participant,
+  WebRTCSignalPayload,
+  KeyRotationRequest,
+  KeyRotationResponse,
+  // Import the actual validation functions we'll use
+  isMessageType,
+  isChatInfoPayload,
+  isParticipantsPayload,
+  isWebRTCSignalPayload,
+  isKeyRotationRequestPayload,
+  isKeyRotationResponsePayload,
+  validateMessageStructure
 } from './socket/types'; // Ensure types.ts is updated and accurate
 
 // Import reconnection and networking utilities
 import { ReconnectionConfig } from './socket/reconnection'; // Assuming this file is kept for config definition
 import { calculateBackoffDelay, canRetry, shouldAttemptReconnect } from './socket/reconnection'; // Assuming helpers are kept
 import { createWebSocketUrl, isSocketOpen, createDisconnectMessage as formatDisconnectMessage } from './socket/networking';
+
 
 /**
  * Result of sending a message through the socket
