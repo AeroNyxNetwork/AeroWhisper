@@ -750,27 +750,41 @@ export class WebRTCManager extends EventEmitter {
    * @param signal The offer signal part.
    * @param sender The peer ID of the sender.
    */
-  private async handleOfferSignal(signal: WebRTCSignal, sender: string): Promise<void> {
-    // Handle signaling state conflicts (glare)
-    if (this.peerConnection && this.peerConnection.signalingState !== 'stable') {
-      console.warn(`[WebRTC] Received offer but signaling state is ${this.peerConnection.signalingState}. Handling potential glare.`);
-      
-      // Basic glare handling: initiator keeps their offer, non-initiator accepts incoming
-      if (this.isInitiator) {
-        console.log("[WebRTC] Glare detected: Initiator ignoring incoming offer.");
-        return;
-      } else {
-        console.log("[WebRTC] Glare detected: Non-initiator resetting and accepting incoming offer.");
-        this.reset();
-      }
+
+private async handleOfferSignal(signal: WebRTCSignal, sender: string): Promise<void> {
+  // Additional security validation
+  if (!signal.sdp || typeof signal.sdp !== 'string' || signal.sdp.length < 50) {
+    console.warn('[WebRTC] Rejected offer with invalid SDP');
+    this.emitError({
+      type: 'signaling',
+      message: 'Received offer with invalid SDP',
+      details: 'SDP validation failed',
+      recoverable: true
+    });
+    return;
+  }
+  
+  // Handle signaling state conflicts (glare)
+  if (this.peerConnection && this.peerConnection.signalingState !== 'stable') {
+    console.warn(`[WebRTC] Received offer but signaling state is ${this.peerConnection.signalingState}. Handling potential glare.`);
+    
+    // Basic glare handling: initiator keeps their offer, non-initiator accepts incoming
+    if (this.isInitiator) {
+      console.log("[WebRTC] Glare detected: Initiator ignoring incoming offer.");
+      return;
+    } else {
+      console.log("[WebRTC] Glare detected: Non-initiator resetting and accepting incoming offer.");
+      this.reset();
     }
+  }
 
-    this.remotePeerId = sender;
-    this.isInitiator = false;
-    await this.setConnectionState('connecting');
+  this.remotePeerId = sender;
+  this.isInitiator = false;
+  await this.setConnectionState('connecting');
 
-    // Create peer connection if it doesn't exist
-    if (!this.peerConnection) {
+  // Create peer connection if it doesn't exist
+  if (!this.peerConnection) {
+    try {
       this.peerConnection = new RTCPeerConnection({
         iceServers: this.config.iceServers,
         iceCandidatePoolSize: this.config.iceCandidatePoolSize,
@@ -778,36 +792,60 @@ export class WebRTCManager extends EventEmitter {
         iceTransportPolicy: this.config.iceTransportPolicy
       });
       this.setupPeerConnectionHandlers();
-    }
-
-    try {
-      console.debug('[WebRTC] Setting remote description (offer)...');
-      await this.peerConnection.setRemoteDescription(
-        new RTCSessionDescription({ type: 'offer', sdp: signal.sdp })
-      );
-      this.remoteDescriptionSet = true;
-      console.debug('[WebRTC] Remote description (offer) set.');
-
-      // Process any queued candidates
-      await this.addPendingCandidates();
-
-      console.debug('[WebRTC] Creating answer...');
-      const answer = await this.peerConnection.createAnswer();
-      await this.peerConnection.setLocalDescription(answer);
-      console.debug('[WebRTC] Local description (answer) set.');
-
-      // Send the answer back
-      await this.sendSignal(sender, { 
-        type: 'answer', 
-        sdp: answer.sdp,
-        timestamp: Date.now()
-      });
-      console.log(`[WebRTC] Answer sent to peer: ${sender}`);
     } catch (error) {
-      console.error('[WebRTC] Error processing offer:', error);
-      throw error;
+      console.error('[WebRTC] Failed to create RTCPeerConnection:', error);
+      this.emitError({
+        type: 'connection',
+        message: 'Failed to create RTCPeerConnection',
+        details: error instanceof Error ? error.message : String(error),
+        recoverable: false
+      });
+      return;
     }
   }
+
+  try {
+    console.debug('[WebRTC] Setting remote description (offer)...');
+    await this.peerConnection.setRemoteDescription(
+      new RTCSessionDescription({ type: 'offer', sdp: signal.sdp })
+    );
+    this.remoteDescriptionSet = true;
+    console.debug('[WebRTC] Remote description (offer) set.');
+
+    // Process any queued candidates
+    await this.addPendingCandidates();
+
+    console.debug('[WebRTC] Creating answer...');
+    const answer = await this.peerConnection.createAnswer();
+    await this.peerConnection.setLocalDescription(answer);
+    console.debug('[WebRTC] Local description (answer) set.');
+
+    // Send the answer back with timeout protection
+    const sendAnswerPromise = this.sendSignal(sender, { 
+      type: 'answer', 
+      sdp: answer.sdp,
+      timestamp: Date.now()
+    });
+    
+    // Add timeout for answer sending
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error('Sending answer timed out')), 5000);
+    });
+    
+    await Promise.race([sendAnswerPromise, timeoutPromise]);
+    console.log(`[WebRTC] Answer sent to peer: ${sender}`);
+  } catch (error) {
+    console.error('[WebRTC] Error processing offer:', error);
+    this.emitError({
+      type: 'signaling',
+      message: 'Failed to process offer',
+      details: error instanceof Error ? error.message : String(error),
+      recoverable: true
+    });
+    // Clean up if we couldn't process the offer
+    this.cleanupPeerConnection();
+  }
+}
 
   /**
    * Handles an incoming Answer signal.
