@@ -1,4 +1,3 @@
-
 // src/lib/socket.ts
 
 import { EventEmitter } from 'events';
@@ -111,7 +110,7 @@ export interface AeroNyxSocketTestingInterface {
 /**
  * Internal connection state for state machine pattern
  */
-enum ConnectionState {
+enum InternalConnectionState {
   DISCONNECTED = 'disconnected',
   CONNECTING = 'connecting',
   AUTHENTICATING = 'authenticating', // Added state for clarity during auth
@@ -297,13 +296,13 @@ export class AeroNyxSocket extends EventEmitter {
     if (isOnline) {
       // If reconnection is enabled and we're not already connected, try to reconnect
       if (this.autoReconnect && 
-         (this.connectionState === ConnectionState.DISCONNECTED ||
-          this.connectionState === ConnectionState.RECONNECTING)) {
+         (this.connectionState === InternalConnectionState.DISCONNECTED ||
+          this.connectionState === InternalConnectionState.RECONNECTING)) {
         this.scheduleReconnect();
       }
     } else {
       // If we're offline, check connection health which may trigger reconnection
-      if (this.connectionState === ConnectionState.CONNECTED) {
+      if (this.connectionState === InternalConnectionState.CONNECTED) {
         this.checkConnectionHealth();
       }
     }
@@ -318,11 +317,11 @@ export class AeroNyxSocket extends EventEmitter {
     
     if (isVisible) {
       // When tab becomes visible, check connection health
-      if (this.connectionState === ConnectionState.CONNECTED) {
+      if (this.connectionState === InternalConnectionState.CONNECTED) {
         this.checkConnectionHealth();
       } else if (this.autoReconnect && 
-                (this.connectionState === ConnectionState.DISCONNECTED || 
-                 this.connectionState === ConnectionState.RECONNECTING)) {
+                (this.connectionState === InternalConnectionState.DISCONNECTED || 
+                 this.connectionState === InternalConnectionState.RECONNECTING)) {
         // Try reconnecting if not already connected
         this.scheduleReconnect();
       }
@@ -416,13 +415,13 @@ export class AeroNyxSocket extends EventEmitter {
    */
   public async connect(chatId: string, publicKey: string): Promise<void> {
     // 1. Handle already connected state
-    if (this.connectionState === ConnectionState.CONNECTED && this.chatId === chatId && !this.forceReconnect) {
+    if (this.connectionState === InternalConnectionState.CONNECTED && this.chatId === chatId && !this.forceReconnect) {
       console.log('[Socket] Already connected to this chat.');
       return Promise.resolve();
     }
 
     // 2. Handle concurrent connection attempts
-    if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+    if (this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) {
       console.warn('[Socket] Connection attempt already in progress.');
       if (this.connectionPromise && this.chatId === chatId) {
         console.log('[Socket] Returning existing connection promise for the same chat.');
@@ -438,7 +437,7 @@ export class AeroNyxSocket extends EventEmitter {
     console.log(`[Socket] Attempting to connect to chat: ${chatId}`);
     this.chatId = chatId;
     this.publicKey = publicKey;
-    await this.safeChangeState(ConnectionState.CONNECTING); // Set state before async ops
+    await this.safeChangeState(InternalConnectionState.CONNECTING); // Set state before async ops
     this.forceReconnect = false;
     this.autoReconnect = true;
     this.reconnectAttempts = 0;
@@ -461,7 +460,7 @@ export class AeroNyxSocket extends EventEmitter {
         this.startConnectionTimeout();    // Start timeout for the connection attempt
       } catch (error) {
         console.error('[Socket] Failed to create WebSocket instance:', error);
-        this.safeChangeState(ConnectionState.DISCONNECTED); // Ensure state is correct
+        this.safeChangeState(InternalConnectionState.DISCONNECTED); // Ensure state is correct
         this.clearConnectionTimeout();
         const initError = new Error(`WebSocket initialization failed: ${error instanceof Error ? error.message : String(error)}`);
         this.emit('error', this.createSocketError('connection', 'Failed to initialize WebSocket', 'INIT_ERROR', undefined, false, error));
@@ -477,14 +476,14 @@ export class AeroNyxSocket extends EventEmitter {
    */
   public async disconnect(): Promise<void> {
     // Prevent disconnect loops or disconnecting if already disconnected/closing
-    if (this.connectionState === ConnectionState.DISCONNECTED || this.connectionState === ConnectionState.CLOSING) {
+    if (this.connectionState === InternalConnectionState.DISCONNECTED || this.connectionState === InternalConnectionState.CLOSING) {
         console.debug(`[Socket] Disconnect called but already in state: ${this.connectionState}`);
         return Promise.resolve();
     }
 
     console.log('[Socket] Disconnecting...');
     this.autoReconnect = false; // Prevent auto-reconnect after explicit disconnect
-    await this.safeChangeState(ConnectionState.CLOSING);
+    await this.safeChangeState(InternalConnectionState.CLOSING);
 
     // Attempt graceful shutdown
     if (this.socket && isSocketOpen(this.socket)) {
@@ -506,7 +505,7 @@ export class AeroNyxSocket extends EventEmitter {
 
     // Perform final cleanup regardless of graceful close success
     this.cleanupConnection(true); // Perform full cleanup and emit events if needed
-    await this.safeChangeState(ConnectionState.DISCONNECTED); // Ensure final state is DISCONNECTED
+    await this.safeChangeState(InternalConnectionState.DISCONNECTED); // Ensure final state is DISCONNECTED
     console.log('[Socket] Disconnect process complete.');
   }
 
@@ -514,7 +513,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Checks if the socket is fully connected and authenticated.
    */
   public isConnected(): boolean {
-    return this.connectionState === ConnectionState.CONNECTED &&
+    return this.connectionState === InternalConnectionState.CONNECTED &&
            this.socket !== null &&
            isSocketOpen(this.socket) &&
            this.sessionKey !== null;
@@ -524,7 +523,7 @@ export class AeroNyxSocket extends EventEmitter {
    * Cleans up all timers, socket listeners, and resets state variables.
    */
   private cleanupConnection(emitEvents: boolean = true): void {
-    const wasConnected = this.connectionState === ConnectionState.CONNECTED;
+    const wasConnected = this.connectionState === InternalConnectionState.CONNECTED;
     
     console.debug('[Socket] Cleaning up connection resources...');
     
@@ -567,7 +566,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.processingQueue = false;
   
     // 4. Reset connection promise state if connection failed/closed prematurely
-    if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+    if (this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) {
       this.rejectConnection(new Error("Connection closed during setup"));
     } else {
       // Clear promise handlers if disconnected after successful connection or during closing
@@ -584,9 +583,8 @@ export class AeroNyxSocket extends EventEmitter {
     }
   
     // 6. Ensure final state is DISCONNECTED unless explicitly closing
-    if (this.connectionState !== InternalConnectionState.CONNECTED) {
+    if (this.connectionState !== InternalConnectionState.CLOSING) {
       this.safeChangeState(InternalConnectionState.DISCONNECTED);
-      this.scheduleReconnect();
     }
   
     console.debug('[Socket] Connection cleanup complete.');
@@ -610,8 +608,6 @@ export class AeroNyxSocket extends EventEmitter {
         return 'disconnected';
     }
   }
-
-  
 
   /**
    * Sends application-level data encrypted over the WebSocket.
@@ -851,7 +847,7 @@ export class AeroNyxSocket extends EventEmitter {
   private handleSocketOpen(): void {
     this.clearConnectionTimeout(); // Connection successful, clear timeout
     console.log('[Socket] WebSocket connection opened. Sending Auth...');
-    this.safeChangeState(ConnectionState.AUTHENTICATING); // Move to authenticating state
+    this.safeChangeState(InternalConnectionState.AUTHENTICATING); // Move to authenticating state
     this.sendAuthMessage();
   }
 
@@ -928,7 +924,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.cleanupConnection(false); // Clean up resources without emitting extra events yet
 
     // Reject connection promise if closed during connection/auth phase
-    if (previousState === ConnectionState.CONNECTING || previousState === ConnectionState.AUTHENTICATING) {
+    if (previousState === InternalConnectionState.CONNECTING || previousState === InternalConnectionState.AUTHENTICATING) {
       console.error('[Socket] Connection closed during handshake.');
       this.emit('error', this.createSocketError(
         'connection',
@@ -938,14 +934,14 @@ export class AeroNyxSocket extends EventEmitter {
         true // Usually retryable
       ));
       this.rejectConnection(new Error(`Connection closed during handshake: ${event.code} ${event.reason}`));
-    } else if (previousState === ConnectionState.CONNECTED) {
+    } else if (previousState === InternalConnectionState.CONNECTED) {
       // If we were previously connected, emit standard disconnect events
       this.emit('connectionStatus', 'disconnected');
       this.emit('disconnected', event.code, event.reason);
     }
 
     // Final state update
-    this.safeChangeState(ConnectionState.DISCONNECTED);
+    this.safeChangeState(InternalConnectionState.DISCONNECTED);
 
     // Handle reconnection logic
     if (this.autoReconnect && shouldAttemptReconnect(event.code) && canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
@@ -979,7 +975,7 @@ export class AeroNyxSocket extends EventEmitter {
     ));
 
     // If the error occurred during connection/auth, reject the promise
-    if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+    if (this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) {
       this.rejectConnection(new Error(errorMsg));
       // Note: cleanupConnection and state change will be handled by the subsequent 'onclose' event
     } else {
@@ -1005,7 +1001,7 @@ export class AeroNyxSocket extends EventEmitter {
       switch (message.type) {
         case 'Challenge':
           // Ensure we are in the right state to process a challenge
-          if (this.connectionState !== ConnectionState.AUTHENTICATING) {
+          if (this.connectionState !== InternalConnectionState.AUTHENTICATING) {
               console.warn(`[Socket] Received Challenge in unexpected state: ${this.connectionState}`);
               return;
           }
@@ -1014,7 +1010,7 @@ export class AeroNyxSocket extends EventEmitter {
 
         case 'IpAssign':
            // Ensure we are in the right state
-           if (this.connectionState !== ConnectionState.AUTHENTICATING) {
+           if (this.connectionState !== InternalConnectionState.AUTHENTICATING) {
               console.warn(`[Socket] Received IpAssign in unexpected state: ${this.connectionState}`);
               return;
           }
@@ -1023,7 +1019,7 @@ export class AeroNyxSocket extends EventEmitter {
 
         case 'Data':
            // Should only process Data if fully connected
-           if (this.connectionState !== ConnectionState.CONNECTED) {
+           if (this.connectionState !== InternalConnectionState.CONNECTED) {
                console.warn(`[Socket] Received Data packet in non-connected state: ${this.connectionState}`);
                return;
            }
@@ -1048,11 +1044,11 @@ export class AeroNyxSocket extends EventEmitter {
 
         // Key Rotation handling
         case 'KeyRotationRequest':
-             if (this.connectionState !== ConnectionState.CONNECTED) return;
+             if (this.connectionState !== InternalConnectionState.CONNECTED) return;
              await this.handleKeyRotationRequest(message);
              break;
         case 'KeyRotationResponse':
-             if (this.connectionState !== ConnectionState.CONNECTED) return;
+             if (this.connectionState !== InternalConnectionState.CONNECTED) return;
              await this.handleKeyRotationResponse(message);
              break;
 
@@ -1072,7 +1068,7 @@ export class AeroNyxSocket extends EventEmitter {
            error
        ));
        // If an error occurs during connection/auth phase, reject the main promise
-       if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+       if (this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) {
            this.rejectConnection(error);
            await this.disconnect(); // Ensure cleanup on critical processing error during setup
        }
@@ -1087,7 +1083,7 @@ export class AeroNyxSocket extends EventEmitter {
     console.log('[Socket] Received Challenge, ID:', message.id);
     try {
       // 1. Validate state and message
-      if (this.connectionState !== ConnectionState.AUTHENTICATING) throw new Error("Not in authenticating state.");
+      if (this.connectionState !== InternalConnectionState.AUTHENTICATING) throw new Error("Not in authenticating state.");
       if (!message.server_key) throw new Error('Server public key missing in Challenge');
       this.serverPublicKey = message.server_key;
       console.log('[Socket] Stored server Ed25519 public key (Base58):', this.serverPublicKey.substring(0, 10) + '...');
@@ -1141,7 +1137,7 @@ export class AeroNyxSocket extends EventEmitter {
     console.log(`[Socket] Received IpAssign. Session ID: ${message.session_id}`);
     try {
        // 1. Validate state and message
-      if (this.connectionState !== ConnectionState.AUTHENTICATING) throw new Error("Not in authenticating state.");
+      if (this.connectionState !== InternalConnectionState.AUTHENTICATING) throw new Error("Not in authenticating state.");
       if (message.encryption_algorithm !== 'aes256gcm') throw new Error(`Unsupported encryption algorithm: ${message.encryption_algorithm}`);
       if (!message.encrypted_session_key || !message.key_nonce) throw new Error('Missing encrypted_session_key or key_nonce');
       if (!this.serverPublicKey) throw new Error('Server public key missing from previous step');
@@ -1198,7 +1194,7 @@ export class AeroNyxSocket extends EventEmitter {
       console.debug(' - Stored Session Key Prefix:', Buffer.from(this.sessionKey.slice(0,8)).toString('hex'));
 
       // 10. Finalize Connection
-      await this.safeChangeState(ConnectionState.CONNECTED);
+      await this.safeChangeState(InternalConnectionState.CONNECTED);
       this.emit('connectionStatus', 'connected');
       this.startKeepAliveServices(); // Start ping, heartbeat, etc.
       this.startKeyRotationTimer();  // Start periodic key rotation check
@@ -1469,7 +1465,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.emit('error', this.createSocketError('server',message.message,`SERVER_${message.code || 'UNKNOWN'}`,undefined,!isFatalAuthError,message));
 
     // If error occurs during connection and is fatal, reject the promise
-    if ((this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) && isFatalAuthError) {
+    if ((this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) && isFatalAuthError) {
       console.error("[Socket] Fatal server error during connection phase. Aborting.");
       this.rejectConnection(new Error(`Server error ${message.code}: ${message.message}`));
       this.cleanupConnection(true);
@@ -1484,23 +1480,20 @@ export class AeroNyxSocket extends EventEmitter {
   /**
    * Handles server Disconnect messages.
    */
-  /**
-   * Handles server Disconnect messages.
-   */
   private handleDisconnect(message: DisconnectMessage): void {
     console.warn(`[Socket] Received Disconnect from server: Reason=${message.reason}, Message=${message.message}`);
     const previousState = this.connectionState;
     this.cleanupConnection(false); // Clean resources first
 
     // Reject connect promise if disconnected during setup
-    if (previousState === ConnectionState.CONNECTING || previousState === ConnectionState.AUTHENTICATING) {
-      this.safeChangeState(ConnectionState.DISCONNECTED);
+    if (previousState === InternalConnectionState.CONNECTING || previousState === InternalConnectionState.AUTHENTICATING) {
+      this.safeChangeState(InternalConnectionState.DISCONNECTED);
       this.rejectConnection(new Error(`Server disconnected during setup: ${message.reason} ${message.message}`));
-    } else if (previousState === ConnectionState.CONNECTED) {
+    } else if (previousState === InternalConnectionState.CONNECTED) {
       // Emit events if previously connected
       this.emit('connectionStatus', 'disconnected');
       this.emit('disconnected', message.reason, message.message);
-      this.safeChangeState(ConnectionState.DISCONNECTED);
+      this.safeChangeState(InternalConnectionState.DISCONNECTED);
     }
 
     // Decide on reconnection
@@ -1674,7 +1667,7 @@ export class AeroNyxSocket extends EventEmitter {
       const timeSinceLastMessage = now - this.lastMessageTime;
 
       // Check if disconnected and should reconnect
-      if (this.connectionState === ConnectionState.DISCONNECTED &&
+      if (this.connectionState === InternalConnectionState.DISCONNECTED &&
           this.autoReconnect &&
           canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
         console.log('[Socket] Keep-alive detected disconnected state, scheduling reconnect.');
@@ -1683,7 +1676,7 @@ export class AeroNyxSocket extends EventEmitter {
       }
 
       // Check if connected but unresponsive
-      if (this.connectionState === ConnectionState.CONNECTED && timeSinceLastMessage > KEEP_ALIVE_THRESHOLD_MS) {
+      if (this.connectionState === InternalConnectionState.CONNECTED && timeSinceLastMessage > KEEP_ALIVE_THRESHOLD_MS) {
         console.warn(`[Socket] No messages received for ${Math.round(timeSinceLastMessage/1000)}s. Checking connection health.`);
         this.checkConnectionHealth();
       }
@@ -1702,7 +1695,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.stopHeartbeat();
     console.debug('[Socket] Starting heartbeat');
     this.heartbeatInterval = setInterval(() => {
-      if (this.connectionState !== ConnectionState.CONNECTED || !this.socket || !isSocketOpen(this.socket)) {
+      if (this.connectionState !== InternalConnectionState.CONNECTED || !this.socket || !isSocketOpen(this.socket)) {
         return; // Only send heartbeat when fully connected
       }
       const timeSinceLast = Date.now() - this.lastMessageTime;
@@ -1727,7 +1720,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.stopKeyRotationTimer();
     console.debug(`[Socket] Starting session key rotation timer (Interval: ${KEY_ROTATION_INTERVAL_MS}ms)`);
     this.keyRotationTimer = setInterval(() => {
-      if (this.connectionState === ConnectionState.CONNECTED) {
+      if (this.connectionState === InternalConnectionState.CONNECTED) {
           console.log('[Socket] Triggering scheduled session key rotation.');
           this.rotateSessionKey().catch(err => {
               console.error('[Socket] Scheduled key rotation failed:', err);
@@ -1794,7 +1787,7 @@ export class AeroNyxSocket extends EventEmitter {
   /** Checks connection health, potentially triggering reconnection if unresponsive. */
   private checkConnectionHealth(): void {
     // Only check if we think we should be connected
-    if (this.connectionState !== ConnectionState.CONNECTED) {
+    if (this.connectionState !== InternalConnectionState.CONNECTED) {
       console.debug("[Socket Health Check] Not in CONNECTED state, skipping.");
       return;
     }
@@ -1820,17 +1813,17 @@ export class AeroNyxSocket extends EventEmitter {
     if (!this.autoReconnect) {
       console.log("[Socket] Connection failure detected, but auto-reconnect is disabled.");
       this.cleanupConnection(true); // Ensure cleanup
-      this.safeChangeState(ConnectionState.DISCONNECTED);
+      this.safeChangeState(InternalConnectionState.DISCONNECTED);
       return;
     }
     // Prevent multiple concurrent reconnection attempts
-    if (this.connectionState === ConnectionState.RECONNECTING || this.reconnectTimeout) {
+    if (this.connectionState === InternalConnectionState.RECONNECTING || this.reconnectTimeout) {
       console.debug("[Socket] Connection failure handling skipped: Already reconnecting or reconnect scheduled.");
       return;
     }
 
     console.warn('[Socket] Connection failure detected. Initiating reconnection process...');
-    const wasConnected = this.connectionState === ConnectionState.CONNECTED;
+    const wasConnected = this.connectionState === InternalConnectionState.CONNECTED;
     this.cleanupConnection(false); // Clean up resources
 
     // Emit error/status only if previously connected
@@ -1840,7 +1833,7 @@ export class AeroNyxSocket extends EventEmitter {
     }
 
     // Immediately transition to RECONNECTING and schedule the first attempt
-    this.safeChangeState(ConnectionState.RECONNECTING);
+    this.safeChangeState(InternalConnectionState.RECONNECTING);
     this.scheduleReconnect();
   }
   
@@ -1854,14 +1847,14 @@ export class AeroNyxSocket extends EventEmitter {
        console.debug("[Socket] Cleared existing reconnect timeout.");
     }
     // Don't schedule if already connecting/authenticating or closing
-    if (this.connectionState === ConnectionState.CONNECTING ||
-        this.connectionState === ConnectionState.AUTHENTICATING ||
-        this.connectionState === ConnectionState.CLOSING) {
+    if (this.connectionState === InternalConnectionState.CONNECTING ||
+        this.connectionState === InternalConnectionState.AUTHENTICATING ||
+        this.connectionState === InternalConnectionState.CLOSING) {
       console.debug(`[Socket] Skipping reconnect schedule: State is ${this.connectionState}.`);
       return;
     }
      // Ensure we are marked as reconnecting
-     this.safeChangeState(ConnectionState.RECONNECTING);
+     this.safeChangeState(InternalConnectionState.RECONNECTING);
 
 
     // Check max attempts
@@ -1869,7 +1862,7 @@ export class AeroNyxSocket extends EventEmitter {
       console.log(`[Socket] Max reconnection attempts (${this.reconnectionConfig.maxAttempts}) reached. Stopping.`);
       this.emit('error', this.createSocketError('connection',`Failed to reconnect after ${this.reconnectionConfig.maxAttempts} attempts`,'MAX_RECONNECT',undefined,false));
       this.autoReconnect = false; // Give up
-      this.safeChangeState(ConnectionState.DISCONNECTED); // Ensure final state is disconnected
+      this.safeChangeState(InternalConnectionState.DISCONNECTED); // Ensure final state is disconnected
       return;
     }
 
@@ -1885,7 +1878,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.reconnectTimeout = setTimeout(async () => {
       this.reconnectTimeout = null; // Clear the timer ID
       // Double-check state before attempting connection
-      if (this.connectionState !== ConnectionState.RECONNECTING || !this.autoReconnect) {
+      if (this.connectionState !== InternalConnectionState.RECONNECTING || !this.autoReconnect) {
           console.log(`[Socket] Skipping scheduled reconnect: State changed to ${this.connectionState} or autoReconnect disabled.`);
           return;
       }
@@ -1901,15 +1894,15 @@ export class AeroNyxSocket extends EventEmitter {
           console.error(`[Socket] Reconnection attempt ${this.reconnectAttempts} failed:`, error);
           // If connect() fails, its error handling (via onclose/onerror) should trigger scheduleReconnect again if appropriate.
           // We might need to explicitly call scheduleReconnect here if connect promise rejection doesn't guarantee onclose.
-           if (this.connectionState !== ConnectionState.CONNECTED) {
-               this.safeChangeState(ConnectionState.DISCONNECTED); // Ensure state reflects failure
+           if (this.connectionState !== InternalConnectionState.CONNECTED) {
+               this.safeChangeState(InternalConnectionState.DISCONNECTED); // Ensure state reflects failure
                this.scheduleReconnect(); // Schedule the next attempt
            }
         }
       } else {
            console.error("[Socket] Cannot schedule reconnect: Missing chatId or publicKey.");
            this.autoReconnect = false; // Stop trying if essential info is missing
-           this.safeChangeState(ConnectionState.DISCONNECTED);
+           this.safeChangeState(InternalConnectionState.DISCONNECTED);
       }
     }, delay);
   }
@@ -2095,10 +2088,10 @@ export class AeroNyxSocket extends EventEmitter {
       this.emit('connectionStatus', externalStatus);
       
       // Perform state-specific actions
-      if (newState === ConnectionState.CONNECTED) {
+      if (newState === InternalConnectionState.CONNECTED) {
         this.startKeepAliveServices();
         this.processPendingMessages();
-      } else if (newState === ConnectionState.DISCONNECTED) {
+      } else if (newState === InternalConnectionState.DISCONNECTED) {
         // Ensure timers are stopped
         this.stopKeepAliveServices();
       }
@@ -2124,7 +2117,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.connectionTimeout = setTimeout(() => {
       this.connectionTimeout = null;
       // Only act if still in a connecting/authenticating state
-      if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+      if (this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) {
         console.error('[Socket] Connection attempt timed out.');
         const timeoutError = new Error('Connection timed out');
         this.emit('error', this.createSocketError('connection','Connection attempt timed out','CONN_TIMEOUT',undefined,true));
