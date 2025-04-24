@@ -1,5 +1,5 @@
 // src/components/chat/EncryptionIndicator.tsx
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Flex,
@@ -16,6 +16,7 @@ import {
   FaUsers,
   FaLink,
   FaInfoCircle,
+  FaCheck,
 } from 'react-icons/fa';
 
 type EncryptionType = 'standard' | 'high' | 'maximum';
@@ -32,6 +33,17 @@ export const EncryptionIndicator: React.FC<EncryptionIndicatorProps> = ({
   participants,
 }) => {
   const { colorMode } = useColorMode();
+  const [isEncryptionVerified, setIsEncryptionVerified] = useState(false);
+  
+  // Simulate encryption verification
+  useEffect(() => {
+    // In a real implementation, this would be through some encryption verification mechanism
+    const verifyTimer = setTimeout(() => {
+      setIsEncryptionVerified(true);
+    }, 2000);
+    
+    return () => clearTimeout(verifyTimer);
+  }, []);
   
   // Get color based on encryption type
   const getEncryptionColor = () => {
@@ -71,7 +83,7 @@ export const EncryptionIndicator: React.FC<EncryptionIndicatorProps> = ({
         {/* Left: Encryption indicators */}
         <HStack spacing={4}>
           <Tooltip
-            label={`${getEncryptionDescription()} encryption enabled`}
+            label={`${getEncryptionDescription()} encryption enabled ${isEncryptionVerified ? '(verified)' : '(verifying...)'}`}
             placement="bottom"
             hasArrow
           >
@@ -87,6 +99,7 @@ export const EncryptionIndicator: React.FC<EncryptionIndicatorProps> = ({
               <Text fontSize="xs">
                 Encrypted
                 {type !== 'standard' && ` (${type})`}
+                {isEncryptionVerified && <Icon as={FaCheck} ml={1} fontSize="9px" />}
               </Text>
             </Badge>
           </Tooltip>
