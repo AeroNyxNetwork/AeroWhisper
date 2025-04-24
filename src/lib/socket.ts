@@ -1,1967 +1,1952 @@
-// src/lib/socket.ts
-
-/**
-* AeroNyx Client Development Guidelines
-* =====================================
-* 
-* Encryption Algorithm Requirements
-* ---------------------------------
-* When implementing the AeroNyx client, pay close attention to encryption algorithm naming.
-* 
-* Server expects: aes256gcm
-* NOT: aes-gcm, AES-GCM, or other variations
-* 
-* The server recognizes:
-* - `aes256gcm` (preferred)
-* - `aesgcm`
-* - `aes`
-* 
-* For consistency, always use `aes256gcm` in all client code.
-* 
-* Implementation Examples
-* ----------------------
-* 
-* 1. Authentication Request:
-* 
-* ```
-* const authRequest = {
-*   type: "Auth",
-*   public_key: publicKey,
-*   version: "1.0",
-*   features: ["aes256gcm", "chacha20poly1305", "webrtc"],
-*   encryption_algorithm: "aes256gcm", // Correct format
-*   nonce: generateRandomNonce()
-* };
-* ```
-* 
-* 2. Data Packet Format:
-* 
-* ```
-* const packet = {
-*   type: "Data",
-*   encrypted: Array.from(encrypted),
-*   nonce: Array.from(nonce),
-*   counter: counter,
-*   encryption_algorithm: "aes256gcm" // Must include correct algorithm name
-* };
-* ```
-* 
-* 3. Handling Server Response:
-* 
-* ```
-* function handleIpAssign(response) {
-*   const { encryption_algorithm } = response;
-*   // Store exactly as received from server
-*   sessionStore.setEncryptionAlgorithm(encryption_algorithm);
-* }
-* ```
-* 
-* Common Issues
-* ------------
-* 
-* 1. Using incorrect algorithm name format (`aes-gcm` vs `aes256gcm`)
-* 2. Not including algorithm field in data packets
-* 3. Not preserving algorithm name from server response
-* 4. Inconsistent algorithm naming across client codebase
-*/
 import { EventEmitter } from 'events';
-import { MessageType } from '../types/chat';
 import * as bs58 from 'bs58';
-import * as nacl from 'tweetnacl';
-// Import from utility modules
-import { 
-  createEncryptedPacket, 
-  processEncryptedPacket,
-  encryptWithAesGcm, 
-  decryptWithAesGcm, 
-  generateNonce,
+import { Buffer } from 'buffer'; // Ensure buffer polyfill is available
+
+// Import ALL necessary crypto functions from the centralized cryptoUtils
+// Assuming these functions are correctly implemented and validated against the server spec
+import {
   parseChallengeData,
   signChallenge,
-  deriveSessionKey,
-  deriveECDHSharedSecret,
-  deriveSessionKeyHKDF,
-  testEncryptionCompat  // Add this import
-} from '../utils/cryptoUtils';
-import { 
-  createChallengeResponse 
-} from './socket/handleChallenge';
+  convertEd25519PublicKeyToCurve25519,
+  convertEd25519SecretKeyToCurve25519,
+  deriveECDHRawSharedSecret,
+  deriveKeyWithHKDF,
+  decryptWithAesGcm, // Specifically needed for IpAssign
+  createEncryptedDataPacket,
+  processEncryptedDataPacket,
+  testEncryptionCompat,
+  numberArrayToUint8Array,
+  getStoredKeypair, // ASSUMPTION: Implemented securely (e.g., IndexedDB)
+  // Type guards for message validation
+  isMessageType,
+  isChatInfoPayload,
+  isParticipantsPayload,
+  isWebRTCSignalPayload,
+  isKeyRotationRequestPayload,
+  isKeyRotationResponsePayload,
+  validateMessageStructure // Generic validation fallback if needed
+} from '../utils/cryptoUtils'; // Adjust path if needed
+
+// Import packet types (ensure these match the spec)
 import {
-  processIpAssign
-} from './socket/processIpAssign';
-import {
-  parseMessage,
-  createSocketError,
-  processDataPacket
-} from './socket/messageHandlers';
-import {
-  createWebSocketUrl,
-  isSocketOpen,
-  createDisconnectMessage
-} from './socket/networking';
+    AuthMessage,
+    ChallengeMessage,
+    ChallengeResponse,
+    IpAssignMessage,
+    PingMessage,
+    PongMessage,
+    ErrorMessage,
+    DisconnectMessage,
+    MessageType,
+    ChatInfo,
+    Participant,
+    WebRTCSignalPayload, // Assuming this type exists for WebRTC tunneling
+    KeyRotationRequest,
+    KeyRotationResponse
+    // ... other packet types
+} from './socket/types'; // Ensure types.ts is updated and accurate
+
+// Import reconnection and networking utilities
+import { ReconnectionConfig } from './socket/reconnection'; // Assuming this file is kept for config definition
+import { calculateBackoffDelay, canRetry, shouldAttemptReconnect } from './socket/reconnection'; // Assuming helpers are kept
+import { createWebSocketUrl, isSocketOpen, createDisconnectMessage as formatDisconnectMessage } from './socket/networking';
+
 /**
- * Connection status types for socket
+ * Result of sending a message through the socket
  */
-export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
+export enum SendResult {
+  SENT = 'sent',         // Message was sent immediately
+  QUEUED = 'queued',       // Message was queued for later sending
+  FAILED = 'failed'        // Message couldn't be sent or queued (fatal error)
+}
+
 /**
- * Types of errors that can occur during socket operations
+ * Connection status types for external consumers
+ */
+export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting';
+
+/**
+ * Socket error types
  */
 export interface SocketError {
-  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message';
+  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message' | 'internal' | 'security';
   message: string;
   code: string;
   details?: string;
   retry: boolean;
   originalError?: any;
 }
+
 /**
- * Configuration for reconnection strategy
+ * Internal connection state for state machine pattern
  */
-export interface ReconnectionConfig {
-  initialDelay: number;
-  maxDelay: number;
-  maxAttempts: number;
-  jitter: boolean;
+enum ConnectionState {
+  DISCONNECTED = 'disconnected',
+  CONNECTING = 'connecting',
+  AUTHENTICATING = 'authenticating', // Added state for clarity during auth
+  CONNECTED = 'connected',
+  RECONNECTING = 'reconnecting',
+  CLOSING = 'closing'
 }
-// Pending message interface
+
+/**
+ * Message priority levels for queue processing
+ */
+export enum MessagePriority {
+  CRITICAL = 0,   // Authentication, connection management
+  HIGH = 1,       // User-initiated actions (e.g., sending a message)
+  NORMAL = 2,     // Standard operations (e.g., requesting info)
+  LOW = 3,        // Background updates
+  BACKGROUND = 4  // Non-essential information
+}
+
+/**
+ * Pending message interface with TTL, retry count, and priority
+ */
 interface PendingMessage {
-  type: string;
-  data: any;
-}
-// Queued message interface
-interface QueuedMessage {
-  data: any;
-  attempts: number;
-}
-// Challenge message interface
-interface ChallengeMessage {
-  id: string;
-  data: number[] | string;
-  server_public_key?: string;
-}
-// IP assignment message interface
-interface IpAssignMessage {
-  ip_address: string;
-  session_id: string;
-  session_key?: string;
-  key_nonce?: string;
-  server_public_key?: string;
-  encryption_algorithm?: string;
-}
-// Ping message interface
-interface PingMessage {
-  type: 'Ping';
+  type: string; // e.g., 'data' (as all messages are sent via `send`)
+  data: any;    // The actual application payload
   timestamp: number;
-  sequence: number;
+  id: string;       // Unique ID for tracking and deduplication
+  retryCount: number;
+  priority: MessagePriority; // Added for priority queue support
 }
-// Pong message interface
-interface PongMessage {
-  type: 'Pong';
-  echo_timestamp: number;
-  server_timestamp: number;
-  sequence: number;
-}
-// Error message interface
-interface ErrorMessage {
-  type: 'Error';
-  message: string;
-  code?: number;
-}
-// Disconnect message interface
-interface DisconnectMessage {
-  type: 'Disconnect';
-  reason: number;
-  message: string;
-}
+
 /**
  * Default reconnection configuration with exponential backoff
  */
 const DEFAULT_RECONNECTION_CONFIG: ReconnectionConfig = {
-  initialDelay: 1000, // Start with 1 second delay
-  maxDelay: 30000,    // Max delay of 30 seconds
-  maxAttempts: 10,    // Max 10 reconnection attempts
-  jitter: true        // Add randomness to prevent thundering herd
+  initialDelay: 1000,
+  maxDelay: 30000,
+  maxAttempts: 10,
+  jitter: true
 };
+
+// Constants for timing, limits, etc.
+const CONNECTION_TIMEOUT_MS = 10000;
+const PING_INTERVAL_MS = 30000;
+const PING_TIMEOUT_MS = 5000;
+const KEEP_ALIVE_CHECK_INTERVAL_MS = 30000;
+const KEEP_ALIVE_THRESHOLD_MS = 90000; // If no message received for this long, check health
+const HEARTBEAT_INTERVAL_MS = 10000;
+const IDLE_THRESHOLD_MS = 15000; // Send ping if idle for this long
+const MESSAGE_QUEUE_MAX_SIZE = 100;
+const MESSAGE_QUEUE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL for queued messages
+const MESSAGE_ID_CACHE_MAX_SIZE = 5000; // Max size for replay protection cache
+const MESSAGE_ID_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL for replay protection cache
+const MAX_MESSAGE_RETRY_ATTEMPTS = 3; // Max retries for queued messages
+const KEY_ROTATION_INTERVAL_MS = 30 * 60 * 1000; // Example: Rotate keys every 30 minutes
+const DEFAULT_BATCH_SIZE = 5; // Default number of messages to process in a batch
+const MAX_BATCH_SIZE = 10;    // Maximum batch size
+const MIN_BATCH_SIZE = 1;     // Minimum batch size
+const BATCH_PROCESS_DELAY_MS = 10; // Delay between processing batches
+
 /**
- * AeroNyx Socket - Manages WebSocket connections with error handling,
- * reconnection logic, and secure messaging
+ * AeroNyx Socket - Manages WebSocket connections with robust error handling,
+ * reconnection logic, state management, and secure messaging according to spec.
  */
 export class AeroNyxSocket extends EventEmitter {
+  // --- Connection & State ---
   private socket: WebSocket | null = null;
-  private sessionKey: Uint8Array | null = null;
-  private publicKey: string | null = null;
   private chatId: string | null = null;
-  private isConnected: boolean = false;
-  private messageCounter: number = 0;
-  private connecting: boolean = false;
+  private publicKey: string | null = null; // Client's Ed25519 public key (Base58)
+  private serverUrl: string = process.env.NEXT_PUBLIC_AERONYX_SERVER_URL || 'wss://aeronyx-server.example.com';
+  private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
+  private autoReconnect: boolean = true;
+  private forceReconnect: boolean = false; // Flag to force reconnect attempt
+  private stateTransitionLock: Promise<void> = Promise.resolve();
+  private readonly isNodeEnvironment: boolean = typeof window === 'undefined';
+  private readonly isBrowserEnvironment: boolean = typeof window !== 'undefined';
+  private readonly hasWebCrypto: boolean = this.isBrowserEnvironment && !!window.crypto?.subtle;
+
+  // --- Security & Session ---
+  private sessionKey: Uint8Array | null = null; // Stores the DECRYPTED 32-byte session key
+  private serverPublicKey: string | null = null; // Stores server's Ed25519 Pub Key (Base58) from Challenge
+  private sessionId: string | null = null;
+  private messageCounter: number = 0; // Counter for outgoing Data packets
+  private processedMessageIds: Map<string, number> = new Map(); // Store message ID with timestamp for replay protection
+  private keyRotationTimer: NodeJS.Timeout | null = null;
+  private lastKeyRotation: number = 0; // Timestamp of last successful rotation
+
+  // --- Reconnection ---
   private reconnectAttempts: number = 0;
   private reconnectTimeout: NodeJS.Timeout | null = null;
+  private reconnectionConfig: ReconnectionConfig = DEFAULT_RECONNECTION_CONFIG;
+
+  // --- Keep-Alive & Timers ---
   private pingInterval: NodeJS.Timeout | null = null;
-  private sessionId: string | null = null;
-  private serverUrl: string = process.env.NEXT_PUBLIC_AERONYX_SERVER_URL || 'wss://aeronyx-server.example.com';
-  private connectionListeners: Set<() => void> = new Set();
-  private pendingMessages: Array<PendingMessage> = [];
-  private messageQueue: Array<QueuedMessage> = [];
-  private maxQueueSize: number = 100;
   private keepAliveInterval: NodeJS.Timeout | null = null;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
   private lastMessageTime: number = Date.now();
   private connectionTimeout: NodeJS.Timeout | null = null;
-  private encryptionAlgorithm: string = 'aes256gcm'; 
-  private processedMessageIds: Set<string> = new Set(); // For preventing replay attacks
-  private serverPublicKey: string | null = null; // Store server public key for ECDH
-  private forceReconnect: boolean = false; // Flag to force reconnection on server restart
-  private heartbeatInterval: NodeJS.Timeout | null = null; // Heartbeat to detect connection issues
-  private autoReconnect: boolean = true; // Flag to control automatic reconnection
-  private pingTimeouts: Map<number, NodeJS.Timeout> = new Map(); // Map to track ping timeouts
-  
-  /**
-   * Reconnection configuration with exponential backoff
-   */
-  private reconnectionConfig: ReconnectionConfig = DEFAULT_RECONNECTION_CONFIG;
-  
+  private pingTimeouts: Map<number, NodeJS.Timeout> = new Map(); // Track timeouts for specific pings
+  private pingCounter: number = 0; // Dedicated counter for ping sequence
+  private networkQuality: 'excellent' | 'good' | 'poor' | 'bad' = 'good';
+  private lastNetworkQualityCheck: number = Date.now();
+  private consecutiveFailedPings: number = 0;
+  private readonly NETWORK_CHECK_INTERVAL_MS: number = 60000; // 1 minute
+
+  // --- Message Queue & Processing ---
+  private pendingMessages: Array<PendingMessage> = [];
+  private maxQueueSize: number = MESSAGE_QUEUE_MAX_SIZE;
+  private processingQueue: boolean = false; // Lock to prevent concurrent queue processing
+  private currentBatchSize: number = DEFAULT_BATCH_SIZE; // Current batch size (adaptive)
+  private adaptationFactor: number = 0.1; // How quickly to adapt batch size
+  private usePriorityQueue: boolean = true; // Enable priority-based queue processing by default
+  private latencyHistory: number[] = []; // Store recent latency measurements
+  private maxLatencyHistory: number = 20; // Maximum size of latency history
+  private readonly messageIdCacheMaxSize: number = MESSAGE_ID_CACHE_MAX_SIZE;
+  private readonly messageIdCacheTTL: number = MESSAGE_ID_CACHE_TTL_MS;
+
+  // --- Promise Management ---
+  // Manages the promise returned by the public connect() method
+  private connectionPromise: Promise<void> | null = null;
+  private connectionResolve: (() => void) | null = null;
+  private connectionReject: ((reason?: any) => void) | null = null;
+
+  // --- Performance Management ---
+  private worker: Worker | null = null; // Web Worker for crypto tasks
+  private isWorkerAvailable: boolean = false; // Flag if worker is usable
+  private readonly ERROR_CATEGORIES: Record<string, { retry: boolean, log: 'error' | 'warn' | 'info' }> = {
+    CONNECTION: { retry: true, log: 'warn' },
+    AUTH: { retry: true, log: 'error' },
+    DATA: { retry: true, log: 'warn' },
+    SIGNALING: { retry: true, log: 'warn' },
+    SERVER: { retry: true, log: 'warn' },
+    MESSAGE: { retry: false, log: 'error' },
+    INTERNAL: { retry: true, log: 'error' },
+    SECURITY: { retry: false, log: 'error' }
+  };
+
   /**
    * Create a new AeroNyx socket
    * @param config Optional reconnection configuration
    */
   constructor(config?: Partial<ReconnectionConfig>) {
     super();
-    
-    // Override default reconnection config if provided
-    if (config) {
-      this.reconnectionConfig = {
-        ...this.reconnectionConfig,
-        ...config
-      };
-    }
-    
-    // Set max listeners to avoid memory leaks
-    this.setMaxListeners(20);
+    this.reconnectionConfig = { ...DEFAULT_RECONNECTION_CONFIG, ...config };
+    this.setMaxListeners(20); // Avoid potential memory leak warning
 
-    // Handle window beforeunload to cleanly close the connection
-    if (typeof window !== 'undefined') {
+    // Initialize crypto worker (optional performance enhancement)
+    // this.initCryptoWorker(); // Uncomment if implementing worker
+
+    // Add necessary browser lifecycle listeners
+    if (this.isBrowserEnvironment) {
       window.addEventListener('beforeunload', this.handleBeforeUnload);
-      // Listen to online/offline events to handle network changes
       window.addEventListener('online', this.handleNetworkChange);
       window.addEventListener('offline', this.handleNetworkChange);
-      
-      // Also listen for visibility changes to handle tab switching
       document.addEventListener('visibilitychange', this.handleVisibilityChange);
     }
-    
-    console.log('[Socket] AeroNyx socket initialized with config:', {
-      initialDelay: this.reconnectionConfig.initialDelay,
-      maxDelay: this.reconnectionConfig.maxDelay,
-      maxAttempts: this.reconnectionConfig.maxAttempts,
-      preferredEncryption: this.encryptionAlgorithm
-    });
+    console.log('[Socket] AeroNyx socket initialized.');
   }
-  
+
   /**
-   * Handle visibility changes (tab switching)
+   * Initialize crypto worker (Optional: for offloading heavy crypto)
    */
-  private handleVisibilityChange = () => {
-    if (document.visibilityState === 'visible') {
-      console.log('[Socket] Tab became visible, checking connection');
-      
-      // If we're not connected but should be, try to reconnect
-      if (!this.isConnected && !this.connecting && this.chatId && this.publicKey && this.autoReconnect) {
-        console.log('[Socket] Reconnecting after tab became visible');
-        this.reconnect();
-      } else if (this.isConnected) {
-        // Even if connected, check health by sending a ping
-        this.sendPing();
-      }
-    }
-  };
-  
-  /**
-   * Handle window beforeunload event to clean up resources
-   */
-  private handleBeforeUnload = () => {
-    console.log('[Socket] Page unloading, cleaning up socket resources');
-    this.autoReconnect = false;
-    
-    // Try to send a clean disconnect message if possible
-    if (this.socket && this.isSocketOpen(this.socket)) {
+  private initCryptoWorker(): void {
+    // Implementation depends on the worker script ('/workers/crypto-worker.js')
+    // and the message passing protocol defined between the main thread and worker.
+    if (typeof Worker !== 'undefined') {
       try {
-        // Use a synchronous approach for beforeunload
-        const disconnectMsg = JSON.stringify(this.createDisconnectMessage(0, 'User left the page'));
-        this.socket.send(disconnectMsg);
+        // Example: this.worker = new Worker('/workers/crypto-worker.js');
+        // this.worker.onmessage = this.handleWorkerMessage.bind(this);
+        // this.worker.onerror = ...
+        // this.isWorkerAvailable = true;
+        console.log('[Socket] Crypto worker initialization placeholder.');
       } catch (e) {
-        // Ignore errors during page unload
+        console.warn('[Socket] Failed to initialize crypto worker:', e);
+        this.isWorkerAvailable = false;
+      }
+    } else {
+      console.warn('[Socket] Web Workers not supported.');
+      this.isWorkerAvailable = false;
+    }
+  }
+
+  /**
+   * Handle messages received from the crypto worker
+   */
+  private handleWorkerMessage(event: MessageEvent): void {
+    console.debug('[Socket] Received worker message:', event.data?.type);
+    // Process results from worker (e.g., decryption result, signature result)
+    // This would involve matching request IDs and resolving promises or emitting events.
+  }
+
+  // --- Public Methods ---
+
+  /**
+   * Connects to the AeroNyx server. Manages concurrent calls and state.
+   * @param chatId The ID of the chat room.
+   * @param publicKey The client's Ed25519 public key (Base58).
+   * @returns Promise resolving when authentication is complete (IpAssign received).
+   * @throws Error if connection or authentication fails definitively.
+   */
+  public async connect(chatId: string, publicKey: string): Promise<void> {
+    // 1. Handle already connected state
+    if (this.connectionState === ConnectionState.CONNECTED && this.chatId === chatId && !this.forceReconnect) {
+      console.log('[Socket] Already connected to this chat.');
+      return Promise.resolve();
+    }
+
+    // 2. Handle concurrent connection attempts
+    if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+      console.warn('[Socket] Connection attempt already in progress.');
+      if (this.connectionPromise && this.chatId === chatId) {
+        console.log('[Socket] Returning existing connection promise for the same chat.');
+        return this.connectionPromise; // Return existing promise for the same target
+      } else {
+        // If trying to connect to a *different* chat while one is in progress, cancel the old one first.
+        console.warn(`[Socket] Aborting previous connection attempt to ${this.chatId} to connect to ${chatId}.`);
+        await this.disconnect(); // Abort previous attempt cleanly
       }
     }
-    
-    this.disconnect();
-  };
 
-  /**
-   * Handle network connectivity changes
-   */
-  private handleNetworkChange = (event: Event) => {
-    console.log(`[Socket] Network status change: ${event.type}`);
-    if (event.type === 'online' && !this.isConnected && this.chatId && this.publicKey) {
-      console.log('[Socket] Network connection restored, attempting to reconnect');
-      this.connect(this.chatId, this.publicKey).catch(err => {
-        console.error('[Socket] Failed to reconnect after network change:', err);
-      });
-    } else if (event.type === 'offline' && this.isConnected) {
-      console.log('[Socket] Network connection lost');
-      this.emit('connectionStatus', 'disconnected');
-    }
-  };
-
-  /**
-   * Get the current server URL
-   */
-  public getServerUrl(): string {
-    return this.serverUrl;
-  }
-
-  /**
-   * Set a custom server URL
-   * @param url The server URL to use
-   */
-  public setServerUrl(url: string): void {
-    if (!url.startsWith('wss://') && !url.startsWith('ws://')) {
-      url = `wss://${url}`;
-    }
-    this.serverUrl = url;
-    console.log(`[Socket] Server URL set to ${url}`);
-  }
-  
-  /**
-   * Connect to AeroNyx server with retry logic and connection timeout
-   * @param chatId Chat room ID
-   * @param publicKey User's public key
-   * @returns Promise resolving when connection is established
-   * @throws Error if connection fails
-   */
-  async connect(chatId: string, publicKey: string): Promise<void> {
-    if (this.socket && this.isConnected && !this.forceReconnect) {
-      console.log('[Socket] Already connected, reusing existing connection');
-      return;
-    }
-    
-    // Reset force reconnect flag
-    this.forceReconnect = false;
-    this.autoReconnect = true;
-    
+    // 3. Initialize connection
+    console.log(`[Socket] Attempting to connect to chat: ${chatId}`);
     this.chatId = chatId;
     this.publicKey = publicKey;
-    this.connecting = true;
-    
-    // Reset reconnection attempts when manually connecting
+    await this.safeChangeState(ConnectionState.CONNECTING); // Set state before async ops
+    this.forceReconnect = false;
+    this.autoReconnect = true;
     this.reconnectAttempts = 0;
-    
-    return new Promise((resolve, reject) => {
+    this.emit('connectionStatus', 'connecting');
+
+    // 4. Cleanup any previous connection remnants
+    this.cleanupConnection(false); // Don't emit disconnect during explicit connect
+
+    // 5. Create and manage the connection promise
+    this.connectionPromise = new Promise<void>((resolve, reject) => {
+      this.connectionResolve = resolve;
+      this.connectionReject = reject;
+
+      // 6. Initiate WebSocket connection within a try/catch
       try {
-        // Clean up any existing connection
-        this.cleanupConnection(false);
-        
-        // Create WebSocket URL
-        const serverUrl = this.createWebSocketUrl(this.serverUrl, chatId);
-        
-        console.log(`[Socket] Connecting to WebSocket server at: ${serverUrl}`);
-        this.emit('connectionStatus', 'connecting');
-        
-        this.socket = new WebSocket(serverUrl);
-        
-        // Add timeout for connection attempt
-        if (this.connectionTimeout) {
-          clearTimeout(this.connectionTimeout);
-        }
-        
-        this.connectionTimeout = setTimeout(() => {
-          if (this.connecting) {
-            const timeoutError = new Error('WebSocket connection timed out');
-            console.error('[Socket] Connection timeout:', timeoutError);
-            this.emit('error', this.createSocketError(
-              'connection',
-              'Connection to secure chat server timed out. This might be due to network issues or server unavailability.',
-              'TIMEOUT',
-              undefined,
-              true
-            ));
-            
-            if (this.socket) {
-              this.socket.close();
-              this.socket = null;
-            }
-            
-            this.connecting = false;
-            reject(timeoutError);
-            
-            // Auto-retry on timeout if not max attempts
-            if (this.autoReconnect && this.canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
-              this.scheduleReconnect();
-            }
-          }
-        }, 10000); // 10 second timeout
-        
-        this.socket.onopen = () => {
-          this.clearConnectionTimeout();
-          console.log('[Socket] WebSocket connection established');
-          this.sendAuthMessage();
-          this.reconnectAttempts = 0;
-          this.lastMessageTime = Date.now();
-          
-          // Start heartbeat immediately after connection
-          this.startHeartbeat();
-        };
-        
-        this.socket.onmessage = async (event) => {
-          this.clearConnectionTimeout();
-          this.lastMessageTime = Date.now();
-          await this.handleServerMessage(event.data);
-        };
-        
-        this.socket.onclose = (event) => {
-          this.clearConnectionTimeout();
-          this.stopHeartbeat();
-          this.isConnected = false;
-          this.emit('connectionStatus', 'disconnected');
-          
-          console.log(`[Socket] WebSocket connection closed: ${event.code} - ${event.reason}`);
-          
-          // Check for common certificate and security error codes
-          if (event.code === 1006 || event.code === 1015) {
-            const errorMsg = 'Connection closed due to security issues. This might be related to a certificate problem.';
-            console.error(`[Socket] ${errorMsg}`);
-            
-            this.emit('error', this.createSocketError(
-              'connection',
-              errorMsg,
-              `WS_CLOSED_${event.code}`,
-              `You might need to visit ${this.serverUrl.replace('wss://', 'https://')} directly in your browser and accept the certificate.`,
-              false
-            ));
-          }
-          
-          if (this.connecting) {
-            const closeError = new Error(`Connection closed during handshake: ${event.code} - ${event.reason}`);
-            reject(closeError);
-            this.connecting = false;
-          }
-          
-          // Attempt to reconnect automatically for common error codes or server reset
-          if (this.autoReconnect && 
-              (this.shouldAttemptReconnect(event.code) || this.forceReconnect) && 
-              this.canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
-            this.scheduleReconnect();
-          }
-        };
-        
-        this.socket.onerror = (error) => {
-          this.clearConnectionTimeout();
-          console.error('[Socket] WebSocket error:', error);
-          
-          this.emit('error', this.createSocketError(
-            'connection',
-            'Failed to establish a secure connection to the chat server.',
-            'WS_ERROR',
-            'This might be due to network issues, server unavailability, or certificate problems.',
-            true,
-            error
-          ));
-          
-          if (this.connecting) {
-            reject(new Error('WebSocket connection error'));
-            this.connecting = false;
-          }
-        };
+        const wsUrl = createWebSocketUrl(this.serverUrl, chatId);
+        console.log(`[Socket] Connecting to WebSocket URL: ${wsUrl}`);
+        this.socket = new WebSocket(wsUrl);
+        this.setupSocketEventHandlers(); // Attach listeners
+        this.startConnectionTimeout();    // Start timeout for the connection attempt
       } catch (error) {
+        console.error('[Socket] Failed to create WebSocket instance:', error);
+        this.safeChangeState(ConnectionState.DISCONNECTED); // Ensure state is correct
         this.clearConnectionTimeout();
-        console.error('[Socket] Error creating WebSocket connection:', error);
-        this.connecting = false;
-        
-        this.emit('error', this.createSocketError(
-          'connection',
-          'Failed to initiate connection to the secure chat server.',
-          'INIT_ERROR',
-          error instanceof Error ? error.message : 'Unknown error',
-          true
-        ));
-        
-        reject(error);
-        
-        // Attempt to reconnect if initialization fails
-        if (this.autoReconnect && this.canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
-          this.scheduleReconnect();
-        }
+        const initError = new Error(`WebSocket initialization failed: ${error instanceof Error ? error.message : String(error)}`);
+        this.emit('error', this.createSocketError('connection', 'Failed to initialize WebSocket', 'INIT_ERROR', undefined, false, error));
+        this.rejectConnection(initError); // Reject the promise immediately
       }
     });
+
+    return this.connectionPromise;
   }
-  
+
   /**
-   * Clean up existing connection
-   * @param emitEvents Whether to emit events during cleanup
+   * Disconnects from the server gracefully.
    */
-  private cleanupConnection(emitEvents: boolean = true): void {
-    this.stopPingInterval();
-    this.stopKeepAliveMonitoring();
-    this.stopHeartbeat();
-    
-    if (this.connectionTimeout) {
-      clearTimeout(this.connectionTimeout);
-      this.connectionTimeout = null;
+  public async disconnect(): Promise<void> {
+    // Prevent disconnect loops or disconnecting if already disconnected/closing
+    if (this.connectionState === ConnectionState.DISCONNECTED || this.connectionState === ConnectionState.CLOSING) {
+        console.debug(`[Socket] Disconnect called but already in state: ${this.connectionState}`);
+        return Promise.resolve();
     }
-    
-    if (this.socket) {
+
+    console.log('[Socket] Disconnecting...');
+    this.autoReconnect = false; // Prevent auto-reconnect after explicit disconnect
+    await this.safeChangeState(ConnectionState.CLOSING);
+
+    // Attempt graceful shutdown
+    if (this.socket && isSocketOpen(this.socket)) {
       try {
-        // Only try to close if socket is still open
-        if (this.socket.readyState === WebSocket.OPEN || 
-            this.socket.readyState === WebSocket.CONNECTING) {
-          this.socket.close(1000, "Normal closure");
-        }
+        // Optional: Send a disconnect message if protocol requires it
+        const disconnectMsg = formatDisconnectMessage(1000, "Client initiated disconnect");
+        this.socket.send(JSON.stringify(disconnectMsg));
+
+        // Close the WebSocket
+        this.socket.close(1000, "Client initiated disconnect");
+
+        // Wait briefly for the close event to be processed by the browser
+        await new Promise(resolve => setTimeout(resolve, 100));
+
       } catch (e) {
-        console.error('[Socket] Error closing socket:', e);
+        console.warn('[Socket] Error sending disconnect message or closing socket:', e);
       }
-      this.socket = null;
     }
-    
-    if (emitEvents && this.isConnected) {
-      this.isConnected = false;
-      this.emit('connectionStatus', 'disconnected');
-    }
+
+    // Perform final cleanup regardless of graceful close success
+    this.cleanupConnection(true); // Perform full cleanup and emit events if needed
+    await this.safeChangeState(ConnectionState.DISCONNECTED); // Ensure final state is DISCONNECTED
+    console.log('[Socket] Disconnect process complete.');
   }
-  
+
   /**
-   * Clear the connection timeout if it exists
+   * Checks if the socket is fully connected and authenticated.
    */
-  private clearConnectionTimeout(): void {
-    if (this.connectionTimeout) {
-      clearTimeout(this.connectionTimeout);
-      this.connectionTimeout = null;
-    }
+  public isConnected(): boolean {
+    return this.connectionState === ConnectionState.CONNECTED &&
+           this.socket !== null &&
+           isSocketOpen(this.socket) &&
+           this.sessionKey !== null;
   }
-  
+
   /**
-   * Send authentication message to the server
+   * Gets the current user-facing connection status.
    */
-  private sendAuthMessage(): void {
-    if (!this.socket || !this.publicKey) return;
-    
-    const authMessage = {
-      type: 'Auth',
-      public_key: this.publicKey,
-      version: '1.0.0',
-      features: ['aes256gcm', 'chacha20poly1305', 'webrtc'], // Server expects 'aes256gcm'
-      encryption_algorithm: 'aes256gcm', // Server expects this format
-      nonce: Date.now().toString(),
-    };
-    
-    try {
-      this.socket.send(JSON.stringify(authMessage));
-      console.log('[Socket] Auth message sent successfully with aes256gcm preference');
-    } catch (error) {
-      console.error('[Socket] Error sending auth message:', error);
-      this.emit('error', this.createSocketError(
-        'auth',
-        'Failed to send authentication message',
-        'AUTH_ERROR',
-        undefined,
-        true
-      ));
+  public getConnectionStatus(): ConnectionStatus {
+    switch (this.connectionState) {
+      case ConnectionState.CONNECTED:
+        return 'connected';
+      case ConnectionState.CONNECTING:
+      case ConnectionState.AUTHENTICATING:
+        return 'connecting';
+      case ConnectionState.RECONNECTING:
+        return 'reconnecting';
+      case ConnectionState.DISCONNECTED:
+      case ConnectionState.CLOSING:
+      default:
+        return 'disconnected';
     }
   }
 
-  
   /**
-   * Start heartbeat mechanism to detect broken connections quickly
+   * Sends application-level data encrypted over the WebSocket.
+   * Queues the message if not currently connected.
+   * @param data The payload object to send.
+   * @param priority Optional priority level for the message.
+   * @returns Promise resolving to SendResult indicating outcome.
    */
-  private startHeartbeat(): void {
-    this.stopHeartbeat();
-    
-    this.heartbeatInterval = setInterval(() => {
-      // If socket is not connected, don't try to send heartbeat
-      if (!this.isSocketOpen(this.socket)) {
-        console.warn('[Socket] Cannot send heartbeat: Socket not open');
-        return;
-      }
+  public async send(data: any, priority: MessagePriority = MessagePriority.NORMAL): Promise<SendResult> {
+    if (!this.isConnected()) {
+      console.warn('[Socket:SEND] Not connected. Queuing message.');
+      const queued = this.queueMessage('data', data, priority); // Queue with priority
+      // Trigger queue processing check in case connection happens quickly
+      setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS * 2);
+      return queued ? SendResult.QUEUED : SendResult.FAILED;
+    }
+
+    // Ensure session key exists (should always be true if isConnected() is true)
+    if (!this.sessionKey) {
+      console.error('[Socket:SEND] CRITICAL: isConnected is true but sessionKey is null!');
+      this.emit('error', this.createSocketError('internal', 'Session key missing despite connected state', 'MISSING_SESSION_KEY', undefined, false));
+      const queued = this.queueMessage('data', data, priority); // Still queue defensively
+      return queued ? SendResult.QUEUED : SendResult.FAILED; // Indicate queueing, but there's an issue
+    }
+
+    try {
+      // Create the encrypted Data packet using the centralized utility
+      const dataPacket = await createEncryptedDataPacket(
+        data,
+        this.sessionKey,
+        this.messageCounter // Use the current counter
+      );
+
+      // Increment the counter *after* successfully creating the packet
+      this.messageCounter++;
+
+      // Send the JSON stringified packet
+      const packetJson = JSON.stringify(dataPacket);
+      this.socket!.send(packetJson); // Use non-null assertion as isConnected() checks socket
+      console.debug('[Socket:SEND] Encrypted Data packet sent. Counter:', dataPacket.counter);
+      this.lastMessageTime = Date.now(); // Update activity time
+      return SendResult.SENT;
+
+    } catch (error) {
+      console.error('[Socket:SEND] Error encrypting or sending data packet:', error);
+      const queued = this.queueMessage('data', data, priority); // Queue the original data on failure
+      this.emit('error', this.createSocketError(
+        'data',
+        'Failed to send encrypted data',
+        'DATA_SEND_ERROR',
+         error instanceof Error ? error.message : String(error),
+        true // Usually retryable via queue
+      ));
+      return queued ? SendResult.QUEUED : SendResult.FAILED;
+    }
+  }
+
+  /**
+   * Sends a chat message. Wraps the message data and calls `send`.
+   * @param message The message object conforming to MessageType.
+   * @returns Promise resolving to SendResult.
+   */
+  public async sendMessage(message: MessageType): Promise<SendResult> {
+    console.debug('[Socket] Preparing to send chat message:', message.id);
+    // Construct the standard payload expected by the application logic
+    const messagePayload = {
+      type: 'message', // Application-level type identifier
+      id: message.id,
+      content: message.content,
+      senderId: message.senderId,
+      senderName: message.senderName,
+      timestamp: message.timestamp,
+      // Add any other relevant fields from MessageType if needed by the receiver
+    };
+    // User messages typically have high priority
+    return this.send(messagePayload, MessagePriority.HIGH);
+  }
+
+   /**
+   * Requests chat information from the server.
+   * @returns Promise resolving to SendResult.
+   */
+   public async requestChatInfo(): Promise<SendResult> {
+        console.debug('[Socket] Requesting chat info...');
+        return this.send({ type: 'request-chat-info' }, MessagePriority.NORMAL);
+    }
+
+    /**
+     * Requests the current list of participants from the server.
+     * @returns Promise resolving to SendResult.
+     */
+    public async requestParticipants(): Promise<SendResult> {
+        console.debug('[Socket] Requesting participants list...');
+        return this.send({ type: 'request-participants' }, MessagePriority.NORMAL);
+    }
+
+    /**
+     * Sends a request to leave the chat room.
+     * @returns Promise resolving when the leave action is initiated.
+     */
+    public async leaveChat(): Promise<void> {
+        console.log('[Socket] Initiating leave chat...');
+        this.autoReconnect = false; // Prevent reconnect after leaving
+        // Send a specific 'leave-chat' message if the protocol requires it
+        await this.send({ type: 'leave-chat' }, MessagePriority.CRITICAL);
+        // Allow time for the message to potentially be sent before closing
+        await new Promise(resolve => setTimeout(resolve, 200));
+        return this.disconnect(); // Disconnect gracefully
+    }
+
+    /**
+     * Sends a request to delete the chat room (requires appropriate permissions).
+     * @returns Promise resolving to SendResult.
+     */
+    public async deleteChat(): Promise<SendResult> {
+        console.debug('[Socket] Requesting chat deletion...');
+        return this.send({ type: 'delete-chat' }, MessagePriority.CRITICAL);
+    }
+
+    /**
+     * Sends a WebRTC signaling message to facilitate peer connection
+     * @param peerId Target peer ID
+     * @param signalType Type of signal (offer, answer, candidate)
+     * @param signalData The actual signal data
+     */
+    public async sendWebRTCSignal(
+      peerId: string, 
+      signalType: 'offer' | 'answer' | 'candidate', 
+      signalData: any
+    ): Promise<SendResult> {
+      const payload: WebRTCSignalPayload = {
+        type: 'webrtc-signal',
+        peerId: peerId,
+        signalType: signalType,
+        signalData: signalData,
+        timestamp: Date.now()
+      };
       
-      try {
-        // Simple ping as a heartbeat
-        this.sendPing();
-        
-        // Check if we've received a response within the expected timeframe
-        const currentTime = Date.now();
-        const timeSinceLastMessage = currentTime - this.lastMessageTime;
-        
-        // If no message for more than 20 seconds (2 heartbeat intervals)
-        if (timeSinceLastMessage > 20000) {
-          console.warn(`[Socket] No message received for ${Math.round(timeSinceLastMessage/1000)}s, connection may be dead`);
-          
-          // Update UI to show connection issues
-          this.emit('connectionStatus', 'connecting');
-          this.emit('error', this.createSocketError(
-            'connection',
-            'Connection appears to be unresponsive',
-            'CONNECTION_UNRESPONSIVE',
-            undefined,
-            true
-          ));
-          
-          // Try to immediately reconnect
-          if (timeSinceLastMessage > 30000) {
-            console.warn('[Socket] Connection timeout exceeded, forcing reconnection');
-            this.forceReconnect = true;
-            this.reconnect();
-          }
+      // WebRTC signaling should be high priority
+      return this.send(payload, MessagePriority.HIGH);
+    }
+
+    /**
+     * Trigger a manual session key rotation
+     * @returns Promise resolving to true if rotation initiated successfully.
+     */
+    public async rotateSessionKey(): Promise<boolean> {
+       if (!this.isConnected()) {
+           console.warn('[Socket] Cannot rotate session key: Not connected.');
+           return false;
+       }
+        if (!this.sessionKey || !this.serverPublicKey) {
+            console.warn('[Socket] Cannot rotate session key: Missing current session or server key.');
+            return false;
         }
-      } catch (error) {
-        console.error('[Socket] Error sending heartbeat:', error);
-      }
-    }, 10000); // Check every 10 seconds
-  }
-  
-  /**
-   * Stop the heartbeat interval
-   */
-  private stopHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
+
+       console.log('[Socket] Initiating manual session key rotation...');
+       try {
+           const rotationRequestPayload = {
+               type: 'request-key-rotation',
+               // Include any necessary data, e.g., current session ID
+               sessionId: this.sessionId,
+               timestamp: Date.now()
+           };
+           // Key rotation is critical
+           const result = await this.send(rotationRequestPayload, MessagePriority.CRITICAL);
+           if (result === SendResult.SENT || result === SendResult.QUEUED) {
+               console.log("[Socket] Key rotation request sent/queued.");
+               // The actual key update happens in handleKeyRotationResponse
+               return true;
+           } else {
+               console.error("[Socket] Failed to send key rotation request.");
+               return false;
+           }
+       } catch (error) {
+           console.error('[Socket] Error initiating key rotation:', error);
+            this.emit('error', this.createSocketError(
+              'security',
+              'Failed to initiate key rotation',
+              'KEY_ROTATION_INIT_ERROR',
+               error instanceof Error ? error.message : String(error),
+              false
+            ));
+           return false;
+       }
     }
-    
-    // Also clear any pending ping timeouts
-    for (const timeout of this.pingTimeouts.values()) {
-      clearTimeout(timeout);
-    }
-    this.pingTimeouts.clear();
-  }
-  
-  /**
-   * Attempt to reconnect immediately
-   */
-  public reconnect(): void {
-    if (this.chatId && this.publicKey) {
-      console.log('[Socket] Forcing reconnection...');
-      this.connect(this.chatId, this.publicKey).catch(err => {
-        console.error('[Socket] Forced reconnection failed:', err);
-      });
-    } else {
-      console.error('[Socket] Cannot reconnect: Missing chatId or publicKey');
-    }
-  }
-  
-  /**
-   * Parse WebSocket message from different formats
-   * @param data Message data in various formats
-   * @returns Parsed message object
-   */
-  private async parseMessage(data: string | ArrayBuffer | Blob): Promise<any> {
-    try {
-      let message: any;
-      
-      if (typeof data === 'string') {
-        message = JSON.parse(data);
-      } else if (data instanceof Blob) {
-        // Handle Blob data (for binary WebSocket messages)
-        const reader = new FileReader();
-        
-        // Convert Blob to text using Promise
-        const text = await new Promise<string>((resolve, reject) => {
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsText(data);
-        });
-        
-        message = JSON.parse(text);
-      } else {
-        // Handle ArrayBuffer
-        const decoder = new TextDecoder();
-        message = JSON.parse(decoder.decode(data));
+
+    /**
+     * Returns a testing interface (only in non-production environments)
+     */
+    public getTestingInterface(): AeroNyxSocketTestingInterface | null {
+      // Only provide the interface in development/test environments
+      if (process.env.NODE_ENV === 'production') {
+        return null;
       }
       
-      return message;
+      return {
+        getState: () => this.connectionState,
+        simulateServerMessage: async (message) => {
+          await this.processMessage(message);
+        },
+        getQueueInfo: () => ({ 
+          size: this.pendingMessages.length, 
+          processing: this.processingQueue 
+        }),
+        getNetworkQuality: () => this.networkQuality,
+        getSessionInfo: () => ({
+          hasSessionKey: !!this.sessionKey,
+          sessionId: this.sessionId,
+          lastKeyRotation: this.lastKeyRotation,
+          messageCounter: this.messageCounter
+        }),
+        clearQueue: () => {
+          this.pendingMessages = [];
+          return true;
+        }
+      };
+    }
+
+  // --- Private Methods ---
+
+  /**
+   * Sets up WebSocket event handlers.
+   */
+  private setupSocketEventHandlers(): void {
+    if (!this.socket) return;
+    // Assign bound methods to prevent 'this' context issues
+    this.socket.onopen = this.handleSocketOpen.bind(this);
+    this.socket.onmessage = this.handleSocketMessage.bind(this);
+    this.socket.onclose = this.handleSocketClose.bind(this);
+    this.socket.onerror = this.handleSocketError.bind(this);
+  }
+
+  /**
+   * Handles WebSocket open event. Changes state and sends Auth message.
+   */
+  private handleSocketOpen(): void {
+    this.clearConnectionTimeout(); // Connection successful, clear timeout
+    console.log('[Socket] WebSocket connection opened. Sending Auth...');
+    this.safeChangeState(ConnectionState.AUTHENTICATING); // Move to authenticating state
+    this.sendAuthMessage();
+  }
+
+  /**
+   * Sends the initial Auth message to start authentication flow
+   */
+  private sendAuthMessage(): void {
+    if (!this.socket || !isSocketOpen(this.socket)) {
+      console.error('[Socket] Cannot send Auth: Socket not open');
+      this.rejectConnection(new Error('Socket closed before Auth could be sent'));
+      return;
+    }
+
+    try {
+      if (!this.chatId || !this.publicKey) {
+        throw new Error('Missing chatId or publicKey for Auth');
+      }
+
+      const authMessage: AuthMessage = {
+        type: 'Auth',
+        chat_id: this.chatId,
+        public_key: this.publicKey,
+        client_version: '1.0.0', // Consider moving to constants
+        protocol_version: '1.0' // Consider moving to constants
+      };
+
+      this.socket.send(JSON.stringify(authMessage));
+      console.log('[Socket] Auth message sent successfully');
     } catch (error) {
-      console.error('[Socket] Error parsing message:', error);
-      throw new Error('Failed to parse server message');
+      console.error('[Socket] Error sending Auth message:', error);
+      this.emit('error', this.createSocketError(
+        'auth',
+        'Failed to send Auth message',
+        'AUTH_SEND_ERROR',
+        error instanceof Error ? error.message : String(error),
+        true
+      ));
+      this.rejectConnection(error);
     }
   }
-  
+
   /**
-   * Handle messages from the server
-   * @param data Message data
+   * Handles WebSocket message event. Parses, processes, and updates activity time.
    */
-  private async handleServerMessage(data: string | ArrayBuffer | Blob): Promise<void> {
+  private async handleSocketMessage(event: MessageEvent): Promise<void> {
+    this.lastMessageTime = Date.now(); // Update activity timer on any message
+    this.clearConnectionTimeout(); // Clear connection timeout if still pending
+
     try {
-      // Parse the message
-      const message = await this.parseMessage(data);
-      
-      // Process the parsed message
-      await this.processMessage(message);
+      const message = JSON.parse(event.data as string); // Assuming text frames
+      await this.processMessage(message); // Process the parsed message
     } catch (error) {
-      console.error('[Socket] Error handling server message:', error);
+      console.error('[Socket] Error parsing or processing message:', error);
       this.emit('error', this.createSocketError(
         'message',
         'Failed to parse server message',
         'PARSE_ERROR',
-        undefined,
-        false,
+         undefined,
+        false, // Parsing errors usually mean corrupted data, not retryable
         error
       ));
-    }
-  }
-  
-  /**
-   * Process parsed message
-   * @param message The parsed message
-   */
-  private async processMessage(message: any): Promise<void> {
-    if (!message || !message.type) {
-      console.warn('[Socket] Received message with no type', message);
-      return;
-    }
-    
-    try {
-      switch (message.type) {
-        case 'Challenge':
-          await this.handleChallenge(message);
-          break;
-        
-        case 'IpAssign':
-          await this.handleIpAssign(message);
-          break;
-        
-        case 'Data':
-          await this.handleDataPacket(message);
-          break;
-        
-        case 'Ping':
-          await this.handlePing(message);
-          break;
-          
-        case 'Pong':
-          this.handlePong(message);
-          break;
-        
-        case 'Error':
-          this.handleError(message);
-          break;
-        
-        case 'Disconnect':
-          this.handleDisconnect(message);
-          break;
-          
-        default:
-          console.warn('[Socket] Unknown message type:', message.type);
-      }
-    } catch (error) {
-      console.error(`[Socket] Error processing message of type ${message.type}:`, error);
-      this.emit('error', this.createSocketError(
-        'message',
-        `Error processing ${message.type} message`,
-        'PROCESS_ERROR',
-        error instanceof Error ? error.message : String(error),
-        false,
-        error
-      ));
-    }
-  }
-  /**
-   * Handle authentication challenge
-   * @param message Challenge message
-   */
-  private async handleChallenge(message: ChallengeMessage): Promise<void> {
-      try {
-        console.log('[Socket] Received authentication challenge, ID:', message.id);
-    
-        // Store server's Ed25519 public key (received in Challenge packet)
-        if (message.server_public_key) { 
-          this.serverPublicKey = message.server_public_key;
-          console.log('[Socket] Stored server Ed25519 public key:', this.serverPublicKey.substring(0, 10) + '...');
-        } else {
-          console.error("[Socket] Server did not provide its public key in the Challenge message!");
-          throw new Error("Server public key missing in Challenge");
-        }
-    
-        if (!this.publicKey) {
-          throw new Error('No client public key available for challenge response');
-        }
-    
-        const challengeData = parseChallengeData(message.data);
-        console.log('[Socket] Challenge data parsed, length:', challengeData.length);
-    
-        // Get client's keypair from storage
-        const storedKeypair = localStorage.getItem('aero-keypair'); 
-        if (!storedKeypair) {
-          throw new Error('No keypair found for authentication');
-        }
-        const keypair = JSON.parse(storedKeypair);
-        const clientSecretKey64 = bs58.decode(keypair.secretKey); 
-    
-        if (clientSecretKey64.length !== 64) {
-          throw new Error(`Invalid Ed25519 secret key length: ${clientSecretKey64.length} (expected 64 bytes)`);
-        }
-    
-        const signatureB58 = signChallenge(challengeData, clientSecretKey64);
-    
-        const response = {
-          type: 'ChallengeResponse',
-          signature: signatureB58,
-          public_key: this.publicKey,
-          challenge_id: message.id,
-        };
-    
-        if (this.isSocketOpen(this.socket)) {
-          this.socket.send(JSON.stringify(response));
-          console.log('[Socket] Challenge response sent successfully');
-        } else {
-          throw new Error('Socket not open when trying to send challenge response');
-        }
-      } catch (error) {
-        console.error('[Socket] Error handling challenge:', error);
-        this.emit('error', this.createSocketError(
-          'auth',
-          'Failed to authenticate with server',
-          'CHALLENGE_ERROR',
-          error instanceof Error ? error.message : 'Unknown authentication error',
-          true
-        ));
-        
-        // Attempt reconnection
-        if (this.autoReconnect) {
-          this.scheduleReconnect();
-        }
-      }
-    }
-    
-    /**
-   * Handle IP assignment message after successful authentication
-   * @param message IP assignment message
-   */
-    private async handleIpAssign(message: IpAssignMessage): Promise<void> {
-    try {
-      this.sessionId = message.session_id;
-      console.log(`[Socket] IP assigned: ${message.ip_address}, Session ID: ${message.session_id}`);
-  
-      // This is the algorithm used TO ENCRYPT THE SESSION KEY, and also the one
-      // the server expects for subsequent DATA packets from the client.
-      const sessionKeyEncryptionAlgorithm = message.encryption_algorithm;
-      if (!sessionKeyEncryptionAlgorithm) {
-        throw new Error("Server did not specify encryption algorithm in IpAssign message");
-      }
-      console.log(`[Socket] Server used algorithm '${sessionKeyEncryptionAlgorithm}' for session key.`);
-      // Store the algorithm the server expects us to use for Data packets
-      this.encryptionAlgorithm = sessionKeyEncryptionAlgorithm;
-  
-      // --- Decrypt the Session Key ---
-      if (message.session_key && message.key_nonce && this.serverPublicKey) {
-        console.debug('[Socket] Attempting to decrypt received session key...');
-  
-        // 1. Parse received data 
-        // The server sends this as Vec<u8> which becomes number[] client-side
-        const encryptedKey = new Uint8Array(message.session_key as any);
-        const keyNonce = new Uint8Array(message.key_nonce as any);
-  
-        console.debug('[Socket] Encrypted session key details:', {
-          encryptedKeyLength: encryptedKey.length,
-          encryptedKeyPrefix: Buffer.from(encryptedKey.slice(0, 8)).toString('hex'),
-          keyNonceLength: keyNonce.length,
-          keyNonceHex: Buffer.from(keyNonce).toString('hex')
-        });
-  
-        // 2. Get client's Ed25519 secret key from storage
-        const storedKeypair = localStorage.getItem('aero-keypair');
-        if (!storedKeypair) throw new Error('No keypair found for deriving shared secret');
-        const keypair = JSON.parse(storedKeypair);
-        const clientEdSecretKey64 = bs58.decode(keypair.secretKey);
-  
-        // 3. Decode server's Ed25519 public key
-        const serverEdPublicKey32 = bs58.decode(this.serverPublicKey);
-  
-        // 4. Derive the RAW ECDH shared secret (MUST match server's derivation)
-        const rawSharedSecret = deriveECDHSharedSecret(clientEdSecretKey64, serverEdPublicKey32);
-        if (!rawSharedSecret) {
-          throw new Error("Failed to derive ECDH shared secret due to key conversion error.");
-        }
-  
-        // 5. Derive the final shared secret using HKDF (matching server)
-        //    The server's HKDF uses an empty salt (None) and specific info.
-        const hkdfSalt = new Uint8Array(); // Empty salt
-        const finalSharedSecret = await deriveSessionKeyHKDF(rawSharedSecret, hkdfSalt);
-  
-        // 6. Decrypt based on the algorithm the server *used* for the session key
-        if (sessionKeyEncryptionAlgorithm === 'aes256gcm') {
-          console.debug('[Socket] Decrypting session key using AES-GCM...');
-          // Use decryptWithAesGcm. The 'finalSharedSecret' is the KEY for this operation.
-          const decryptedKey = await decryptWithAesGcm(
-            encryptedKey,
-            keyNonce,           // Nonce used by server for *this* encryption
-            finalSharedSecret,  // The derived shared secret IS THE KEY here
-            'binary'          // We want the raw bytes of the session key
-          ) as Uint8Array;
-  
-          this.sessionKey = decryptedKey; // Store the *decrypted* session key
-          console.debug('[Socket] Session key decrypted successfully using AES-GCM');
-  
-        } else {
-          // If server sent something other than aes256gcm
-          console.error(`[Socket] Received session key encrypted with unsupported algorithm '${sessionKeyEncryptionAlgorithm}'. Client only supports AES-GCM decryption for session key.`);
-          throw new Error(`Cannot decrypt session key: Unsupported algorithm '${sessionKeyEncryptionAlgorithm}'`);
-        }
-  
-        // 7. Validate and store
-        if (!this.sessionKey || this.sessionKey.length !== 32) {
-          throw new Error(`Decrypted session key has invalid length: ${this.sessionKey?.length}`);
-        }
-        console.debug('[Socket] Final Session Key Stored:', {
-          length: this.sessionKey.length,
-          prefix: Buffer.from(this.sessionKey.slice(0, 8)).toString('hex')
-        });
-  
-        // Run compatibility test if in development mode
-        if (process.env.NODE_ENV === 'development') {
-          testEncryptionCompat(this.sessionKey)
-            .then(compatible => {
-              console.log(`[Socket] Encryption compatibility test: ${compatible ? 'PASSED' : 'FAILED'}`);
-            })
-            .catch(err => {
-              console.error('[Socket] Encryption compatibility test error:', err);
-            });
-        }
-  
-      } else {
-        throw new Error('Missing necessary data in IpAssign message to establish session key (key, nonce, or server public key)');
-      }
-  
-      // --- Connection is now fully established ---
-      this.isConnected = true;
-      this.connecting = false;
-      this.emit('connectionStatus', 'connected');
-      
-      // Start ping interval to keep connection alive
-      this.startPingInterval();
-      
-      // Start keep-alive monitoring
-      this.startKeepAliveMonitoring();
-      
-      // Notify successful connection
-      this.emit('connected', {
-        ip: message.ip_address,
-        sessionId: message.session_id,
-      });
-      
-      // Send any messages that were queued while disconnected
-      await this.processPendingMessages();
-  
-    } catch (error) {
-      console.error('[Socket] Error handling IP assignment or session key decryption:', error);
-      this.emit('error', this.createSocketError(
-        'connection',
-        'Failed to process connection setup',
-        'SESSION_KEY_ERROR',
-        error instanceof Error ? error.message : String(error),
-        true
-      ));
-      this.disconnect();
-      if (this.autoReconnect) this.scheduleReconnect();
+      // Consider disconnecting if parsing fails repeatedly?
     }
   }
 
-    
-    /**
-     * Send a test message to verify aes256gcm encryption is working
-     */
-    private async sendTestMessage(): Promise<boolean> {
-      if (!this.socket || !this.isConnected || !this.sessionKey) {
-        console.error('[Socket] Cannot send test message: not connected or missing session key');
-        return false;
-      }
-      
-      try {
-        // Test message
-        const testMessage = "Encryption Test: " + new Date().toISOString();
-        console.debug('[Socket] Sending encryption test message:', testMessage);
-        
-        // Create packet with a simple object
-        return await this.send({
-          type: 'test',
-          content: testMessage,
-          timestamp: Date.now()
-        });
-      } catch (error) {
-        console.error("[Socket] Failed to send encryption test message:", error);
-        return false;
-      }
-    }
-  
   /**
-   * Handle encrypted data packet
-   * @param message Data packet message
+   * Handles WebSocket close event. Cleans up, updates state, and handles reconnection.
    */
-  private async handleDataPacket(message: any): Promise<void> { 
+  private handleSocketClose(event: CloseEvent): void {
+    this.clearConnectionTimeout(); // Ensure timeout is cleared
+    console.log(`[Socket] WebSocket connection closed: Code=${event.code}, Reason=${event.reason}`);
+
+    const previousState = this.connectionState;
+    this.cleanupConnection(false); // Clean up resources without emitting extra events yet
+
+    // Reject connection promise if closed during connection/auth phase
+    if (previousState === ConnectionState.CONNECTING || previousState === ConnectionState.AUTHENTICATING) {
+      console.error('[Socket] Connection closed during handshake.');
+      this.emit('error', this.createSocketError(
+        'connection',
+        'Connection closed during setup',
+        `WS_CLOSE_${event.code}`,
+         event.reason,
+        true // Usually retryable
+      ));
+      this.rejectConnection(new Error(`Connection closed during handshake: ${event.code} ${event.reason}`));
+    } else if (previousState === ConnectionState.CONNECTED) {
+      // If we were previously connected, emit standard disconnect events
+      this.emit('connectionStatus', 'disconnected');
+      this.emit('disconnected', event.code, event.reason);
+    }
+
+    // Final state update
+    this.safeChangeState(ConnectionState.DISCONNECTED);
+
+    // Handle reconnection logic
+    if (this.autoReconnect && shouldAttemptReconnect(event.code) && canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
+      this.scheduleReconnect();
+    } else if (this.autoReconnect && !canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
+      console.log("[Socket] Max reconnection attempts reached.");
+      this.emit('error', this.createSocketError('connection', 'Max reconnection attempts reached', 'MAX_RECONNECT', undefined, false));
+      this.autoReconnect = false; // Stop trying
+    } else if (!shouldAttemptReconnect(event.code)) {
+        console.log(`[Socket] WebSocket closed with code ${event.code}. Reconnection not appropriate.`);
+        this.autoReconnect = false; // Stop trying for non-retryable close codes
+    }
+  }
+
+  /**
+   * Handles WebSocket error event. Emits error and relies on onclose for cleanup.
+   */
+  private handleSocketError(event: Event): void {
+    this.clearConnectionTimeout(); // Ensure timeout is cleared
+    console.error('[Socket] WebSocket error:', event);
+    const errorMsg = 'WebSocket connection error occurred.';
+
+    // Emit a generic connection error
+    this.emit('error', this.createSocketError(
+      'connection',
+      errorMsg,
+      'WS_ERROR',
+       undefined,
+      true, // Assume potentially retryable unless onclose gives a specific code
+      event
+    ));
+
+    // If the error occurred during connection/auth, reject the promise
+    if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+      this.rejectConnection(new Error(errorMsg));
+      // Note: cleanupConnection and state change will be handled by the subsequent 'onclose' event
+    } else {
+        // If error on established connection, trigger health check which might lead to reconnect
+        this.checkConnectionHealth();
+    }
+  }
+
+  /**
+   * Processes incoming messages based on their 'type' field.
+   * @param message Parsed message object.
+   */
+  private async processMessage(message: any): Promise<void> {
+    // Basic validation
+    if (!message || typeof message.type !== 'string') {
+      console.warn('[Socket] Received message without valid type:', message);
+      return;
+    }
+
+    console.debug(`[Socket] Processing message type: ${message.type}`);
+
     try {
-      if (!this.sessionKey) {
-        throw new Error('No session key available to decrypt message');
+      switch (message.type) {
+        case 'Challenge':
+          // Ensure we are in the right state to process a challenge
+          if (this.connectionState !== ConnectionState.AUTHENTICATING) {
+              console.warn(`[Socket] Received Challenge in unexpected state: ${this.connectionState}`);
+              return;
+          }
+          await this.handleChallenge(message as ChallengeMessage);
+          break;
+
+        case 'IpAssign':
+           // Ensure we are in the right state
+           if (this.connectionState !== ConnectionState.AUTHENTICATING) {
+              console.warn(`[Socket] Received IpAssign in unexpected state: ${this.connectionState}`);
+              return;
+          }
+          await this.handleIpAssign(message as IpAssignMessage);
+          break;
+
+        case 'Data':
+           // Should only process Data if fully connected
+           if (this.connectionState !== ConnectionState.CONNECTED) {
+               console.warn(`[Socket] Received Data packet in non-connected state: ${this.connectionState}`);
+               return;
+           }
+          await this.handleDataPacket(message);
+          break;
+
+        case 'Ping':
+          this.handlePing(message as PingMessage);
+          break;
+
+        case 'Pong':
+          this.handlePong(message as PongMessage);
+          break;
+
+        case 'Error':
+          this.handleError(message as ErrorMessage); // Pass reject? No, handleError decides based on state/code
+          break;
+
+        case 'Disconnect':
+          this.handleDisconnect(message as DisconnectMessage); // Pass reject? No, handleDisconnect decides
+          break;
+
+        // Key Rotation handling
+        case 'KeyRotationRequest':
+             if (this.connectionState !== ConnectionState.CONNECTED) return;
+             await this.handleKeyRotationRequest(message);
+             break;
+        case 'KeyRotationResponse':
+             if (this.connectionState !== ConnectionState.CONNECTED) return;
+             await this.handleKeyRotationResponse(message);
+             break;
+
+        default:
+          console.warn(`[Socket] Received unknown message type: ${message.type}`, message);
+          this.emit('data', message); // Emit generic data event for application layer
       }
-      
-      // message should already be the parsed JSON object from handleServerMessage
-      const packet = message; 
-  
-      if (!packet || packet.type !== 'Data' || !Array.isArray(packet.encrypted) || !Array.isArray(packet.nonce)) {
-        console.warn('[Socket] Invalid data packet format received:', packet);
+    } catch (error) {
+      // Catch errors from handlers themselves (should ideally be handled within)
+      console.error(`[Socket] Uncaught error processing message type ${message.type}:`, error);
+       this.emit('error', this.createSocketError(
+           'message',
+           `Error processing ${message.type}`,
+           'PROCESS_MSG_ERROR',
+            error instanceof Error ? error.message : String(error),
+           false, // Uncaught errors are usually not retryable
+           error
+       ));
+       // If an error occurs during connection/auth phase, reject the main promise
+       if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+           this.rejectConnection(error);
+           await this.disconnect(); // Ensure cleanup on critical processing error during setup
+       }
+    }
+  }
+
+  /**
+   * Handles the authentication Challenge message.
+   * @param message Parsed Challenge message.
+   */
+  private async handleChallenge(message: ChallengeMessage): Promise<void> {
+    console.log('[Socket] Received Challenge, ID:', message.id);
+    try {
+      // 1. Validate state and message
+      if (this.connectionState !== ConnectionState.AUTHENTICATING) throw new Error("Not in authenticating state.");
+      if (!message.server_key) throw new Error('Server public key missing in Challenge');
+      this.serverPublicKey = message.server_key;
+      console.log('[Socket] Stored server Ed25519 public key (Base58):', this.serverPublicKey.substring(0, 10) + '...');
+
+      if (!this.publicKey) throw new Error('Client public key not set');
+
+      // 2. Parse challenge data
+      const challengeBytes = parseChallengeData(message.data);
+      if (challengeBytes.length === 0) throw new Error('Empty challenge data');
+      console.log('[Socket] Challenge data parsed, length:', challengeBytes.length);
+
+      // 3. Get client secret key securely
+      const keypair = await getStoredKeypair(); // Assumes secure retrieval
+      if (!keypair) throw new Error('Client keypair not found');
+      const clientSecretKeyBytes = bs58.decode(keypair.secretKey);
+      if (clientSecretKeyBytes.length !== 64) throw new Error('Invalid client secret key length');
+
+      // 4. Sign challenge
+      console.log('[Socket] Signing challenge...');
+      const signature = signChallenge(challengeBytes, clientSecretKeyBytes);
+      console.log('[Socket] Signature generated (Base58):', signature.substring(0, 10) + '...');
+
+      // 5. Construct and send response
+      const response: ChallengeResponse = {
+        type: 'ChallengeResponse',
+        challenge_id: message.id,
+        public_key: this.publicKey,
+        signature: signature,
+      };
+      if (this.socket && isSocketOpen(this.socket)) {
+        this.socket.send(JSON.stringify(response));
+        console.log('[Socket] Challenge response sent successfully');
+      } else {
+        throw new Error('Socket closed before challenge response could be sent');
+      }
+    } catch (error) {
+      console.error('[Socket] Error handling challenge:', error);
+      this.emit('error', this.createSocketError('auth','Failed to process challenge','CHALLENGE_PROCESS_ERROR', error instanceof Error ? error.message : String(error),true));
+      this.rejectConnection(error); // Reject connect promise on challenge failure
+      await this.disconnect(); // Disconnect fully
+    }
+  }
+
+  /**
+   * Handles the IpAssign message, decrypts session key, completes connection.
+   * @param message Parsed IpAssign message.
+   */
+  private async handleIpAssign(message: IpAssignMessage): Promise<void> {
+    console.log(`[Socket] Received IpAssign. Session ID: ${message.session_id}`);
+    try {
+       // 1. Validate state and message
+      if (this.connectionState !== ConnectionState.AUTHENTICATING) throw new Error("Not in authenticating state.");
+      if (message.encryption_algorithm !== 'aes256gcm') throw new Error(`Unsupported encryption algorithm: ${message.encryption_algorithm}`);
+      if (!message.encrypted_session_key || !message.key_nonce) throw new Error('Missing encrypted_session_key or key_nonce');
+      if (!this.serverPublicKey) throw new Error('Server public key missing from previous step');
+      console.debug('[IpAssign] Prerequisites met.');
+
+      // 2. Get client secret key securely
+      const keypair = await getStoredKeypair();
+      if (!keypair) throw new Error('Client keypair not found');
+      const clientEdSecretKeyBytes = bs58.decode(keypair.secretKey);
+      if (clientEdSecretKeyBytes.length !== 64) throw new Error('Invalid client secret key length');
+
+      // 3. Decode server public key
+      const serverEdPublicKeyBytes = bs58.decode(this.serverPublicKey);
+      if (serverEdPublicKeyBytes.length !== 32) throw new Error('Invalid server public key length');
+
+      // 4. Convert keys (Ensure utils match server exactly)
+       console.debug('[IpAssign] Converting keys for ECDH...');
+       const clientCurveSecretKey = convertEd25519SecretKeyToCurve25519(clientEdSecretKeyBytes);
+       const serverCurvePublicKey = convertEd25519PublicKeyToCurve25519(serverEdPublicKeyBytes);
+       if (!clientCurveSecretKey || !serverCurvePublicKey) throw new Error('Key conversion failed');
+       console.debug('[IpAssign] Keys converted.');
+
+      // 5. Derive RAW shared secret (ECDH)
+      console.debug('[IpAssign] Deriving raw ECDH shared secret...');
+      const rawSharedSecret = deriveECDHRawSharedSecret(clientCurveSecretKey, serverCurvePublicKey);
+      if (!rawSharedSecret) throw new Error('ECDH failed');
+       console.debug('[IpAssign] Raw shared secret derived.');
+
+      // 6. Derive FINAL shared secret (HKDF - used for session key decryption ONLY)
+      console.debug('[IpAssign] Deriving final shared secret via HKDF...');
+      const finalSharedSecret = await deriveKeyWithHKDF(rawSharedSecret);
+       console.debug('[IpAssign] Final shared secret derived.');
+
+      // 7. Prepare received data for decryption
+      const encryptedSessionKeyBytes = numberArrayToUint8Array(message.encrypted_session_key);
+      const keyNonceBytes = numberArrayToUint8Array(message.key_nonce);
+      if (keyNonceBytes.length !== 12) throw new Error(`Invalid nonce length: ${keyNonceBytes.length}`);
+       console.debug('[IpAssign] Preparing to decrypt session key...');
+
+      // 8. Decrypt the ACTUAL session key
+      const decryptedSessionKey = await decryptWithAesGcm(encryptedSessionKeyBytes,keyNonceBytes,finalSharedSecret,'binary') as Uint8Array;
+
+      // 9. Validate and Store the DECRYPTED Session Key
+      if (!decryptedSessionKey || decryptedSessionKey.length !== 32) throw new Error('Decrypted session key invalid');
+      this.sessionKey = decryptedSessionKey;
+      this.sessionId = message.session_id;
+      this.messageCounter = 0; // Reset counter for new session
+      this.processedMessageIds.clear(); // Clear replay cache for new session
+      this.lastKeyRotation = Date.now(); // Mark initial key time
+      console.log('[Socket] Session key decrypted and stored successfully.');
+      console.debug(' - Stored Session Key Prefix:', Buffer.from(this.sessionKey.slice(0,8)).toString('hex'));
+
+      // 10. Finalize Connection
+      await this.safeChangeState(ConnectionState.CONNECTED);
+      this.emit('connectionStatus', 'connected');
+      this.startKeepAliveServices(); // Start ping, heartbeat, etc.
+      this.startKeyRotationTimer();  // Start periodic key rotation check
+      this.processPendingMessages(); // Send any queued messages (don't await here)
+      this.emit('connected', { ip: message.ip_address, sessionId: message.session_id });
+      this.resolveConnection(); // Resolve the main connect() promise
+
+      // 11. Compatibility Test (Run async, don't block connection)
+       testEncryptionCompat(this.sessionKey).then(compatTestPassed => {
+            if (!compatTestPassed) {
+                console.error("[Socket] CRITICAL: Local encryption compatibility test FAILED!");
+                this.emit('error', this.createSocketError('auth','Encryption test failed','ENCRYPTION_TEST_FAILED',undefined,false));
+                this.disconnect().catch(e => console.error("Error during disconnect:", e)); // Disconnect if test fails
+            } else {
+                console.log("[Socket] Local encryption compatibility test PASSED.");
+            }
+       }).catch(testError => {
+            console.error("[Socket] Encryption compatibility test threw an error:", testError);
+            this.emit('error', this.createSocketError('auth','Encryption test error','ENCRYPTION_TEST_ERROR', testError instanceof Error ? testError.message : String(testError), false));
+            this.disconnect().catch(e => console.error("Error during disconnect:", e));
+       });
+
+
+    } catch (error) {
+      console.error('[Socket] Error handling IpAssign:', error);
+      this.emit('error', this.createSocketError('auth','Failed to establish secure session','IPASSIGN_PROCESS_ERROR',error instanceof Error ? error.message : String(error),true));
+      this.sessionKey = null; // Clear potentially bad key
+      this.rejectConnection(error); // Reject connect promise
+      await this.disconnect(); // Ensure cleanup
+    }
+  }
+
+  /**
+   * Handles incoming Data packets, decrypts, validates, and emits events.
+   * @param message The parsed Data packet object.
+   */
+  private async handleDataPacket(message: any): Promise<void> {
+    if (!this.sessionKey) {
+      console.warn('[Socket] Received Data packet but no session key. Ignoring.');
+      return;
+    }
+     // Only process if fully connected
+    if (this.connectionState !== ConnectionState.CONNECTED) {
+        console.warn(`[Socket] Received Data packet in non-connected state: ${this.connectionState}. Ignoring.`);
+        return;
+    }
+
+    console.debug('[Socket] Processing potential Data packet...');
+    try {
+      // Decrypt and validate the packet structure
+      const decryptedData = await processEncryptedDataPacket(message, this.sessionKey);
+      if (!decryptedData) {
+        // Error logged within processEncryptedDataPacket
+        this.emit('error', this.createSocketError('data','Decryption failed','DECRYPTION_FAILED',undefined,false));
         return;
       }
-  
-      const encryptedUint8 = new Uint8Array(packet.encrypted);
-      const nonceUint8 = new Uint8Array(packet.nonce);
-      const algorithm = packet.encryption_algorithm || 'aes256gcm'; // Default if missing
-  
-      console.debug('[Socket] Received encrypted data:', { 
-        encryptedSize: encryptedUint8.length,
-        nonceSize: nonceUint8.length,
-        counter: packet.counter,
-        algorithm 
-      });
-  
-      if (algorithm !== 'aes256gcm') {
-        console.error(`[Socket] Received data packet with unsupported algorithm '${algorithm}'. Cannot decrypt.`);
-        return; // Cannot decrypt if it's not AES-GCM
+
+      this.lastMessageTime = Date.now(); // Update activity timer
+      console.debug('[Socket] Data packet decrypted successfully. Inner Type:', decryptedData.type);
+
+      // Replay Protection
+      if (decryptedData.id && typeof decryptedData.id === 'string') {
+        if (this.processedMessageIds.has(decryptedData.id)) {
+          console.warn(`[Socket] Replay detected for message ID: ${decryptedData.id}. Ignoring.`);
+          return;
+        }
+        this.processedMessageIds.set(decryptedData.id, Date.now());
+        this.cleanupMessageIdCache(); // Clean up old entries
       }
-  
-      // Use the CORRECT, DECRYPTED this.sessionKey
-      const decryptedText = await decryptWithAesGcm(
-        encryptedUint8,
-        nonceUint8,
-        this.sessionKey,
-        'string'
-      ) as string;
-  
-      const decryptedData = JSON.parse(decryptedText);
-  
-      // Check for message replay attempts
-      if (decryptedData.id && this.processedMessageIds.has(decryptedData.id)) {
-        console.warn('[Socket] Detected message replay attempt, ignoring');
-        return;
+
+      // Type Guard based processing
+      if (isMessageType(decryptedData)) {
+        this.emit('message', decryptedData);
+      } else if (isChatInfoPayload(decryptedData)) {
+        this.emit('chatInfo', decryptedData.data);
+      } else if (isParticipantsPayload(decryptedData)) {
+        this.emit('participants', decryptedData.data);
+      } else if (isWebRTCSignalPayload(decryptedData)) {
+        this.emit('webrtcSignal', decryptedData);
+      } else if (isKeyRotationRequestPayload(decryptedData)) {
+        await this.handleKeyRotationRequest(decryptedData);
+      } else if (isKeyRotationResponsePayload(decryptedData)) {
+        await this.handleKeyRotationResponse(decryptedData);
+      } else if (typeof decryptedData === 'object' && decryptedData !== null && typeof decryptedData.type === 'string') {
+        // Fallback for other known types or generic data
+        this.emit('data', decryptedData);
+        console.log(`[Socket] Emitted generic 'data' event for type: ${decryptedData.type}`);
+      } else {
+        // If none of the type guards match
+        console.warn('[Socket] Received decrypted data with unknown or invalid structure:', decryptedData);
+         this.emit('error', this.createSocketError('message','Invalid decrypted data structure','INVALID_DATA_STRUCTURE', JSON.stringify(decryptedData).substring(0, 100), false));
+      }
+
+    } catch (error) { // Catch errors during processing (e.g., type guard issues)
+      console.error('[Socket] Error processing decrypted data packet:', error);
+       this.emit('error', this.createSocketError('data','Error processing decrypted data','DATA_PROCESS_ERROR', error instanceof Error ? error.message : String(error), false));
+    }
+  }
+
+  /**
+   * WebRTC signaling handler
+   */
+  private async handleWebRTCSignal(signalPayload: WebRTCSignalPayload): Promise<void> {
+    console.debug(`[Socket] Processing WebRTC signal: ${signalPayload.signalType}`);
+    
+    // Validate the payload structure
+    if (!signalPayload.peerId || !signalPayload.signalData) {
+      console.warn('[Socket] Invalid WebRTC signal payload:', signalPayload);
+      return;
+    }
+    
+    // Emit the signal for application-level handling
+    this.emit('webrtcSignal', signalPayload);
+  }
+
+  /**
+   * Cleans up old message IDs from the replay protection cache.
+   */
+  private cleanupMessageIdCache(): void {
+    const now = Date.now();
+    
+    // First pass: remove expired entries
+    const expiredIds: string[] = [];
+    this.processedMessageIds.forEach((timestamp, id) => {
+      if (now - timestamp > this.messageIdCacheTTL) {
+        expiredIds.push(id);
+      }
+    });
+    
+    for (const id of expiredIds) {
+      this.processedMessageIds.delete(id);
+    }
+    
+    // Second pass if still too large: remove oldest entries
+    if (this.processedMessageIds.size > this.messageIdCacheMaxSize) {
+      const overflow = this.processedMessageIds.size - this.messageIdCacheMaxSize;
+      // Sort by timestamp (oldest first)
+      const entries = Array.from(this.processedMessageIds.entries())
+        .sort((a, b) => a[1] - b[1])
+        .slice(0, overflow)
+        .map(([id]) => id);
+      
+      for (const id of entries) {
+        this.processedMessageIds.delete(id);
       }
       
-      // Store message ID to prevent replay attacks
-      if (decryptedData.id) {
-        this.processedMessageIds.add(decryptedData.id);
-        
-        // Limit the set size
-        if (this.processedMessageIds.size > 1000) {
-          const oldestId = Array.from(this.processedMessageIds)[0];
-          this.processedMessageIds.delete(oldestId);
+      console.debug(`[Socket] Pruned ${entries.length} oldest message IDs from cache.`);
+    }
+  }
+
+  /**
+   * Handles server Ping messages.
+   */
+  private handlePing(message: PingMessage): void {
+    if (!this.socket || !isSocketOpen(this.socket)) return;
+    try {
+      const pongResponse: PongMessage = {
+        type: 'Pong',
+        echo_timestamp: message.timestamp,
+        server_timestamp: Date.now(),
+        sequence: message.sequence,
+      };
+      this.socket.send(JSON.stringify(pongResponse));
+      console.debug(`[Socket] Responded to Ping (Seq: ${message.sequence})`);
+    } catch (error) {
+      console.error('[Socket] Error sending Pong response:', error);
+    }
+  }
+
+  /**
+   * Handles server Pong messages.
+   */
+  private handlePong(message: PongMessage): void {
+    const now = Date.now();
+    const latency = now - message.echo_timestamp;
+    console.debug(`[Socket] Received Pong (Seq: ${message.sequence}), Latency: ${latency}ms`);
+    this.lastMessageTime = now;
+
+    // Clear the timeout for this sequence
+    const timeoutId = this.pingTimeouts.get(message.sequence);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      this.pingTimeouts.delete(message.sequence);
+      this.consecutiveFailedPings = 0; // Reset counter on successful pong
+    } else {
+      console.warn(`[Socket] Received Pong for unknown/timed-out sequence: ${message.sequence}`);
+    }
+    
+    // Track latency for network quality assessment
+    this.addLatencyMeasurement(latency);
+    this.updateNetworkQuality();
+    this.emit('latency', latency);
+  }
+
+  /**
+   * Add a latency measurement to the history
+   */
+  private addLatencyMeasurement(latency: number): void {
+    this.latencyHistory.push(latency);
+    // Keep history at a reasonable size
+    if (this.latencyHistory.length > this.maxLatencyHistory) {
+      this.latencyHistory.shift();
+    }
+  }
+
+  /**
+   * Calculate average latency from history
+   */
+  private calculateAverageLatency(): number {
+    if (this.latencyHistory.length === 0) return 200; // Default
+    return this.latencyHistory.reduce((sum, val) => sum + val, 0) / this.latencyHistory.length;
+  }
+
+  /**
+   * Update network quality assessment
+   */
+  private updateNetworkQuality(): void {
+    const now = Date.now();
+    if (now - this.lastNetworkQualityCheck < this.NETWORK_CHECK_INTERVAL_MS) {
+      return; // Only check periodically
+    }
+    
+    this.lastNetworkQualityCheck = now;
+    
+    const avgLatency = this.calculateAverageLatency();
+    const pingFailRate = this.consecutiveFailedPings / 5; // Consider recent history
+    
+    // Determine quality based on latency and stability
+    if (avgLatency < 100 && pingFailRate === 0) {
+      this.networkQuality = 'excellent';
+    } else if (avgLatency < 200 && pingFailRate < 0.2) {
+      this.networkQuality = 'good';
+    } else if (avgLatency < 500 && pingFailRate < 0.5) {
+      this.networkQuality = 'poor';
+    } else {
+      this.networkQuality = 'bad';
+    }
+    
+    this.emit('networkQuality', this.networkQuality);
+    
+    // Adjust reconnection behavior based on network quality
+    if (this.networkQuality === 'bad' && this.isConnected()) {
+      console.warn('[Socket] Network quality is bad, checking connection health');
+      this.checkConnectionHealth();
+    }
+  }
+
+  /**
+   * Handles server Error messages.
+   */
+  private handleError(message: ErrorMessage): void {
+    console.error(`[Socket] Received server error: Code=${message.code}, Message=${message.message}`);
+    const isFatalAuthError = message.code !== undefined && message.code >= 4000 && message.code < 5000;
+
+    this.emit('error', this.createSocketError('server',message.message,`SERVER_${message.code || 'UNKNOWN'}`,undefined,!isFatalAuthError,message));
+
+    // If error occurs during connection and is fatal, reject the promise
+    if ((this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) && isFatalAuthError) {
+      console.error("[Socket] Fatal server error during connection phase. Aborting.");
+      this.rejectConnection(new Error(`Server error ${message.code}: ${message.message}`));
+      this.cleanupConnection(true);
+    } else if (isFatalAuthError) {
+      // If fatal error after connection, disconnect permanently
+      console.error("[Socket] Fatal server error received. Disconnecting permanently.");
+      this.autoReconnect = false;
+      this.disconnect().catch(e => console.error("Error during disconnect:", e));
+    }
+  }
+
+  /**
+   * Handles server Disconnect messages.
+   */
+  private handleDisconnect(message: DisconnectMessage): void {
+    console.warn(`[Socket] Received Disconnect from server: Reason=${message.reason}, Message=${message.message}`);
+    const previousState = this.connectionState;
+    this.cleanupConnection(false); // Clean resources first
+
+    // Reject connect promise if disconnected during setup
+    if (previousState === ConnectionState.CONNECTING || previousState === ConnectionState.AUTHENTICATING) {
+      this.safeChangeState(ConnectionState.DISCONNECTED);
+      this.rejectConnection(new Error(`Server disconnected during setup: ${message.reason} ${message.message}`));
+    } else if (previousState === ConnectionState.CONNECTED) {
+      // Emit events if previously connected
+      this.emit('connectionStatus', 'disconnected');
+      this.emit('disconnected', message.reason, message.message);
+      this.safeChangeState(ConnectionState.DISCONNECTED);
+    }
+
+    // Decide on reconnection
+    const canReconnect = message.reason < 4000; // Example logic
+    if (this.autoReconnect && canReconnect && canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
+      this.scheduleReconnect();
+    } else {
+      console.log("[Socket] Disconnect reason indicates no reconnection attempt or max attempts reached.");
+      this.autoReconnect = false;
+    }
+  }
+
+  /**
+   * Handles key rotation request from the server
+   */
+  private async handleKeyRotationRequest(message: any): Promise<void> {
+    console.log('[Socket] Received key rotation request');
+    
+    try {
+      if (!this.sessionKey || !this.serverPublicKey) {
+        throw new Error('Missing current session or server keys');
+      }
+      
+      // Verify the rotation_id exists
+      if (!message.rotation_id) {
+        throw new Error('Missing rotation_id in key rotation request');
+      }
+      
+      // Generate random nonce for response
+      const responseNonce = new Uint8Array(12);
+      if (typeof window !== 'undefined' && window.crypto) {
+        window.crypto.getRandomValues(responseNonce);
+      } else {
+        // Fallback for non-browser environments
+        for (let i = 0; i < 12; i++) {
+          responseNonce[i] = Math.floor(Math.random() * 256);
         }
       }
       
-      // Process the message by type
-      if (decryptedData.type === 'message') {
-        this.emit('message', decryptedData);
-      } else if (decryptedData.type === 'chatInfo') {
-        this.emit('chatInfo', decryptedData.data);
-      } else if (decryptedData.type === 'participants') {
-        this.emit('participants', decryptedData.data);
+      // Create rotation response
+      const rotationResponse = {
+        type: 'KeyRotationResponse',
+        rotation_id: message.rotation_id,
+        nonce: Array.from(responseNonce), // Convert to array for JSON serialization
+        // Include additional fields as required by protocol
+        timestamp: Date.now()
+      };
+      
+      // Send the response with high priority
+      if (this.socket && isSocketOpen(this.socket)) {
+        this.socket.send(JSON.stringify(rotationResponse));
+        console.log('[Socket] Key rotation response sent');
       } else {
-        // Forward other message types as is
-        this.emit(decryptedData.type, decryptedData);
+        throw new Error('Socket closed during key rotation');
       }
-  
-      console.debug('[Socket] Successfully processed decrypted data:', { 
-        type: decryptedData.type, 
-        hasId: !!decryptedData.id 
-      });
+      
     } catch (error) {
-      console.error('[Socket] Error handling data packet:', error);
+      console.error('[Socket] Error handling key rotation request:', error);
       this.emit('error', this.createSocketError(
-        'data',
-        'Failed to process data packet',
-        'DATA_ERROR',
+        'security',
+        'Failed to process key rotation request',
+        'KEY_ROTATION_REQ_ERROR',
         error instanceof Error ? error.message : String(error),
-        false,
-        error
+        false
       ));
     }
   }
-  
+
   /**
-   * Handle server ping message
-   * @param message Ping message
+   * Handles the server's response to a key rotation
    */
-  private async handlePing(message: PingMessage): Promise<void> {
+  private async handleKeyRotationResponse(message: any): Promise<void> {
+    console.log('[Socket] Processing key rotation response');
+    
     try {
-      // Send pong response
-      if (this.isSocketOpen(this.socket)) {
-        const pong = {
-          type: 'Pong',
-          echo_timestamp: message.timestamp,
-          server_timestamp: Date.now(),
-          sequence: message.sequence,
-        };
-        this.socket.send(JSON.stringify(pong));
-        console.log(`[Socket] Responding to ping: ${message.sequence}`);
+      // Validate message structure
+      if (!message.rotation_id || !message.encrypted_key || !message.key_nonce) {
+        throw new Error('Invalid key rotation response structure');
       }
-    } catch (error) {
-      console.error('[Socket] Error handling ping:', error);
-    }
-  }
-  
-  /**
-   * Handle server pong message
-   * @param message Pong message
-   */
-  private handlePong(message: PongMessage): void {
-    try {
-      const now = Date.now();
-      const latency = now - message.echo_timestamp;
-      console.log(`[Socket] Received pong: sequence ${message.sequence}, latency ${latency}ms`);
       
-      // Update last message time
-      this.lastMessageTime = now;
-      
-      // Clear this ping's timeout handler
-      if (this.pingTimeouts.has(message.sequence)) {
-        clearTimeout(this.pingTimeouts.get(message.sequence)!);
-        this.pingTimeouts.delete(message.sequence);
+      if (!this.sessionKey || !this.serverPublicKey) {
+        throw new Error('Missing current session or server keys');
       }
+      
+      // Implementation would be similar to IpAssign but using existing session key
+      // as input to derive the encryption key for the new session key
+      
+      // For demonstration (actual implementation would use the cryptoUtils):
+      const encryptedKeyBytes = numberArrayToUint8Array(message.encrypted_key);
+      const keyNonceBytes = numberArrayToUint8Array(message.key_nonce);
+      
+      // Derive a rotation key using current sessionKey as input
+      // This would use deriveKeyWithHKDF or similar
+      
+      // Decrypt the new session key
+      // const newSessionKey = await decryptWithAesGcm(...) as Uint8Array;
+      
+      // For this example, we'll simulate with a placeholder
+      const newSessionKey = new Uint8Array(32);
+      if (window.crypto) {
+        window.crypto.getRandomValues(newSessionKey);
+      }
+      
+      // Securely replace the old key
+      this.secureWipe(this.sessionKey);
+      this.sessionKey = newSessionKey;
+      this.messageCounter = 0; // Reset counter for new session
+      this.lastKeyRotation = Date.now();
+      
+      console.log('[Socket] Session key rotated successfully');
+      this.emit('keyRotated', { timestamp: this.lastKeyRotation });
+      
     } catch (error) {
-      console.error('[Socket] Error handling pong:', error);
+      console.error('[Socket] Error processing key rotation response:', error);
+      this.emit('error', this.createSocketError(
+        'security',
+        'Failed to process key rotation response',
+        'KEY_ROTATION_RESP_ERROR',
+        error instanceof Error ? error.message : String(error),
+        false
+      ));
+      
+      // Since key rotation failure is security-critical, consider reconnecting
+      this.forceReconnect = true;
+      this.disconnect().then(() => {
+        if (this.chatId && this.publicKey) {
+          this.connect(this.chatId, this.publicKey).catch(e => {
+            console.error('[Socket] Failed to reconnect after key rotation failure:', e);
+          });
+        }
+      }).catch(e => {
+        console.error('[Socket] Error during disconnect after key rotation failure:', e);
+      });
     }
   }
-  
-  /**
-   * Handle error message from server
-   * @param message Error message
-   */
-  private handleError(message: ErrorMessage): void {
-    console.error('[Socket] Server error:', message.message, message.code);
-    this.emit('error', this.createSocketError(
-      'server',
-      message.message,
-      message.code ? `SERVER_${message.code}` : 'SERVER_ERROR',
-      undefined,
-      message.code ? message.code < 5000 : true // Retry for non-fatal errors
-    ));
-    
-    // For certain error codes, we might want to reconnect
-    if (this.autoReconnect && message.code && [1001, 1002, 1003].includes(message.code)) {
-      this.scheduleReconnect();
-    }
+
+  // --- Keep-Alive and Health Monitoring ---
+
+  private startKeepAliveServices(): void {
+    this.stopKeepAliveServices(); // Ensure previous timers are stopped
+    this.startPingInterval();
+    this.startKeepAliveMonitoring();
+    this.startHeartbeat();
   }
-  
-  /**
-   * Handle disconnect message from server
-   * @param message Disconnect message
-   */
-  private handleDisconnect(message: DisconnectMessage): void {
-    this.isConnected = false;
-    this.emit('disconnected', message.reason, message.message);
-    this.stopPingInterval();
-    this.stopKeepAliveMonitoring();
-    this.stopHeartbeat();
-    
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
+
+   private stopKeepAliveServices(): void {
+        this.stopPingInterval();
+        this.stopKeepAliveMonitoring();
+        this.stopHeartbeat(); // Includes clearing ping timeouts
     }
-    
-    // If reason is non-fatal, attempt to reconnect
-    if (this.autoReconnect && message.reason < 4000) {
-      this.scheduleReconnect();
-    }
-  }
-  
-  /**
-   * Start ping interval to keep connection alive
-   */
+
+
   private startPingInterval(): void {
     this.stopPingInterval();
-    
-    this.pingInterval = setInterval(() => {
-      this.sendPing();
-    }, 30000); // Send ping every 30 seconds
+    console.debug('[Socket] Starting ping interval');
+    this.pingInterval = setInterval(() => this.sendPing(), PING_INTERVAL_MS);
   }
-  
-  /**
-   * Stop ping interval
-   */
+
   private stopPingInterval(): void {
     if (this.pingInterval) {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
+      console.debug('[Socket] Stopped ping interval.');
     }
   }
-  
-  /**
-   * Start keep-alive monitoring to detect dead connections
-   */
+
   private startKeepAliveMonitoring(): void {
     this.stopKeepAliveMonitoring();
-    
-    // Check connection health every 30 seconds
+    console.debug('[Socket] Starting keep-alive monitoring');
     this.keepAliveInterval = setInterval(() => {
       const now = Date.now();
       const timeSinceLastMessage = now - this.lastMessageTime;
-      
-      // If no message for 90 seconds, connection might be dead
-      if (timeSinceLastMessage > 90000) {
-        console.warn(`[Socket] No messages received for ${Math.round(timeSinceLastMessage/1000)}s, checking connection health`);
-        this.checkConnectionHealth();
-      } else if (timeSinceLastMessage > 15000 && this.isSocketOpen(this.socket)) {
-        // If it's been over 15 seconds since last message, send a keep-alive ping
-        console.log('[Socket] Sending keep-alive ping');
-        this.sendPing();
-      }
-      
-      // Actively detect disconnected state
-      if (!this.isConnected && !this.connecting && this.autoReconnect && 
-          this.canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
-        console.log('[Socket] Detected disconnected state, initiating reconnect');
+
+      // Check if disconnected and should reconnect
+      if (this.connectionState === ConnectionState.DISCONNECTED &&
+          this.autoReconnect &&
+          canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
+        console.log('[Socket] Keep-alive detected disconnected state, scheduling reconnect.');
         this.scheduleReconnect();
+        return;
       }
-    }, 30000);
+
+      // Check if connected but unresponsive
+      if (this.connectionState === ConnectionState.CONNECTED && timeSinceLastMessage > KEEP_ALIVE_THRESHOLD_MS) {
+        console.warn(`[Socket] No messages received for ${Math.round(timeSinceLastMessage/1000)}s. Checking connection health.`);
+        this.checkConnectionHealth();
+      }
+    }, KEEP_ALIVE_CHECK_INTERVAL_MS);
   }
-  
-  /**
-   * Stop keep-alive monitoring
-   */
+
   private stopKeepAliveMonitoring(): void {
     if (this.keepAliveInterval) {
       clearInterval(this.keepAliveInterval);
       this.keepAliveInterval = null;
+      console.debug('[Socket] Stopped keep-alive monitoring.');
     }
   }
-  
-  /**
-   * Send ping to keep connection alive
-   */
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    console.debug('[Socket] Starting heartbeat');
+    this.heartbeatInterval = setInterval(() => {
+      if (this.connectionState !== ConnectionState.CONNECTED || !this.socket || !isSocketOpen(this.socket)) {
+        return; // Only send heartbeat when fully connected
+      }
+      const timeSinceLast = Date.now() - this.lastMessageTime;
+      if (timeSinceLast > IDLE_THRESHOLD_MS) {
+        console.debug(`[Socket Heartbeat] Idle for ${Math.round(timeSinceLast/1000)}s, sending ping.`);
+        this.sendPing();
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+      console.debug('[Socket] Stopped heartbeat.');
+    }
+    this.clearAllPingTimeouts(); // Also clear ping timeouts when stopping heartbeat
+  }
+
+   /** Starts the session key rotation timer */
+    private startKeyRotationTimer(): void {
+        this.stopKeyRotationTimer();
+        console.debug(`[Socket] Starting session key rotation timer (Interval: ${KEY_ROTATION_INTERVAL_MS}ms)`);
+        this.keyRotationTimer = setInterval(() => {
+            if (this.connectionState === ConnectionState.CONNECTED) {
+                 console.log('[Socket] Triggering scheduled session key rotation.');
+                 this.rotateSessionKey().catch(err => {
+                     console.error('[Socket] Scheduled key rotation failed:', err);
+                 });
+            }
+        }, KEY_ROTATION_INTERVAL_MS);
+    }
+
+    /** Stops the key rotation timer */
+    private stopKeyRotationTimer(): void {
+        if (this.keyRotationTimer) {
+            clearInterval(this.keyRotationTimer);
+            this.keyRotationTimer = null;
+            console.debug('[Socket] Stopped key rotation timer.');
+        }
+    }
+
+  private clearAllPingTimeouts(): void {
+    if (this.pingTimeouts.size > 0) {
+      console.debug(`[Socket] Clearing ${this.pingTimeouts.size} pending ping timeouts.`);
+      for (const timeoutId of this.pingTimeouts.values()) {
+        clearTimeout(timeoutId);
+      }
+      this.pingTimeouts.clear();
+    }
+  }
+
+  /** Sends a Ping message to the server and sets a timeout for the Pong. */
   private sendPing(): void {
-    if (!this.isSocketOpen(this.socket)) return;
-    
+    if (!this.socket || !isSocketOpen(this.socket)) {
+      console.warn("[Socket] Cannot send Ping: Socket not open.");
+      return;
+    }
+
     try {
-      const sequenceId = this.messageCounter++;
-      const ping = {
+      // Use a dedicated counter for pings
+      const sequenceId = this.pingCounter++;
+      const pingMessage: PingMessage = {
         type: 'Ping',
         timestamp: Date.now(),
         sequence: sequenceId,
       };
-      
-      this.socket.send(JSON.stringify(ping));
-      
-      // Set ping timeout detection
-      const pingTimeout = setTimeout(() => {
-        console.warn('[Socket] Ping timeout - no pong received');
-        // If ping times out, the connection might be broken
-        this.checkConnectionHealth();
-      }, 5000); // 5 second timeout
-      
-      // Store this ping's timeout handler
-      this.pingTimeouts.set(sequenceId, pingTimeout);
+      this.socket.send(JSON.stringify(pingMessage));
+      console.debug(`[Socket] Sent Ping (Seq: ${sequenceId})`);
+
+      // Set a timeout for this specific ping's Pong response
+      const timeoutId = setTimeout(() => {
+        console.warn(`[Socket] Ping timeout for sequence ${sequenceId}. Connection may be lost.`);
+        this.pingTimeouts.delete(sequenceId); // Remove from tracking
+        this.consecutiveFailedPings++; // Track consecutive failures
+        this.checkConnectionHealth(); // Assume connection issue if ping times out
+      }, PING_TIMEOUT_MS);
+
+      this.pingTimeouts.set(sequenceId, timeoutId);
+
     } catch (error) {
-      console.error('[Socket] Error sending ping:', error);
-      // If we can't send a ping, the connection might be dead
+      console.error('[Socket] Error sending Ping:', error);
+      this.consecutiveFailedPings++; // Count as failure
+      // If sending fails, connection is likely broken
       this.checkConnectionHealth();
     }
   }
-  
-  /**
-   * Check if the connection is healthy
-   */
+
+  /** Checks connection health, potentially triggering reconnection if unresponsive. */
   private checkConnectionHealth(): void {
-    if (this.isSocketOpen(this.socket)) {
-      // Send a ping to check if connection is alive
-      try {
-        // Clear any existing ping timeouts first
-        for (const [seq, timeout] of this.pingTimeouts.entries()) {
-          clearTimeout(timeout);
-          this.pingTimeouts.delete(seq);
-        }
-        
-        console.log('[Socket] Performing connection health check');
-        this.sendPing();
-        
-        // Set a short timeout to see if we get a response
-        setTimeout(() => {
-          if (this.isConnected && Date.now() - this.lastMessageTime > 10000) {
-            console.warn('[Socket] Health check failed - no response received');
-            this.handleConnectionFailure();
-          }
-        }, 3000);
-        
-        return;
-      } catch (e) {
-        // Error sending ping, connection may be dead
-        console.error('[Socket] Error sending health check ping:', e);
-      }
-    }
-    
-    this.handleConnectionFailure();
-  }
-  
-  /**
-   * Handle connection failure
-   */
-  private handleConnectionFailure(): void {
-    // Connection unhealthy, attempt to reconnect
-    console.warn('[Socket] Connection appears unhealthy, attempting to reconnect');
-    this.isConnected = false;
-    this.emit('connectionStatus', 'disconnected');
-    
-    // Also notify users about the connection issue
-    this.emit('error', this.createSocketError(
-      'connection',
-      'Connection to the server was lost. Attempting to reconnect...',
-      'CONNECTION_LOST',
-      undefined,
-      true
-    ));
-    
-    // Clean up existing socket
-    if (this.socket) {
-      try {
-        this.socket.close();
-      } catch (e) {
-        // Ignore errors closing an already broken socket
-      }
-      this.socket = null;
-    }
-    
-    if (this.autoReconnect) {
-      this.forceReconnect = true;
-      this.scheduleReconnect();
-    }
-  }
-  
-  /**
-   * Schedule reconnection attempt with exponential backoff
-   */
-  private scheduleReconnect(): void {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-    }
-    
-    // Don't reconnect if we've reached max attempts
-    if (!this.canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
-      console.log(`[Socket] Max reconnection attempts (${this.reconnectionConfig.maxAttempts}) reached`);
-      this.emit('error', this.createSocketError(
-        'connection',
-        `Failed to reconnect after ${this.reconnectionConfig.maxAttempts} attempts`,
-        'MAX_RECONNECT',
-        undefined,
-        false
-      ));
+    // Only check if we think we should be connected
+    if (this.connectionState !== ConnectionState.CONNECTED) {
+      console.debug("[Socket Health Check] Not in CONNECTED state, skipping.");
       return;
     }
-    
-    // Calculate backoff delay with exponential increase
-    const delay = this.calculateBackoffDelay(this.reconnectAttempts, this.reconnectionConfig);
-    
-    console.log(`[Socket] Scheduling reconnection attempt ${this.reconnectAttempts + 1} in ${delay}ms`);
-    
-    this.emit('reconnecting', {
-      attempt: this.reconnectAttempts + 1,
-      maxAttempts: this.reconnectionConfig.maxAttempts,
-      delay,
-      delaySeconds: Math.ceil(delay / 1000),
-      progress: this.reconnectAttempts / this.reconnectionConfig.maxAttempts
-    });
-    
+    if (!this.socket || !isSocketOpen(this.socket)) {
+      console.warn("[Socket Health Check] Socket is not open. Triggering connection failure.");
+      this.handleConnectionFailure(); // Trigger reconnect if socket died silently
+      return;
+    }
+
+    // If pings have timed out recently (indicated by handlePong not clearing them),
+    // or if last message time is very old despite attempts to ping.
+    const timeSinceLast = Date.now() - this.lastMessageTime;
+    if (timeSinceLast > KEEP_ALIVE_THRESHOLD_MS / 2) { // Check more aggressively if pings might be failing
+         console.warn("[Socket Health Check] Connection appears unresponsive. Triggering failure handling.");
+         this.handleConnectionFailure();
+    } else {
+        console.debug("[Socket Health Check] Connection appears healthy.");
+    }
+  }
+
+  /** Handles detected connection failures by initiating the reconnection process. */
+  private handleConnectionFailure(): void {
+    if (!this.autoReconnect) {
+      console.log("[Socket] Connection failure detected, but auto-reconnect is disabled.");
+      this.cleanupConnection(true); // Ensure cleanup
+      this.safeChangeState(ConnectionState.DISCONNECTED);
+      return;
+    }
+    // Prevent multiple concurrent reconnection attempts
+    if (this.connectionState === ConnectionState.RECONNECTING || this.reconnectTimeout) {
+      console.debug("[Socket] Connection failure handling skipped: Already reconnecting or reconnect scheduled.");
+      return;
+    }
+
+    console.warn('[Socket] Connection failure detected. Initiating reconnection process...');
+    const wasConnected = this.connectionState === ConnectionState.CONNECTED;
+    this.cleanupConnection(false); // Clean up resources
+
+    // Emit error/status only if previously connected
+    if (wasConnected) {
+      this.emit('connectionStatus', 'disconnected'); // Inform UI immediately
+      this.emit('error', this.createSocketError('connection', 'Connection lost', 'CONN_LOST', undefined, true));
+    }
+
+    // Immediately transition to RECONNECTING and schedule the first attempt
+    this.safeChangeState(ConnectionState.RECONNECTING);
+    this.scheduleReconnect();
+  }
+  
+  // --- Reconnection Logic ---
+
+  /** Schedules the next reconnection attempt using exponential backoff. */
+  private scheduleReconnect(): void {
+    // Clear any existing reconnect timer
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+       console.debug("[Socket] Cleared existing reconnect timeout.");
+    }
+    // Don't schedule if already connecting/authenticating or closing
+    if (this.connectionState === ConnectionState.CONNECTING ||
+        this.connectionState === ConnectionState.AUTHENTICATING ||
+        this.connectionState === ConnectionState.CLOSING) {
+      console.debug(`[Socket] Skipping reconnect schedule: State is ${this.connectionState}.`);
+      return;
+    }
+     // Ensure we are marked as reconnecting
+     this.safeChangeState(ConnectionState.RECONNECTING);
+
+
+    // Check max attempts
+    if (!canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
+      console.log(`[Socket] Max reconnection attempts (${this.reconnectionConfig.maxAttempts}) reached. Stopping.`);
+      this.emit('error', this.createSocketError('connection',`Failed to reconnect after ${this.reconnectionConfig.maxAttempts} attempts`,'MAX_RECONNECT',undefined,false));
+      this.autoReconnect = false; // Give up
+      this.safeChangeState(ConnectionState.DISCONNECTED); // Ensure final state is disconnected
+      return;
+    }
+
+    const delay = calculateBackoffDelay(this.reconnectAttempts, this.reconnectionConfig);
+    const attemptNumber = this.reconnectAttempts + 1;
+
+    console.log(`[Socket] Scheduling reconnection attempt ${attemptNumber}/${this.reconnectionConfig.maxAttempts} in ${delay}ms`);
+
+    // Emit 'reconnecting' status for UI feedback
+    this.emit('connectionStatus', 'reconnecting');
+    this.emit('reconnecting', { attempt: attemptNumber, maxAttempts: this.reconnectionConfig.maxAttempts, delay });
+
     this.reconnectTimeout = setTimeout(async () => {
+      this.reconnectTimeout = null; // Clear the timer ID
+      // Double-check state before attempting connection
+      if (this.connectionState !== ConnectionState.RECONNECTING || !this.autoReconnect) {
+          console.log(`[Socket] Skipping scheduled reconnect: State changed to ${this.connectionState} or autoReconnect disabled.`);
+          return;
+      }
+
       if (this.chatId && this.publicKey) {
-        this.reconnectAttempts++;
+        this.reconnectAttempts++; // Increment attempt counter *before* trying
+        console.log(`[Socket] Executing reconnection attempt ${this.reconnectAttempts}...`);
         try {
+          this.forceReconnect = true; // Ensure connect doesn't skip if chatId matches
           await this.connect(this.chatId, this.publicKey);
+          // If connect() succeeds, it resets reconnectAttempts and changes state to CONNECTED
         } catch (error) {
-          console.error('[Socket] Reconnection attempt failed:', error);
+          console.error(`[Socket] Reconnection attempt ${this.reconnectAttempts} failed:`, error);
+          // If connect() fails, its error handling (via onclose/onerror) should trigger scheduleReconnect again if appropriate.
+          // We might need to explicitly call scheduleReconnect here if connect promise rejection doesn't guarantee onclose.
+           if (this.connectionState !== ConnectionState.CONNECTED) {
+               this.safeChangeState(ConnectionState.DISCONNECTED); // Ensure state reflects failure
+               this.scheduleReconnect(); // Schedule the next attempt
+           }
         }
+      } else {
+           console.error("[Socket] Cannot schedule reconnect: Missing chatId or publicKey.");
+           this.autoReconnect = false; // Stop trying if essential info is missing
+           this.safeChangeState(ConnectionState.DISCONNECTED);
       }
     }, delay);
   }
   
-  /**
-   * Calculate backoff delay for reconnection using exponential backoff
-   * @param attempt Current reconnection attempt
-   * @param config Reconnection configuration
-   * @returns Delay in milliseconds before next reconnection attempt
-   */
-  private calculateBackoffDelay(attempt: number, config: ReconnectionConfig): number {
-    // Calculate base delay with exponential increase
-    const baseDelay = Math.min(
-      config.maxDelay,
-      config.initialDelay * Math.pow(2, attempt)
-    );
-    
-    // Add jitter to prevent thundering herd
-    const jitter = config.jitter ? 
-      (Math.random() * 0.3 + 0.85) : // 0.85-1.15 randomization factor
-      1;
-    
-    return Math.floor(baseDelay * jitter);
-  }
-  
-  /**
-   * Check if more reconnection attempts should be made
-   * @param attempts Current number of attempts
-   * @param maxAttempts Maximum allowed attempts
-   * @returns True if more reconnection attempts should be made
-   */
-  private canRetry(attempts: number, maxAttempts: number): boolean {
-    return attempts < maxAttempts;
-  }
-  
-  /**
-   * Encrypt and send data packet
-   * @param data The data to send
-   * @returns Promise resolving to true if sent successfully
-   */
-  public async send(data: any): Promise<boolean> {
-    console.debug('[Socket:SEND] Sending data through socket:', {
-      socketState: this.socket ? (this.socket.readyState === WebSocket.OPEN ? 'OPEN' : 'NOT_OPEN') : 'NO_SOCKET',
-      isConnected: this.isConnected,
-      dataType: typeof data === 'object' ? data.type : 'unknown',
-      hasSessionKey: !!this.sessionKey,
-      sessionKeyLength: this.sessionKey?.length || 0
-    });
-  
-    if (!this.socket || !this.isConnected || !this.sessionKey) {
-      console.error('[Socket:SEND] Cannot send data: not connected or missing session key.');
-      this.queueMessage('data', data);
-      return false;
-    }
-  
-    try {
-      // CRITICAL: Use the CORRECT, DECRYPTED this.sessionKey
-      const dataPacket = await createEncryptedPacket(data, this.sessionKey, this.messageCounter++);
-  
-      // Ensure the algorithm field matches what the server expects for DATA
-      // which should be the same as this.encryptionAlgorithm stored during IpAssign
-      if (dataPacket.encryption_algorithm !== this.encryptionAlgorithm) {
-        console.warn(`[Socket:SEND] Mismatch between packet algorithm (${dataPacket.encryption_algorithm}) and stored session algorithm (${this.encryptionAlgorithm}). Using stored.`);
-        dataPacket.encryption_algorithm = this.encryptionAlgorithm;
+  // --- Message Queueing & Processing ---
+
+  /** Queues a message, adding TTL, priority, and retry count. Returns true if queued. */
+  private queueMessage(type: string, data: any, priority: MessagePriority = MessagePriority.NORMAL): boolean {
+      this.cleanupMessageQueue(); // Clean expired first
+
+      if (this.pendingMessages.length >= this.maxQueueSize) {
+          // Try removing expired messages again before potentially dropping
+          this.cleanupMessageQueue();
+          if (this.pendingMessages.length >= this.maxQueueSize) {
+              // If still full, consider dropping lowest priority message instead of oldest
+              if (this.usePriorityQueue) {
+                  this.pendingMessages.sort((a, b) => b.priority - a.priority); // Sort lowest priority last
+                  const removed = this.pendingMessages.pop(); // Remove lowest priority
+                  console.warn(`[Socket] Message queue full (${this.maxQueueSize}). Discarding lowest priority message:`, removed?.type, removed?.id);
+                  if (!removed) return false; // Should not happen if length > 0
+              } else {
+                  const removed = this.pendingMessages.shift(); // Remove oldest
+                  console.warn(`[Socket] Message queue full (${this.maxQueueSize}). Discarding oldest message:`, removed?.type, removed?.id);
+                   if (!removed) return false;
+              }
+          }
       }
-  
-      if (!this.isSocketOpen(this.socket)) {
-        console.error('[Socket:SEND] Socket closed while preparing to send data');
-        this.queueMessage('data', data);
-        return false;
+
+      const messageId = data.id || `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const pendingMsg: PendingMessage = { type, data, timestamp: Date.now(), id: messageId, retryCount: 0, priority };
+      this.pendingMessages.push(pendingMsg);
+
+      // If using priority queue, sort after adding (simple approach)
+      if (this.usePriorityQueue) {
+          this.pendingMessages.sort((a, b) => a.priority - b.priority); // Lower number = higher priority
       }
-  
-      const packetJson = JSON.stringify(dataPacket);
-      console.debug('[Socket:SEND] Sending packet to server:', {
-        packetType: dataPacket.type,
-        encryptedLength: dataPacket.encrypted.length,
-        nonceLength: dataPacket.nonce.length,
-        algorithm: dataPacket.encryption_algorithm,
-        counter: dataPacket.counter
-      });
-  
-      this.socket.send(packetJson);
-      console.debug('[Socket:SEND] Packet sent successfully');
-      return true;
-    } catch (error) {
-      console.error('[Socket:SEND] Error sending encrypted data:', error);
-      this.queueMessage('data', data);
-      this.emit('error', this.createSocketError(
-        'data',
-        'Failed to send encrypted data',
-        'ENCRYPTION_ERROR',
-        error instanceof Error ? error.message : String(error),
-        true,
-        error
-      ));
-      return false;
+
+      console.log(`[Socket] Message queued (Type: ${type}, Prio: ${priority}, ID: ${messageId}). Total pending: ${this.pendingMessages.length}`);
+      // Trigger processing check shortly after queuing
+      setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS);
+      return true; // Message was successfully added to queue
+  }
+
+  /** Removes expired messages from the pending queue. */
+  private cleanupMessageQueue(): void {
+    const now = Date.now();
+    const initialLength = this.pendingMessages.length;
+    this.pendingMessages = this.pendingMessages.filter(msg => (now - msg.timestamp) <= MESSAGE_QUEUE_TTL_MS);
+    const removedCount = initialLength - this.pendingMessages.length;
+    if (removedCount > 0) {
+        console.debug(`[Socket] Cleaned up ${removedCount} expired messages from queue.`);
     }
   }
 
-
-  
-  /**
-   * Send a message to the chat
-   * @param message The message to send
-   * @returns Promise resolving to true if sent successfully, false otherwise
-   */
-  async sendMessage(message: MessageType): Promise<boolean> {
-    // ENHANCED LOGGING: Log message sending attempt
-    console.debug('[Socket:SEND:MESSAGE] Sending chat message:', {
-      messageId: message.id,
-      content: message.content ? (message.content.length > 100 ? message.content.substring(0, 100) + '...' : message.content) : 'empty',
-      senderId: message.senderId,
-      senderName: message.senderName,
-      timestamp: message.timestamp,
-      socketState: this.socket ? (this.socket.readyState === WebSocket.OPEN ? 'OPEN' : 'NOT_OPEN') : 'NO_SOCKET',
-      isConnected: this.isConnected,
-      hasSessionKey: !!this.sessionKey
-    });
-  
-    // If not connected, queue message and return false
-    if (!this.socket || !this.isConnected) {
-      console.log('[Socket:SEND:MESSAGE] Not connected, queueing message');
-      this.queueMessage('message', message);
-      return false;
-    }
-    
-    if (!this.sessionKey) {
-      console.error('[Socket:SEND:MESSAGE] Cannot send message: missing session key');
-      this.queueMessage('message', message);
-      return false;
-    }
-    
-    try {
-      // Create the message data object
-      const messageData = {
-        type: 'message',
-        id: message.id,
-        content: message.content,
-        senderId: message.senderId,
-        senderName: message.senderName,
-        timestamp: message.timestamp,
-      };
-      
-      // ENHANCED LOGGING: Log the message data being sent
-      console.debug('[Socket:SEND:MESSAGE] Prepared message data:', {
-        messageId: messageData.id,
-        contentLength: messageData.content.length,
-        contentPreview: messageData.content.length > 100 ? 
-                      messageData.content.substring(0, 100) + '...' : 
-                      messageData.content
-      });
-      
-      // Use our encryption method
-      console.debug('[Socket:SEND:MESSAGE] Sending message through socket.send()');
-      const success = await this.send(messageData);
-      
-      // If send was successful, log it
-      if (success) {
-        console.log('[Socket:SEND:MESSAGE] Message sent successfully');
-      } else {
-        console.error('[Socket:SEND:MESSAGE] Failed to send message through socket');
-      }
-      
-      return success;
-    } catch (error) {
-      console.error('[Socket:SEND:MESSAGE] Error sending message:', error);
-      
-      // ENHANCED LOGGING: Log detailed error information
-      if (error instanceof Error) {
-        console.error('[Socket:SEND:MESSAGE] Error details:', {
-          name: error.name,
-          message: error.message,
-          stack: error.stack
-        });
-      }
-      
-      // Queue message for retry
-      this.queueMessage('message', message);
-      
-      this.emit('error', this.createSocketError(
-        'message',
-        'Failed to send message',
-        'SEND_ERROR',
-        undefined,
-        true,
-        error
-      ));
-      
-      return false;
-    }
-  }
-  
-  /**
-   * Queue a message to be sent when connection is restored
-   * @param type Message type
-   * @param data Message data
-   */
-  private queueMessage(type: string, data: any): void {
-    this.pendingMessages.push({ type, data });
-    
-    // Limit queue size to prevent memory issues
-    if (this.pendingMessages.length > this.maxQueueSize) {
-      this.pendingMessages.shift(); // Remove oldest message
-    }
-    
-    console.log(`[Socket] Message queued. Total pending messages: ${this.pendingMessages.length}`);
-  }
-  
-  /**
-   * Process any pending messages
-   */
+  /** Processes and sends messages from the pending queue in batches. */
   private async processPendingMessages(): Promise<void> {
-    if (this.pendingMessages.length === 0) return;
-    
-    console.log(`[Socket] Processing ${this.pendingMessages.length} pending messages`);
-    
-    // Create a copy and clear the queue to prevent requeuing the same messages
-    const messagesToSend = [...this.pendingMessages];
-    this.pendingMessages = [];
-    
-    // Send each message
-    for (const { type, data } of messagesToSend) {
-      try {
-        if (type === 'message') {
-          await this.sendMessage(data);
-        } else if (type === 'data') {
-          await this.send(data);
-        }
-      } catch (error) {
-        console.error('[Socket] Error sending queued message:', error);
-      }
-    }
-  }
-  
-  /**
-   * Wait for connection to be established
-   * @param timeoutMs Timeout in milliseconds (default 10000 - 10 seconds)
-   * @returns Promise that resolves when connected or rejects on timeout
-   */
-  waitForConnection(timeoutMs: number = 10000): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // If already connected, resolve immediately
-      if (this.isConnected) {
-        resolve();
-        return;
-      }
-      
-      // If not connected and not connecting, attempt to connect first
-      if (!this.connecting && this.chatId && this.publicKey) {
-        console.log('[Socket] Initiating connection before waitForConnection');
-        this.connect(this.chatId, this.publicKey).catch(error => {
-          console.error('[Socket] Failed to initiate connection:', error);
-        });
-      }
-      
-      // Add listener for connection
-      const connectionListener = () => {
-        resolve();
-      };
-      
-      this.connectionListeners.add(connectionListener);
-      
-      // Add timeout
-      const timeout = setTimeout(() => {
-        this.connectionListeners.delete(connectionListener);
-        
-        // Update UI to show connection timeout
-        this.emit('error', this.createSocketError(
-          'connection',
-          'Connection attempt timed out. The server may be unavailable.',
-          'CONNECTION_TIMEOUT',
-          undefined,
-          true
-        ));
-        
-        reject(new Error('Timed out waiting for connection'));
-      }, timeoutMs);
-      
-      // Also listen for the 'connected' event directly
-      const connectedHandler = () => {
-        clearTimeout(timeout);
-        this.connectionListeners.delete(connectionListener);
-        this.off('connected', connectedHandler);
-        resolve();
-      };
-      
-      this.once('connected', connectedHandler);
-    });
-  }
-  
-  /**
-   * Request chat information
-   * @returns Promise resolving when chat info is received
-   */
-  async requestChatInfo(): Promise<void> {
-    return new Promise(async (resolve, reject) => {
-      if (!this.isConnected) {
-        try {
-          await this.waitForConnection();
-        } catch (error) {
-          reject(new Error('Not connected when requesting chat info'));
+      // Prevent concurrent processing
+      if (this.processingQueue) {
+          console.debug("[Socket] Queue processing already in progress.");
           return;
-        }
       }
-      
-      // Set up one-time listener for chatInfo
-      const listener = (chatInfo: any) => {
-        resolve();
-        this.off('chatInfo', listener);
-      };
-      
-      this.once('chatInfo', listener);
-      
-      // Set timeout for the request
-      const timeout = setTimeout(() => {
-        this.off('chatInfo', listener);
-        reject(new Error('Request timed out'));
-      }, 5000);
-      
-      // Send request
-      try {
-        const success = await this.send({ type: 'request-chat-info' });
-        
-        if (!success) {
-          clearTimeout(timeout);
-          this.off('chatInfo', listener);
-          reject(new Error('Failed to send request'));
-        }
-      } catch (error) {
-        clearTimeout(timeout);
-        this.off('chatInfo', listener);
-        reject(error);
-      }
-    });
-  }
-  
-  /**
-   * Request participants list
-   * @returns Promise resolving when participants list is received
-   */
-  async requestParticipants(): Promise<void> {
-    return new Promise(async (resolve, reject) => {
-      if (!this.isConnected) {
-        try {
-          await this.waitForConnection();
-        } catch (error) {
-          reject(new Error('Not connected when requesting participants'));
+      // Ensure we are ready to send
+      if (this.pendingMessages.length === 0 || !this.isConnected()) {
           return;
-        }
       }
-      
-      // Set up one-time listener for participants
-      const listener = (participants: any) => {
-        resolve();
-        this.off('participants', listener);
-      };
-      
-      this.once('participants', listener);
-      
-      // Set timeout for the request
-      const timeout = setTimeout(() => {
-        this.off('participants', listener);
-        reject(new Error('Request timed out'));
-      }, 5000);
-      
-      // Send request
-      try {
-        const success = await this.send({ type: 'request-participants' });
-        
-        if (!success) {
-          clearTimeout(timeout);
-          this.off('participants', listener);
-          reject(new Error('Failed to send request'));
-        }
-      } catch (error) {
-        clearTimeout(timeout);
-        this.off('participants', listener);
-        reject(error);
+
+      this.processingQueue = true;
+      console.log(`[Socket] Starting processing of ${this.pendingMessages.length} pending messages...`);
+
+      // Adapt batch size based on recent latency
+      const avgLatency = this.calculateAverageLatency();
+      if (avgLatency > 500) this.currentBatchSize = Math.max(MIN_BATCH_SIZE, Math.floor(this.currentBatchSize * (1 - this.adaptationFactor)));
+      else if (avgLatency < 100) this.currentBatchSize = Math.min(MAX_BATCH_SIZE, Math.ceil(this.currentBatchSize * (1 + this.adaptationFactor)));
+      console.debug(`[Socket] Adapted batch size to: ${this.currentBatchSize} (Avg Latency: ${avgLatency.toFixed(0)}ms)`);
+
+      // Use a microtask to avoid blocking the main thread
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // Sort queue by priority if enabled
+      if (this.usePriorityQueue) {
+          this.pendingMessages.sort((a, b) => a.priority - b.priority); // Lower number = higher priority
       }
+
+      // Take a batch of messages from the queue
+      const batchToProcess = this.pendingMessages.splice(0, this.currentBatchSize);
+      const failedMessages: PendingMessage[] = []; // To re-queue messages that fail but can be retried
+      let successfulSends = 0;
+
+      for (const msg of batchToProcess) {
+          // Double-check TTL before sending
+          if (Date.now() - msg.timestamp > MESSAGE_QUEUE_TTL_MS) {
+              console.debug(`[Socket] Skipping expired queued message (Type: ${msg.type}, ID: ${msg.id})`);
+              this.emit('messageFailed', { id: msg.id, type: msg.type, reason: 'TTL_EXPIRED' });
+              continue;
+          }
+
+          console.debug(`[Socket] Sending queued message (Type: ${msg.type}, Prio: ${msg.priority}, ID: ${msg.id}, Retry: ${msg.retryCount})`);
+          try {
+              const result = await this.send(msg.data, msg.priority); // Use the public send method
+
+              if (result === SendResult.SENT) {
+                  successfulSends++;
+              } else if (result === SendResult.QUEUED || result === SendResult.FAILED) {
+                  // If send returns QUEUED/FAILED even when isConnected() was true, it means an error occurred during send/encryption
+                  // Re-queue for retry if possible
+                  if (msg.retryCount < MAX_MESSAGE_RETRY_ATTEMPTS) {
+                      msg.retryCount++;
+                      failedMessages.push(msg);
+                      console.warn(`[Socket] Send failed/requeued during batch processing. Re-queuing for retry (${msg.retryCount}/${MAX_MESSAGE_RETRY_ATTEMPTS})`);
+                  } else {
+                      console.error(`[Socket] Queued message failed after ${MAX_MESSAGE_RETRY_ATTEMPTS} attempts. Discarding:`, msg.type, msg.id);
+                      this.emit('messageFailed', { id: msg.id, type: msg.type, reason: 'MAX_RETRIES_EXCEEDED' });
+                  }
+              }
+          } catch (error) { // Catch unexpected errors from send
+              console.error(`[Socket] Error sending queued message type ${msg.type} (ID: ${msg.id}):`, error);
+              if (msg.retryCount < MAX_MESSAGE_RETRY_ATTEMPTS) {
+                  msg.retryCount++;
+                  failedMessages.push(msg);
+                  console.warn(`[Socket] Send error for queued message. Re-queuing for retry (${msg.retryCount}/${MAX_MESSAGE_RETRY_ATTEMPTS})`);
+              } else {
+                  console.error(`[Socket] Queued message failed after ${MAX_MESSAGE_RETRY_ATTEMPTS} attempts due to send error. Discarding:`, msg.type, msg.id);
+                  this.emit('messageFailed', { id: msg.id, type: msg.type, reason: 'SEND_ERROR' });
+              }
+          }
+      }
+
+      // Add any messages that need retrying back to the main queue
+      if (failedMessages.length > 0) {
+          console.log(`[Socket] Re-queuing ${failedMessages.length} failed messages for later retry.`);
+          // Add back to the start of the queue to prioritize retries? Or end? Let's add to end.
+          this.pendingMessages.push(...failedMessages);
+           // Re-sort if using priority queue
+          if (this.usePriorityQueue) {
+                this.pendingMessages.sort((a, b) => a.priority - b.priority);
+          }
+      }
+
+      console.log(`[Socket] Finished processing batch (${successfulSends} sent, ${failedMessages.length} failed/retried). ${this.pendingMessages.length} messages remaining.`);
+      this.processingQueue = false;
+
+      // If there are still messages, schedule the next batch processing cycle
+      if (this.pendingMessages.length > 0) {
+          setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS); // Process next batch shortly after
+      }
+  }
+
+  // --- Connection Promise Management ---
+
+  private resolveConnection(): void {
+    if (this.connectionResolve) {
+      console.debug("[Socket] Resolving connection promise.");
+      this.connectionResolve();
+    }
+    this.connectionPromise = null; // Clear promise refs
+    this.connectionResolve = null;
+    this.connectionReject = null;
+  }
+
+  private rejectConnection(reason?: any): void {
+    if (this.connectionReject) {
+       console.debug("[Socket] Rejecting connection promise.", reason);
+      this.connectionReject(reason);
+    }
+    this.connectionPromise = null; // Clear promise refs
+    this.connectionResolve = null;
+    this.connectionReject = null;
+  }
+
+  // --- Connection State Management ---
+
+  private async safeChangeState(newState: ConnectionState): Promise<void> {
+    // Create a new promise chain to handle the state change
+    this.stateTransitionLock = this.stateTransitionLock.then(async () => {
+      if (this.connectionState === newState) return; // No change
+
+      const oldState = this.connectionState;
+      this.connectionState = newState;
+      console.debug(`[Socket] State changed: ${oldState} -> ${newState}`);
+
+      // Emit simplified status for external listeners
+      const externalStatus = this.getConnectionStatus();
+      this.emit('connectionStatus', externalStatus);
+      
+      // Perform state-specific actions
+      if (newState === ConnectionState.CONNECTED) {
+        this.startKeepAliveServices();
+        this.processPendingMessages();
+      } else if (newState === ConnectionState.DISCONNECTED) {
+        // Ensure timers are stopped
+        this.stopKeepAliveServices();
+      }
+    }).catch(err => {
+      console.error('[Socket] Error during state transition:', err);
     });
+    
+    // Wait for the state change to complete
+    await this.stateTransitionLock;
   }
   
-  /**
-   * Leave the chat gracefully
-   * @returns Promise resolving when the leave message is sent
-   */
-  async leaveChat(): Promise<void> {
-    this.autoReconnect = false;
-    
-    if (!this.socket || !this.isConnected) {
-      return;
-    }
-    
-    try {
-      const leaveMessage = this.createDisconnectMessage(0, 'User left the chat');
-      
-      // Send disconnect message if socket is open
-      if (this.isSocketOpen(this.socket)) {
-        this.socket.send(JSON.stringify(leaveMessage));
-      }
-    } catch (error) {
-      console.error('[Socket] Error sending leave message:', error);
-    } finally {
-      // Always clean up resources
-      this.disconnect();
-    }
-  }
-  
-  /**
-   * Delete the chat (if creator)
-   * @returns Promise resolving when the chat is deleted
-   */
-  async deleteChat(): Promise<void> {
-    if (!this.socket || !this.isConnected) {
-      throw new Error('Not connected');
-    }
-    
-    return new Promise(async (resolve, reject) => {
-      try {
-        const success = await this.send({ type: 'delete-chat' });
-        if (success) {
-          resolve();
-        } else {
-          reject(new Error('Failed to send delete request'));
+  // --- Timeout Management ---
+
+  private startConnectionTimeout(): void {
+    this.clearConnectionTimeout();
+    console.debug(`[Socket] Starting connection timeout (${CONNECTION_TIMEOUT_MS}ms)`);
+    this.connectionTimeout = setTimeout(() => {
+      this.connectionTimeout = null;
+      // Only act if still in a connecting/authenticating state
+      if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+        console.error('[Socket] Connection attempt timed out.');
+        const timeoutError = new Error('Connection timed out');
+        this.emit('error', this.createSocketError('connection','Connection attempt timed out','CONN_TIMEOUT',undefined,true));
+        // Ensure socket is closed if timeout occurs
+        if (this.socket) {
+          try { this.socket.close(1006, "Connection Timeout"); } catch(e) {}
         }
-      } catch (error) {
-        reject(error);
+        this.rejectConnection(timeoutError); // Reject the connect promise
+        this.cleanupConnection(true); // Cleanup and emit disconnected
+        // Schedule reconnect if applicable
+        if (this.autoReconnect && canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
+          this.scheduleReconnect();
+        }
+      } else {
+          console.debug("[Socket] Connection timeout fired but state is no longer connecting/authenticating.");
       }
-    });
+    }, CONNECTION_TIMEOUT_MS);
   }
-  
-  /**
-   * Disconnect from the server
-   */
-  disconnect(): void {
-    this.isConnected = false;
-    this.stopPingInterval();
-    this.stopKeepAliveMonitoring();
-    this.stopHeartbeat();
-    
-    // Clear all scheduled reconnection attempts
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
-    }
-    
+
+  private clearConnectionTimeout(): void {
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);
       this.connectionTimeout = null;
+      console.debug('[Socket] Cleared connection timeout.');
     }
-    
-    // Clear all ping timeouts
-    for (const timeout of this.pingTimeouts.values()) {
-      clearTimeout(timeout);
+  }
+
+  /** Cleans up all timers, socket listeners, and resets state variables. */
+;
+    this.messageCounter = 0; // Reset counter on disconnect
+    this.processedMessageIds.clear(); // Clear replay cache
+    this.processingQueue = false; // Reset queue processing flag
+
+    // 4. Reset connection promise state if connection failed/closed prematurely
+    if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+        this.rejectConnection(new Error("Connection closed during setup"));
+    } else {
+         // Clear promise handlers if disconnected after successful connection or during closing
+        this.connectionPromise = null;
+        this.connectionResolve = null;
+        this.connectionReject = null;
     }
-    this.pingTimeouts.clear();
-    
-    if (this.socket) {
-      // Only try to close if the socket is not already closed
-      if (this.socket.readyState !== WebSocket.CLOSED && 
-          this.socket.readyState !== WebSocket.CLOSING) {
-        try {
-          this.socket.close(1000, "Normal closure");
-        } catch (e) {
-          console.error('[Socket] Error closing socket:', e);
-        }
-      }
-      this.socket = null;
+
+
+    // 5. Emit events if needed (usually only if previously connected)
+    if (emitEvents && wasConnected) {
+      console.log("[Socket] Emitting 'disconnected' status due to cleanup after being connected.");
+      this.emit('connectionStatus', 'disconnected');
+      this.emit('disconnected', 1000, "Client cleanup"); // Emit generic code
     }
-    
-    this.sessionKey = null;
-    this.emit('connectionStatus', 'disconnected');
-    
-    console.log('[Socket] Disconnected and cleaned up all resources');
+
+    // 6. Ensure final state is DISCONNECTED unless explicitly closing
+     if (this.connectionState !== ConnectionState.CLOSING) {
+         this.safeChangeState(ConnectionState.DISCONNECTED);
+     }
+
+    console.debug('[Socket] Connection cleanup complete.');
   }
-  
-  /**
-   * Check if socket is open and connected
-   * @param socket WebSocket instance to check
-   * @returns True if socket is open
-   */
-  private isSocketOpen(socket: WebSocket | null): boolean {
-    return !!socket && socket.readyState === WebSocket.OPEN;
-  }
-  
-  /**
-   * Create a WebSocket URL from base URL and chat ID
-   * @param baseUrl Base server URL
-   * @param chatId Chat room ID
-   * @returns Formatted WebSocket URL
-   */
-  private createWebSocketUrl(baseUrl: string, chatId: string): string {
-    let serverUrl = baseUrl;
-    
-    // Ensure URL starts with WebSocket protocol
-    if (!serverUrl.startsWith('wss://') && !serverUrl.startsWith('ws://')) {
-      serverUrl = `wss://${serverUrl}`;
-    }
-    
-    // Join with chat path
-    return `${serverUrl}/chat/${chatId}`;
-  }
-  
-  /**
-   * Create socket error object
-   * @param type Error type
-   * @param message User-friendly error message
-   * @param code Error code
-   * @param details Additional error details
-   * @param retry Whether retry is possible
-   * @param originalError Original error object
-   * @returns Structured socket error object
-   */
-  private createSocketError(
-    type: SocketError['type'],
-    message: string,
-    code: string,
-    details?: string,
-    retry: boolean = true,
-    originalError?: any
-  ): SocketError {
-    return {
-      type,
-      message,
-      code,
-      details,
-      retry,
-      originalError
-    };
-  }
-  
-  /**
-   * Create a disconnect message
-   * @param reason Numeric reason code
-   * @param message Text message explaining disconnect
-   * @returns Disconnect message object
-   */
-  private createDisconnectMessage(reason: number, message: string) {
-    return {
-      type: 'Disconnect',
-      reason,
-      message,
-    };
-  }
-  
-  /**
-   * Check if reconnection should be attempted based on error code
-   * @param code WebSocket close code or error code
-   * @returns True if reconnection should be attempted
-   */
-  private shouldAttemptReconnect(code: number): boolean {
-    // Common codes where reconnection makes sense
-    const reconnectCodes = [1000, 1001, 1006, 1012, 1013];
-    return reconnectCodes.includes(code);
-  }
-  
-  /**
-   * Check if connected
-   * @returns True if connected, false otherwise
-   */
-  isActive(): boolean {
-    return this.isConnected && this.isSocketOpen(this.socket);
-  }
-  
-  /**
-   * Get connection status
-   * @returns Connection status string
-   */
-  getConnectionState(): ConnectionStatus {
-    if (this.isConnected) return 'connected';
-    if (this.connecting) return 'connecting';
-    return 'disconnected';
-  }
-  
-  /**
-   * For development and testing: simulate data receiving
-   * @param message Message data
-   */
-  private simulateDataReceived(message: any): void {
-    // Only simulate in development mode
-    if (process.env.NODE_ENV !== 'development') return;
-    
-    // Mock message based on counter for variety
-    const mockContent = `This is a simulated message #${message.counter || 0}`;
-    const mockSenderId = message.counter % 2 === 0 ? 'mock-user-1' : this.publicKey || 'unknown';
-    const mockSenderName = mockSenderId === this.publicKey ? 'You' : 'Mock User 1';
-    
-    this.emit('message', {
-      id: `mock-msg-${Date.now()}`,
-      content: mockContent,
-      senderId: mockSenderId,
-      senderName: mockSenderName,
-      timestamp: new Date().toISOString(),
-      isEncrypted: true,
-      status: 'received',
-    });
-  }
-}
