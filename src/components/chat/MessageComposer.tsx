@@ -38,7 +38,7 @@ interface MessageComposerProps {
   isEncrypted?: boolean;
   encryptionType?: EncryptionType;
   isP2P?: boolean;
-  disabled?: boolean;
+  isDisabled?: boolean;
   placeholder?: string;
   chatId?: string;
 }
@@ -48,7 +48,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   isEncrypted = true,
   encryptionType = 'standard',
   isP2P = false,
-  disabled = false,
+  isDisabled = false,
   placeholder = 'Type a message...',
   chatId,
 }) => {
@@ -62,7 +62,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   
   // Handle sending message
   const sendMessage = useCallback(async () => {
-    if (!message.trim() || disabled || isLoading) return;
+    if (!message.trim() || isDisabled || isLoading) return;
     
     setIsLoading(true);
     
@@ -82,7 +82,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     } finally {
       setIsLoading(false);
     }
-  }, [message, disabled, isLoading, onSendMessage]);
+  }, [message, isDisabled, isLoading, onSendMessage]);
   
   // Handle keyboard shortcuts (Ctrl/Cmd + Enter to send)
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -166,7 +166,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
               value={message}
               onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
-              placeholder={placeholder}
+              placeholder={isDisabled ? "Waiting for connection..." : placeholder}
               border="none"
               _focus={{ border: 'none', boxShadow: 'none' }}
               minH="40px"
@@ -174,7 +174,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
               resize="none"
               py={2}
               px={3}
-              disabled={disabled}
+              disabled={isDisabled}
             />
             
             {/* Attachment and emoji toolbar */}
@@ -186,6 +186,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
                     icon={<FaSmile />}
                     size="sm"
                     variant="ghost"
+                    isDisabled={isDisabled}
                   />
                 </Tooltip>
                 
@@ -196,6 +197,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
                     icon={<FaPaperclip />}
                     size="sm"
                     variant="ghost"
+                    isDisabled={isDisabled}
                   />
                   <MenuList>
                     <MenuItem icon={<FaImage />} onClick={onFileTransferOpen}>
@@ -219,6 +221,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
                     icon={<FaMicrophone />}
                     size="sm"
                     variant="ghost"
+                    isDisabled={isDisabled}
                   />
                 </Tooltip>
                 
@@ -228,6 +231,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
                     icon={<FaEllipsisH />}
                     size="sm"
                     variant="ghost"
+                    isDisabled={isDisabled}
                   />
                 </Tooltip>
               </HStack>
@@ -242,7 +246,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
               borderRadius="md"
               onClick={sendMessage}
               isLoading={isLoading}
-              disabled={!message.trim() || disabled}
+              isDisabled={!message.trim() || isDisabled}
             />
           </Tooltip>
         </Flex>
