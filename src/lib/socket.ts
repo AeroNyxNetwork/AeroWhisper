@@ -78,8 +78,9 @@ import {
   parseChallengeData,
   signChallenge,
   deriveSessionKey,
-  deriveECDHSharedSecret,  // Add this import
-  deriveSessionKeyHKDF    // Add this import
+  deriveECDHSharedSecret,
+  deriveSessionKeyHKDF,
+  testEncryptionCompat  // Add this import
 } from '../utils/cryptoUtils';
 import { 
   createChallengeResponse 
