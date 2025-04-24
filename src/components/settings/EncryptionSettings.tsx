@@ -53,7 +53,7 @@ export const EncryptionSettings: React.FC<EncryptionSettingsProps> = ({ onSave }
   // Settings state
   const [settings, setSettings] = useState({
     encryptionAlgorithm: 'aes-gcm',
-    encryptionFieldName: 'encryption', // The field name used in data packets: 'encryption' or 'encryption_algorithm'
+    encryptionFieldName: 'encryption' as 'encryption' | 'encryption_algorithm', // Add type assertion here
     preferP2P: true,
     keySize: 256, // bits
     sessionKeyRotation: false,
@@ -166,7 +166,10 @@ export const EncryptionSettings: React.FC<EncryptionSettingsProps> = ({ onSave }
     
     try {
       // Run a quick encryption test to validate settings
-      const testResult = await testEncryptionFormat({test: "Validation"}, settings.encryptionFieldName);
+      const testResult = await testEncryptionFormat(
+        {test: "Validation"}, 
+        settings.encryptionFieldName as 'encryption' | 'encryption_algorithm'
+      );
       
       if (!testResult.success) {
         toast({
