@@ -443,9 +443,9 @@ export class AeroNyxSocket extends EventEmitter {
     this.sessionKey = null; // Clear sensitive data
     this.serverPublicKey = null;
     this.sessionId = null;
-    this.messageCounter = 0; // Reset counter on disconnect
-    this.processedMessageIds.clear(); // Clear replay cache
-    this.processingQueue = false; // Reset queue processing flag
+    this.messageCounter = 0;
+    this.processedMessageIds.clear();
+    this.processingQueue = false;
   
     // 4. Reset connection promise state if connection failed/closed prematurely
     if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
