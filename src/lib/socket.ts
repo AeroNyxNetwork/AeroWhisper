@@ -1092,19 +1092,21 @@ export class AeroNyxSocket extends EventEmitter {
       if (!this.publicKey) throw new Error('Client public key not set');
 
       // 2. Parse challenge data
-      const challengeBytes = parseChallengeData(message.data);
+      const challengeBytes: Uint8Array = parseChallengeData(message.data);
       if (challengeBytes.length === 0) throw new Error('Empty challenge data');
       console.log('[Socket] Challenge data parsed, length:', challengeBytes.length);
 
       // 3. Get client secret key securely
       const keypair = await getStoredKeypair(); // Assumes secure retrieval
       if (!keypair) throw new Error('Client keypair not found');
-      const clientSecretKeyBytes = bs58.decode(keypair.secretKey);
+      const clientSecretKeyBytes = typeof keypair.secretKey === 'string' 
+        ? bs58.decode(keypair.secretKey) 
+        : keypair.secretKey;
       if (clientSecretKeyBytes.length !== 64) throw new Error('Invalid client secret key length');
 
       // 4. Sign challenge
       console.log('[Socket] Signing challenge...');
-      const signature = signChallenge(challengeBytes, clientSecretKeyBytes);
+      const signature: string = signChallenge(challengeBytes, clientSecretKeyBytes);
       console.log('[Socket] Signature generated (Base58):', signature.substring(0, 10) + '...');
 
       // 5. Construct and send response
