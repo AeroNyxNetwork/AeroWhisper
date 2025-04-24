@@ -2011,7 +2011,13 @@ export class AeroNyxSocket extends EventEmitter {
     await this.stateTransitionLock;
   }
   
-  // --- Timeout Management ---
+  private clearConnectionTimeout(): void {
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+      this.connectionTimeout = null;
+      console.debug('[Socket] Cleared connection timeout.');
+    }
+  }
 
   private startConnectionTimeout(): void {
     this.clearConnectionTimeout();
@@ -2034,47 +2040,7 @@ export class AeroNyxSocket extends EventEmitter {
           this.scheduleReconnect();
         }
       } else {
-          console.debug("[Socket] Connection timeout fired but state is no longer connecting/authenticating.");
+        console.debug("[Socket] Connection timeout fired but state is no longer connecting/authenticating.");
       }
     }, CONNECTION_TIMEOUT_MS);
-  }
-
-  private clearConnectionTimeout(): void {
-    if (this.connectionTimeout) {
-      clearTimeout(this.connectionTimeout);
-      this.connectionTimeout = null;
-      console.debug('[Socket] Cleared connection timeout.');
-    }
-  }
-
-  /** Cleans up all timers, socket listeners, and resets state variables. */
-
-    clearConnectionTimeout; // Reset counter on disconnect
-    this.processedMessageIds.clear(); // Clear replay cache
-    this.processingQueue = false; // Reset queue processing flag
-
-    // 4. Reset connection promise state if connection failed/closed prematurely
-    if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
-        this.rejectConnection(new Error("Connection closed during setup"));
-    } else {
-         // Clear promise handlers if disconnected after successful connection or during closing
-        this.connectionPromise = null;
-        this.connectionResolve = null;
-        this.connectionReject = null;
-    }
-
-
-    // 5. Emit events if needed (usually only if previously connected)
-    if (emitEvents && wasConnected) {
-      console.log("[Socket] Emitting 'disconnected' status due to cleanup after being connected.");
-      this.emit('connectionStatus', 'disconnected');
-      this.emit('disconnected', 1000, "Client cleanup"); // Emit generic code
-    }
-
-    // 6. Ensure final state is DISCONNECTED unless explicitly closing
-     if (this.connectionState !== ConnectionState.CLOSING) {
-         this.safeChangeState(ConnectionState.DISCONNECTED);
-     }
-
-    console.debug('[Socket] Connection cleanup complete.');
   }
