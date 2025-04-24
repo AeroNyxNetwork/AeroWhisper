@@ -77,7 +77,9 @@ import {
   generateNonce,
   parseChallengeData,
   signChallenge,
-  deriveSessionKey
+  deriveSessionKey,
+  deriveECDHSharedSecret,  // Add this import
+  deriveSessionKeyHKDF    // Add this import
 } from '../utils/cryptoUtils';
 import { 
   createChallengeResponse 
