@@ -54,7 +54,7 @@ interface AuthContextType {
 /**
  * Converts a StoredKeypair to a User object
  */
-const createUserFromKeypair = (keypair: StoredKeypair, existingUser?: Partial<User>): User => {
+const createUserFromKeypair = (keypair: StoredKeypair, existingUser?: Partial<User> | null): User => {
   const now = Date.now();
   const displayName = localStorage.getItem(DISPLAY_NAME_KEY) || 
                       existingUser?.displayName || 
@@ -253,7 +253,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
       
       // Create user object and update state
-      const user = createUserFromKeypair(keypair, authState.user);
+      const user = createUserFromKeypair(keypair, authState.user || undefined);
       updateAuthState({
         status: 'authenticated',
         user,
