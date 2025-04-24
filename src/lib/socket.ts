@@ -402,6 +402,77 @@ export class AeroNyxSocket extends EventEmitter {
   }
 
   /**
+ * Cleans up all timers, socket listeners, and resets state variables.
+ */
+  private cleanupConnection(emitEvents: boolean = true): void {
+    const wasConnected = this.connectionState === ConnectionState.CONNECTED;
+    
+    console.debug('[Socket] Cleaning up connection resources...');
+    
+    // 1. Clear all timers
+    this.clearConnectionTimeout();
+    this.stopKeepAliveServices();
+    this.stopKeyRotationTimer();
+    
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    
+    // 2. Clean up socket
+    if (this.socket) {
+      // Remove all event listeners
+      this.socket.onopen = null;
+      this.socket.onclose = null;
+      this.socket.onmessage = null;
+      this.socket.onerror = null;
+      
+      // Close if still open
+      if (isSocketOpen(this.socket)) {
+        try {
+          this.socket.close(1000, "Client cleanup");
+        } catch (e) {
+          console.warn("[Socket] Error closing WebSocket during cleanup:", e);
+        }
+      }
+      
+      this.socket = null;
+    }
+    
+    // 3. Reset state variables
+    this.sessionKey = null; // Clear sensitive data
+    this.serverPublicKey = null;
+    this.sessionId = null;
+    this.messageCounter = 0; // Reset counter on disconnect
+    this.processedMessageIds.clear(); // Clear replay cache
+    this.processingQueue = false; // Reset queue processing flag
+  
+    // 4. Reset connection promise state if connection failed/closed prematurely
+    if (this.connectionState === ConnectionState.CONNECTING || this.connectionState === ConnectionState.AUTHENTICATING) {
+      this.rejectConnection(new Error("Connection closed during setup"));
+    } else {
+      // Clear promise handlers if disconnected after successful connection or during closing
+      this.connectionPromise = null;
+      this.connectionResolve = null;
+      this.connectionReject = null;
+    }
+  
+    // 5. Emit events if needed (usually only if previously connected)
+    if (emitEvents && wasConnected) {
+      console.log("[Socket] Emitting 'disconnected' status due to cleanup after being connected.");
+      this.emit('connectionStatus', 'disconnected');
+      this.emit('disconnected', 1000, "Client cleanup"); // Emit generic code
+    }
+  
+    // 6. Ensure final state is DISCONNECTED unless explicitly closing
+    if (this.connectionState !== ConnectionState.CLOSING) {
+      this.safeChangeState(ConnectionState.DISCONNECTED);
+    }
+  
+    console.debug('[Socket] Connection cleanup complete.');
+  }
+
+  /**
    * Gets the current user-facing connection status.
    */
   public getConnectionStatus(): ConnectionStatus {
@@ -1033,58 +1104,56 @@ export class AeroNyxSocket extends EventEmitter {
     }
   }
 
-    private async handleDataPacket(message: any): Promise<void> {
+  private async handleDataPacket(message: any): Promise<void> {
     // Early validation checks
-      if (!this.sessionKey) {
-        console.warn('[Socket] Received Data packet but no session key. Ignoring.');
+    if (!this.sessionKey) {
+      console.warn('[Socket] Received Data packet but no session key. Ignoring.');
+      return;
+    }
+    
+    if (this.connectionState !== ConnectionState.CONNECTED) {
+      console.warn(`[Socket] Received Data packet in non-connected state: ${this.connectionState}. Ignoring.`);
+      return;
+    }
+  
+    console.debug('[Socket] Processing data packet...');
+    
+    try {
+      // Support both field names for backward compatibility
+      const algorithm = message.encryption_algorithm || message.encryption || 'aes256gcm';
+      
+      // Decrypt and validate the packet structure
+      const decryptedData = await processEncryptedDataPacket(message, this.sessionKey, algorithm);
+      
+      if (!decryptedData) {
+        this.emit('error', this.createSocketError('data', 'Decryption failed', 'DECRYPTION_FAILED'));
         return;
       }
+  
+      this.lastMessageTime = Date.now(); // Update activity timer
       
-      if (this.connectionState !== ConnectionState.CONNECTED) {
-        console.warn(`[Socket] Received Data packet in non-connected state: ${this.connectionState}. Ignoring.`);
-        return;
-      }
-    
-      console.debug('[Socket] Processing data packet...');
+      // Process the message based on its type
+      await this.routeDecryptedMessage(decryptedData);
       
-      try {
-        // Support both field names for backward compatibility
-        const algorithm = message.encryption_algorithm || message.encryption || 'aes256gcm';
-        
-        // Decrypt and validate the packet structure
-        const decryptedData = await processEncryptedDataPacket(message, this.sessionKey, algorithm);
-        
-        if (!decryptedData) {
-          this.emit('error', this.createSocketError('data', 'Decryption failed', 'DECRYPTION_FAILED'));
-          return;
-        }
-    
-        this.lastMessageTime = Date.now(); // Update activity timer
-        
-        // Skip logging sensitive data but log the type for debugging
-        console.debug(`[Socket] Data packet decrypted successfully. Type: ${decryptedData?.type}`);
-    
-        // Replay protection
-        if (this.shouldPreventReplay(decryptedData)) {
-          return;
-        }
-    
-        // Process the message based on its type
-        await this.routeDecryptedMessage(decryptedData);
-        
-      } catch (error) {
-        console.error('[Socket] Error processing data packet:', error);
-        this.recordError(); // Record for health monitoring
-        this.emit('error', this.createSocketError(
-          'data', 
-          'Error processing decrypted data', 
-          'DATA_PROCESS_ERROR', 
-          error instanceof Error ? error.message : String(error), 
-          false
-        ));
-      }
+    } catch (error) {
+      console.error('[Socket] Error processing data packet:', error);
+      this.recordError(); // Record for health monitoring
+      this.emit('error', this.createSocketError(
+        'data', 
+        'Error processing decrypted data', 
+        'DATA_PROCESS_ERROR', 
+        error instanceof Error ? error.message : String(error), 
+        false
+      ));
+    }
   }
 
+  // Add this missing method referenced above
+  private recordError(): void {
+    this.consecutiveFailedPings++;
+    // Consider implementing more sophisticated error tracking here
+  }
+      
   // Extract replay protection to a separate method for clarity
   private shouldPreventReplay(decryptedData: any): boolean {
     if (decryptedData.id && typeof decryptedData.id === 'string') {
@@ -1112,20 +1181,10 @@ export class AeroNyxSocket extends EventEmitter {
       await this.handleKeyRotationRequest(decryptedData);
     } else if (isKeyRotationResponsePayload(decryptedData)) {
       await this.handleKeyRotationResponse(decryptedData);
-    } else if (validateMessageStructure(decryptedData)) {
-      // Emit generic 'data' event for unrecognized but structurally valid types
-      this.emit('data', decryptedData);
-      console.log(`[Socket] Emitted generic 'data' event for type: ${decryptedData.type}`);
     } else {
-      // If structure is fundamentally invalid
-      console.warn('[Socket] Received invalid data structure');
-      this.emit('error', this.createSocketError(
-        'message', 
-        'Invalid data structure', 
-        'INVALID_DATA_STRUCTURE', 
-        typeof decryptedData === 'object' ? JSON.stringify(decryptedData).substring(0, 100) : String(decryptedData).substring(0, 100), 
-        false
-      ));
+      // If structure is fundamentally valid
+      console.warn('[Socket] Received unrecognized message type:', decryptedData?.type);
+      this.emit('data', decryptedData); // Still emit for application layer
     }
   }
   /**
