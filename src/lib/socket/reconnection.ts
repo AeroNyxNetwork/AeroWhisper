@@ -92,7 +92,8 @@ export function evaluateResetThreshold(
   config: ReconnectionConfig
 ): ReconnectionState {
   const now = Date.now();
-  const threshold = config.resetThreshold || DEFAULT_RECONNECTION_CONFIG.resetThreshold;
+  // Ensure threshold has a default value even if both config options are undefined
+  const threshold = config.resetThreshold || DEFAULT_RECONNECTION_CONFIG.resetThreshold || 60000;
   
   // If we had a successful connection for longer than the threshold, reset attempts
   if (state.lastSuccess > 0 && (now - state.lastSuccess) > threshold) {
@@ -106,7 +107,6 @@ export function evaluateResetThreshold(
   
   return state;
 }
-
 /**
  * Calculates the reconnection delay using exponential backoff with optional jitter.
  * @param attempt The current reconnection attempt number (starting from 0).
