@@ -1,4 +1,6 @@
+
 // src/lib/socket.ts
+
 import { EventEmitter } from 'events';
 import * as bs58 from 'bs58';
 import { Buffer } from 'buffer'; // Ensure buffer polyfill is available
@@ -47,8 +49,9 @@ import {
   ChatInfo,
   Participant,
   WebRTCSignalPayload,
-  KeyRotationRequest,
-  KeyRotationResponse,
+  // KeyRotationRequestPayload and KeyRotationResponsePayload instead of Request/Response
+  KeyRotationRequestPayload,
+  KeyRotationResponsePayload,
   // Import the actual validation functions we'll use
   isMessageType,
   isChatInfoPayload,
