@@ -31,14 +31,13 @@ import {
 import { getStoredKeypair } from '../utils/keyStorage';
 
 import {
-    // ... other imports
-    isMessageType,
-    isChatInfoPayload,
-    isParticipantsPayload,
-    isWebRTCSignalPayload,
-    isKeyRotationRequestPayload, // Import if needed
-    isKeyRotationResponsePayload, // Import if needed
-    validateMessageStructure // Or use the unified validatePayload if preferred
+  isMessageType as isMessageTypeValidation,
+  isChatInfoPayload as isChatInfoPayloadValidation,
+  isParticipantsPayload as isParticipantsPayloadValidation,
+  isWebRTCSignalPayload as isWebRTCSignalPayloadValidation,
+  isKeyRotationRequestPayload as isKeyRotationRequestPayloadValidation,
+  isKeyRotationResponsePayload as isKeyRotationResponsePayloadValidation,
+  validateMessageStructure // Generic validation fallback if needed
 } from '../types/validation'; // Adjust path if needed
 
 // Import packet types (ensure these match the spec)
@@ -51,12 +50,13 @@ import {
     PongMessage,
     ErrorMessage,
     DisconnectMessage,
-    MessageType,
-    ChatInfo,
-    Participant,
-    WebRTCSignalPayload, // Assuming this type exists for WebRTC tunneling
-    KeyRotationRequest,
-    KeyRotationResponse
+    isMessageType,
+    isChatInfoPayload,
+    isParticipantsPayload,
+    isWebRTCSignalPayload,
+    isKeyRotationRequestPayload, // Import if needed
+    isKeyRotationResponsePayload, // Import if needed
+    validateMessageStructure // Or use the unified validatePayload if preferred
     // ... other packet types
 } from './socket/types'; // Ensure types.ts is updated and accurate
 
