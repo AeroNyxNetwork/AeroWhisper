@@ -974,7 +974,7 @@ export const EnhancedChatInterface: React.FC<EnhancedChatInterfaceProps> = ({ ch
   
   // Check if P2P is active
   const isP2PActive = (): boolean => {
-    return connectionStatus === 'p2p-connected';
+    return (connectionStatus as string) === 'p2p-connected';
   };
   
   return (
