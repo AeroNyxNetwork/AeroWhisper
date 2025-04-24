@@ -152,7 +152,7 @@ export async function processDataPacket(
       nonceUint8,
       sessionKey,
       'string'   // Output as string
-    ) as string;
+    );
     
     // Parse the decrypted JSON
     return JSON.parse(decryptedText);
