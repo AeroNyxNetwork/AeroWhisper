@@ -761,74 +761,74 @@ export class AeroNyxSocket extends EventEmitter {
    * @param message Challenge message
    */
   private async handleChallenge(message: ChallengeMessage): Promise<void> {
-    try {
-      console.log('[Socket] Received authentication challenge, ID:', message.id);
-  
-      // Store server's Ed25519 public key (received in Challenge packet)
-      if (message.server_public_key) { 
-        this.serverPublicKey = message.server_public_key;
-        console.log('[Socket] Stored server Ed25519 public key:', this.serverPublicKey.substring(0, 10) + '...');
-      } else {
-        console.error("[Socket] Server did not provide its public key in the Challenge message!");
-        throw new Error("Server public key missing in Challenge");
-      }
-  
-      if (!this.publicKey) {
-        throw new Error('No client public key available for challenge response');
-      }
-  
-      const challengeData = parseChallengeData(message.data);
-      console.log('[Socket] Challenge data parsed, length:', challengeData.length);
-  
-      // Get client's keypair from storage
-      const storedKeypair = localStorage.getItem('aero-keypair'); 
-      if (!storedKeypair) {
-        throw new Error('No keypair found for authentication');
-      }
-      const keypair = JSON.parse(storedKeypair);
-      const clientSecretKey64 = bs58.decode(keypair.secretKey); 
-  
-      if (clientSecretKey64.length !== 64) {
-        throw new Error(`Invalid Ed25519 secret key length: ${clientSecretKey64.length} (expected 64 bytes)`);
-      }
-  
-      const signatureB58 = signChallenge(challengeData, clientSecretKey64);
-  
-      const response = {
-        type: 'ChallengeResponse',
-        signature: signatureB58,
-        public_key: this.publicKey,
-        challenge_id: message.id,
-      };
-  
-      if (this.isSocketOpen(this.socket)) {
-        this.socket.send(JSON.stringify(response));
-        console.log('[Socket] Challenge response sent successfully');
-      } else {
-        throw new Error('Socket not open when trying to send challenge response');
-      }
-    } catch (error) {
-      console.error('[Socket] Error handling challenge:', error);
-      this.emit('error', this.createSocketError(
-        'auth',
-        'Failed to authenticate with server',
-        'CHALLENGE_ERROR',
-        error instanceof Error ? error.message : 'Unknown authentication error',
-        true
-      ));
-      
-      // Attempt reconnection
-      if (this.autoReconnect) {
-        this.scheduleReconnect();
+      try {
+        console.log('[Socket] Received authentication challenge, ID:', message.id);
+    
+        // Store server's Ed25519 public key (received in Challenge packet)
+        if (message.server_public_key) { 
+          this.serverPublicKey = message.server_public_key;
+          console.log('[Socket] Stored server Ed25519 public key:', this.serverPublicKey.substring(0, 10) + '...');
+        } else {
+          console.error("[Socket] Server did not provide its public key in the Challenge message!");
+          throw new Error("Server public key missing in Challenge");
+        }
+    
+        if (!this.publicKey) {
+          throw new Error('No client public key available for challenge response');
+        }
+    
+        const challengeData = parseChallengeData(message.data);
+        console.log('[Socket] Challenge data parsed, length:', challengeData.length);
+    
+        // Get client's keypair from storage
+        const storedKeypair = localStorage.getItem('aero-keypair'); 
+        if (!storedKeypair) {
+          throw new Error('No keypair found for authentication');
+        }
+        const keypair = JSON.parse(storedKeypair);
+        const clientSecretKey64 = bs58.decode(keypair.secretKey); 
+    
+        if (clientSecretKey64.length !== 64) {
+          throw new Error(`Invalid Ed25519 secret key length: ${clientSecretKey64.length} (expected 64 bytes)`);
+        }
+    
+        const signatureB58 = signChallenge(challengeData, clientSecretKey64);
+    
+        const response = {
+          type: 'ChallengeResponse',
+          signature: signatureB58,
+          public_key: this.publicKey,
+          challenge_id: message.id,
+        };
+    
+        if (this.isSocketOpen(this.socket)) {
+          this.socket.send(JSON.stringify(response));
+          console.log('[Socket] Challenge response sent successfully');
+        } else {
+          throw new Error('Socket not open when trying to send challenge response');
+        }
+      } catch (error) {
+        console.error('[Socket] Error handling challenge:', error);
+        this.emit('error', this.createSocketError(
+          'auth',
+          'Failed to authenticate with server',
+          'CHALLENGE_ERROR',
+          error instanceof Error ? error.message : 'Unknown authentication error',
+          true
+        ));
+        
+        // Attempt reconnection
+        if (this.autoReconnect) {
+          this.scheduleReconnect();
+        }
       }
     }
-  }
-  
-  /**
- * Handle IP assignment message after successful authentication
- * @param message IP assignment message
- */
-  private async handleIpAssign(message: IpAssignMessage): Promise<void> {
+    
+    /**
+   * Handle IP assignment message after successful authentication
+   * @param message IP assignment message
+   */
+    private async handleIpAssign(message: IpAssignMessage): Promise<void> {
     try {
       this.sessionId = message.session_id;
       console.log(`[Socket] IP assigned: ${message.ip_address}, Session ID: ${message.session_id}`);
