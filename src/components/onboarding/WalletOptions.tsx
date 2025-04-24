@@ -35,7 +35,7 @@ export const WalletOptions: React.FC<WalletOptionsProps> = ({ onComplete }) => {
   const { colorMode } = useColorMode();
   const toast = useToast();
   const router = useRouter();
-  const { connect, generateNewKeypair, isConnecting } = useAuth();
+  const { login, generateNewKeypair, isLoading: isAuthLoading } = useAuth();
   const [activeOption, setActiveOption] = useState<'wallet' | 'generate' | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -45,7 +45,8 @@ export const WalletOptions: React.FC<WalletOptionsProps> = ({ onComplete }) => {
     setIsLoading(true);
     
     try {
-      await connect();
+      // Replace connect() with login()
+      await login();
       setIsLoading(false);
       setIsSuccess(true);
       
