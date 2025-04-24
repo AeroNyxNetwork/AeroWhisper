@@ -7,6 +7,14 @@ export interface BasePacket {
   type: string;
 }
 
+export interface SocketError {
+  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message' | 'internal' | 'security';
+  message: string;
+  code: string;
+  details?: string;
+  retry: boolean;
+  originalError?: any;
+}
 /**
  * Initial authentication message sent by the client.
  * Matches server requirements document Section 3.1.
