@@ -29,6 +29,18 @@ import {
   validateMessageStructure // Generic validation fallback if needed
 } from '../utils/cryptoUtils'; // Adjust path if needed
 
+
+import {
+    // ... other imports
+    isMessageType,
+    isChatInfoPayload,
+    isParticipantsPayload,
+    isWebRTCSignalPayload,
+    isKeyRotationRequestPayload, // Import if needed
+    isKeyRotationResponsePayload, // Import if needed
+    validateMessageStructure // Or use the unified validatePayload if preferred
+} from '../types/validation'; // Adjust path if needed
+
 // Import packet types (ensure these match the spec)
 import {
     AuthMessage,
@@ -1026,66 +1038,67 @@ export class AeroNyxSocket extends EventEmitter {
    * @param message The parsed Data packet object.
    */
   private async handleDataPacket(message: any): Promise<void> {
-    if (!this.sessionKey) {
-      console.warn('[Socket] Received Data packet but no session key. Ignoring.');
-      return;
-    }
-     // Only process if fully connected
-    if (this.connectionState !== ConnectionState.CONNECTED) {
-        console.warn(`[Socket] Received Data packet in non-connected state: ${this.connectionState}. Ignoring.`);
-        return;
-    }
-
-    console.debug('[Socket] Processing potential Data packet...');
-    try {
-      // Decrypt and validate the packet structure
-      const decryptedData = await processEncryptedDataPacket(message, this.sessionKey);
-      if (!decryptedData) {
-        // Error logged within processEncryptedDataPacket
-        this.emit('error', this.createSocketError('data','Decryption failed','DECRYPTION_FAILED',undefined,false));
-        return;
-      }
-
-      this.lastMessageTime = Date.now(); // Update activity timer
-      console.debug('[Socket] Data packet decrypted successfully. Inner Type:', decryptedData.type);
-
-      // Replay Protection
-      if (decryptedData.id && typeof decryptedData.id === 'string') {
-        if (this.processedMessageIds.has(decryptedData.id)) {
-          console.warn(`[Socket] Replay detected for message ID: ${decryptedData.id}. Ignoring.`);
+      if (!this.sessionKey) {
+          console.warn('[Socket] Received Data packet but no session key. Ignoring.');
           return;
-        }
-        this.processedMessageIds.set(decryptedData.id, Date.now());
-        this.cleanupMessageIdCache(); // Clean up old entries
       }
-
-      // Type Guard based processing
-      if (isMessageType(decryptedData)) {
-        this.emit('message', decryptedData);
-      } else if (isChatInfoPayload(decryptedData)) {
-        this.emit('chatInfo', decryptedData.data);
-      } else if (isParticipantsPayload(decryptedData)) {
-        this.emit('participants', decryptedData.data);
-      } else if (isWebRTCSignalPayload(decryptedData)) {
-        this.emit('webrtcSignal', decryptedData);
-      } else if (isKeyRotationRequestPayload(decryptedData)) {
-        await this.handleKeyRotationRequest(decryptedData);
-      } else if (isKeyRotationResponsePayload(decryptedData)) {
-        await this.handleKeyRotationResponse(decryptedData);
-      } else if (typeof decryptedData === 'object' && decryptedData !== null && typeof decryptedData.type === 'string') {
-        // Fallback for other known types or generic data
-        this.emit('data', decryptedData);
-        console.log(`[Socket] Emitted generic 'data' event for type: ${decryptedData.type}`);
-      } else {
-        // If none of the type guards match
-        console.warn('[Socket] Received decrypted data with unknown or invalid structure:', decryptedData);
-         this.emit('error', this.createSocketError('message','Invalid decrypted data structure','INVALID_DATA_STRUCTURE', JSON.stringify(decryptedData).substring(0, 100), false));
+      // Only process if fully connected
+      if (this.connectionState !== ConnectionState.CONNECTED) {
+          console.warn(`[Socket] Received Data packet in non-connected state: ${this.connectionState}. Ignoring.`);
+          return;
       }
-
-    } catch (error) { // Catch errors during processing (e.g., type guard issues)
-      console.error('[Socket] Error processing decrypted data packet:', error);
-       this.emit('error', this.createSocketError('data','Error processing decrypted data','DATA_PROCESS_ERROR', error instanceof Error ? error.message : String(error), false));
-    }
+  
+      console.debug('[Socket] Processing potential Data packet...');
+      try {
+          // Decrypt and validate the packet structure
+          const decryptedData = await processEncryptedDataPacket(message, this.sessionKey);
+          if (!decryptedData) {
+              // Error logged within processEncryptedDataPacket
+              this.emit('error', this.createSocketError('data', 'Decryption failed', 'DECRYPTION_FAILED', undefined, false));
+              return;
+          }
+  
+          this.lastMessageTime = Date.now(); // Update activity timer
+          console.debug('[Socket] Data packet decrypted successfully. Inner Type:', decryptedData?.type);
+  
+          // Replay Protection (remains the same)
+          if (decryptedData.id && typeof decryptedData.id === 'string') {
+              if (this.processedMessageIds.has(decryptedData.id)) {
+                  console.warn(`[Socket] Replay detected for message ID: ${decryptedData.id}. Ignoring.`);
+                  return;
+              }
+              this.processedMessageIds.set(decryptedData.id, Date.now());
+              this.cleanupMessageIdCache(); // Clean up old entries
+          }
+  
+          // --- Type Guard based processing ---
+          if (isMessageType(decryptedData)) {
+              this.emit('message', decryptedData); // Type is narrowed, safe to emit
+          } else if (isChatInfoPayload(decryptedData)) {
+              this.emit('chatInfo', decryptedData.data); // Safe to access .data
+          } else if (isParticipantsPayload(decryptedData)) {
+              this.emit('participants', decryptedData.data); // Safe to access .data
+          } else if (isWebRTCSignalPayload(decryptedData)) {
+              this.emit('webrtcSignal', decryptedData); // Type is narrowed
+          } else if (isKeyRotationRequestPayload(decryptedData)) { // If key rotation uses Data packet
+               await this.handleKeyRotationRequest(decryptedData);
+          } else if (isKeyRotationResponsePayload(decryptedData)) { // If key rotation uses Data packet
+               await this.handleKeyRotationResponse(decryptedData);
+          } else if (validateMessageStructure(decryptedData)) { // Fallback check for basic structure
+              // Emit generic 'data' event for unrecognized but structurally valid types
+              this.emit('data', decryptedData);
+              console.log(`[Socket] Emitted generic 'data' event for type: ${decryptedData.type}`);
+          } else {
+              // If structure is fundamentally invalid (e.g., not an object, no type)
+              console.warn('[Socket] Received decrypted data with unknown or invalid structure:', decryptedData);
+              this.emit('error', this.createSocketError('message', 'Invalid decrypted data structure', 'INVALID_DATA_STRUCTURE', JSON.stringify(decryptedData).substring(0, 100), false));
+          }
+  
+      } catch (error) { // Catch errors during processing (e.g., JSON.parse in processEncryptedDataPacket if output isn't string)
+          console.error('[Socket] Error processing decrypted data packet:', error);
+          this.recordError(); // Record for health monitoring
+          this.emit('error', this.createSocketError('data', 'Error processing decrypted data', 'DATA_PROCESS_ERROR', error instanceof Error ? error.message : String(error), false));
+      }
   }
 
   /**
