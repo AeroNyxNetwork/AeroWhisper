@@ -125,7 +125,7 @@ const InternalConnectionState = {
 
 
 // Map of numeric states to their string representation for logging/debugging
-const CONNECTION_STATE_NAMES: Record<InternalConnectionState, string> = {
+const CONNECTION_STATE_NAMES: Record<string, string> = {
   [InternalConnectionState.DISCONNECTED]: 'disconnected',
   [InternalConnectionState.CONNECTING]: 'connecting',
   [InternalConnectionState.AUTHENTICATING]: 'authenticating',
