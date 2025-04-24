@@ -389,7 +389,8 @@ export const useChat = (chatId: string | null) => {
                     return false;
             }
 
-            return result !== SendResult.FAILED;
+            // Use explicit comparison with possible success values
+            return result === SendResult.SENT || result === SendResult.QUEUED;
         } catch (error) {
             console.error('[useChat:SEND] Error sending message:', error);
             
