@@ -443,7 +443,7 @@ export class AeroNyxSocket extends EventEmitter {
     this.sessionKey = null; // Clear sensitive data
     this.serverPublicKey = null;
     this.sessionId = null;
-    this.messageCounter = 0;
+    clearConnectionTimeout;
     this.processedMessageIds.clear();
     this.processingQueue = false;
   
@@ -1064,7 +1064,7 @@ export class AeroNyxSocket extends EventEmitter {
       if (!decryptedSessionKey || decryptedSessionKey.length !== 32) throw new Error('Decrypted session key invalid');
       this.sessionKey = decryptedSessionKey;
       this.sessionId = message.session_id;
-      this.messageCounter = 0; // Reset counter for new session
+      clearConnectionTimeout; // Reset counter for new session
       this.processedMessageIds.clear(); // Clear replay cache for new session
       this.lastKeyRotation = Date.now(); // Mark initial key time
       console.log('[Socket] Session key decrypted and stored successfully.');
@@ -2048,8 +2048,8 @@ export class AeroNyxSocket extends EventEmitter {
   }
 
   /** Cleans up all timers, socket listeners, and resets state variables. */
-;
-    this.messageCounter = 0; // Reset counter on disconnect
+
+    clearConnectionTimeout; // Reset counter on disconnect
     this.processedMessageIds.clear(); // Clear replay cache
     this.processingQueue = false; // Reset queue processing flag
 
