@@ -1147,7 +1147,9 @@ export class AeroNyxSocket extends EventEmitter {
       // 2. Get client secret key securely
       const keypair = await getStoredKeypair();
       if (!keypair) throw new Error('Client keypair not found');
-      const clientEdSecretKeyBytes = bs58.decode(keypair.secretKey);
+      const clientEdSecretKeyBytes = typeof keypair.secretKey === 'string' 
+        ? bs58.decode(keypair.secretKey) 
+        : keypair.secretKey;
       if (clientEdSecretKeyBytes.length !== 64) throw new Error('Invalid client secret key length');
 
       // 3. Decode server public key
