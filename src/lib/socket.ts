@@ -1180,6 +1180,7 @@ export class AeroNyxSocket extends EventEmitter {
 
       // 8. Decrypt the ACTUAL session key
       const decryptedSessionKey = await decryptWithAesGcm(encryptedSessionKeyBytes,keyNonceBytes,finalSharedSecret,'binary') as Uint8Array;
+      
 
       // 9. Validate and Store the DECRYPTED Session Key
       if (!decryptedSessionKey || decryptedSessionKey.length !== 32) throw new Error('Decrypted session key invalid');
