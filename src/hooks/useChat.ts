@@ -15,7 +15,6 @@ import {
     SendResult,
     SocketError
 } from '../lib/socket';
-// 从正确的位置导入 MessageType，或使用类型定义
 import { MessageType as SocketMessageType } from '../lib/socket/types';
 import { useToast } from '@chakra-ui/react';
 
@@ -41,6 +40,28 @@ const mapSocketStatus = (socketStatus: SocketConnectionStatus): HookConnectionSt
 };
 
 /**
+ * Maps ChatMessageType status to SocketMessageType status
+ * @param status The status from ChatMessageType
+ * @returns Status compatible with SocketMessageType
+ */
+const mapMessageStatus = (status: MessageStatus | undefined): "sending" | "sent" | "delivered" | "failed" | "received" | undefined => {
+    if (!status) return undefined;
+    
+    // If status is "read", map it to "delivered" as that's the closest match
+    // in the SocketMessageType's allowed status values
+    if (status === "read") return "delivered";
+    
+    // For other values that are common between both types, return as is
+    if (status === "sending" || status === "sent" || status === "delivered" || 
+        status === "failed" || status === "received") {
+        return status;
+    }
+    
+    // Default fallback if none of the above match
+    return "sent";
+};
+
+/**
  * Converts a ChatMessageType to a SocketMessageType
  * This ensures all required fields are present when sending to the socket
  */
@@ -55,7 +76,7 @@ const toSocketMessage = (message: ChatMessageType): SocketMessageType => ({
         ? message.timestamp 
         : message.timestamp.toISOString(), // Convert Date to ISO string if it's a Date object
     isEncrypted: message.isEncrypted ?? true,
-    status: message.status // 不进行类型转换，保留原始类型
+    status: mapMessageStatus(message.status) // Map to compatible status type
 });
 
 /**
