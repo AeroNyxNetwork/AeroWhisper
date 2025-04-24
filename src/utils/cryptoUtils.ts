@@ -472,10 +472,9 @@ export function deriveECDHSharedSecret(
  * @param salt A salt (usually empty or specific string, must match server)
  * @returns Promise resolving to a 32-byte session key
  */
-export async function deriveSessionKeyHKDF(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
-  if (!sharedSecret || sharedSecret.length !== 32) {
-    throw new Error('Invalid shared secret for HKDF');
-  }
+export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
+  return deriveSessionKeyHKDF(sharedSecret, salt);
+}
 
   console.debug('[Crypto] Deriving session key via HKDF:', {
     sharedSecretPrefix: Buffer.from(sharedSecret.slice(0, 8)).toString('hex'),
