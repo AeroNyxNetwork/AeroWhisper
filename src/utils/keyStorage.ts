@@ -464,3 +464,92 @@ export async function getPublicKeyInfo(): Promise<{ publicKey: Uint8Array; publi
     publicKeyBase58: keypair.publicKeyBase58
   };
 }
+
+/**
+ * Securely wipes a Uint8Array by overwriting with random data
+ * Important for clearing sensitive key material from memory
+ * @param array The array to wipe
+ */
+export function secureWipe(array: Uint8Array): void {
+  if (!array || !(array instanceof Uint8Array)) return;
+  
+  // Overwrite with random data
+  if (typeof window !== 'undefined' && window.crypto) {
+    window.crypto.getRandomValues(array);
+  } else {
+    // Fallback for non-browser environments
+    for (let i = 0; i < array.length; i++) {
+      array[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  
+  // Then zero out
+  for (let i = 0; i < array.length; i++) {
+    array[i] = 0;
+  }
+}
+
+/**
+ * Export keypair in a format suitable for backup/transfer
+ * @returns Promise resolving to keypair data suitable for export
+ */
+export async function exportKeypair(): Promise<string | null> {
+  try {
+    const keypair = await getStoredKeypair();
+    if (!keypair) return null;
+    
+    // Create exportable format
+    const exportData = {
+      version: 1,
+      timestamp: Date.now(),
+      publicKey: bs58.encode(keypair.publicKey),
+      secretKey: bs58.encode(keypair.secretKey)
+    };
+    
+    return JSON.stringify(exportData);
+  } catch (error) {
+    console.error('[KeyStorage] Error exporting keypair:', error);
+    return null;
+  }
+}
+
+/**
+ * Import keypair from exported format
+ * @param exportedData The exported keypair data
+ * @returns Promise resolving to true if import succeeded
+ */
+export async function importKeypair(exportedData: string): Promise<boolean> {
+  try {
+    // Parse exported data
+    const data = JSON.parse(exportedData);
+    
+    // Validate format
+    if (!data.version || !data.publicKey || !data.secretKey) {
+      throw new KeyStorageError('Invalid keypair export format', 'INVALID_EXPORT');
+    }
+    
+    // Convert from Base58
+    const publicKey = bs58.decode(data.publicKey);
+    const secretKey = bs58.decode(data.secretKey);
+    
+    // Validate keypair
+    validateKeypair({ publicKey, secretKey });
+    
+    // Store keypair
+    await storeKeypair({ publicKey, secretKey });
+    
+    return true;
+  } catch (error) {
+    console.error('[KeyStorage] Error importing keypair:', error);
+    
+    if (error instanceof KeyStorageError) {
+      throw error;
+    }
+    
+    throw new KeyStorageError(
+      `Failed to import keypair: ${error instanceof Error ? error.message : String(error)}`,
+      'IMPORT_ERROR',
+      error instanceof Error ? error : undefined
+    );
+  }
+}
