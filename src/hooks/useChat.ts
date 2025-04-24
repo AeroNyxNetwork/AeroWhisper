@@ -45,7 +45,8 @@ export const useChat = (chatId: string | null) => {
   const [chatInfo, setChatInfo] = useState<ChatInfo | null>(null);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [error, setError] = useState<SocketError | null>(null);
-const [currentSocketChatId, setCurrentSocketChatId] = useState<string | null>(null);
+    
+  const [currentSocketChatId, setCurrentSocketChatId] = useState<string | null>(null);
   // Refs
   const socketRef = useRef<AeroNyxSocket | null>(null);
   
@@ -193,14 +194,19 @@ const [currentSocketChatId, setCurrentSocketChatId] = useState<string | null>(nu
             })
             .catch(connectError => {
                 console.error('[useChat] socket.connect() promise rejected:', connectError);
-                const errorObj = connectError instanceof Error 
+                const errorObj: SocketError = connectError instanceof Error 
                     ? { 
                         type: 'connection', 
                         message: connectError.message, 
                         code: 'CONNECT_FAILED',
                         retry: true
-                      } as SocketError 
-                    : new Error(String(connectError));
+                      } 
+                    : { 
+                        type: 'connection',
+                        message: String(connectError),
+                        code: 'CONNECT_FAILED',
+                        retry: true
+                      };
                       
                 setError(errorObj);
                 setConnectionStatus('disconnected');
@@ -233,7 +239,7 @@ const [currentSocketChatId, setCurrentSocketChatId] = useState<string | null>(nu
       socket.off('chatInfo', handleChatInfo);
       socket.off('error', handleSocketError);
     };
-  }, [chatId, user?.publicKey, toast, handleSocketError]);
+  }, [chatId, user?.publicKey, toast, handleSocketError, currentSocketChatId]);
 
   // --- Actions ---
 
