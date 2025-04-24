@@ -292,7 +292,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       const soundElement = notificationSounds[settings.notificationSound];
       if (soundElement && soundElement.play) {
         soundElement.currentTime = 0;
-        soundElement.play().catch(err => console.error("Error playing notification sound:", err));
+        soundElement.play().catch((err: unknown) => console.error("Error playing notification sound:", err));
       }
     } catch (error) {
       console.error('Failed to play notification sound:', error);
