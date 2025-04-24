@@ -27,7 +27,7 @@ import {
 } from '@chakra-ui/react';
 import { FaChevronDown, FaChevronUp } from 'react-icons/fa';
 import { createChatRoom } from '../../lib/chatService';
-import { generateSessionId } from '../../utils/crypto';
+import { generateSessionId } from '../../utils/cryptoUtils';
 
 interface CreateChatModalProps {
   isOpen: boolean;
