@@ -213,10 +213,10 @@ export const EncryptionSettings: React.FC<EncryptionSettingsProps> = ({ onSave }
   };
   
   const resetSettings = () => {
-    // Default settings
+  // Default settings
     const defaultSettings = {
       encryptionAlgorithm: 'aes-gcm',
-      encryptionFieldName: 'encryption',
+      encryptionFieldName: 'encryption' as 'encryption' | 'encryption_algorithm',
       preferP2P: true,
       keySize: 256,
       sessionKeyRotation: false,
