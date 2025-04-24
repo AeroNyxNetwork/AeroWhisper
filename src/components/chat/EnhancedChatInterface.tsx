@@ -106,7 +106,7 @@ const typingDotVariants = {
       delay: i * 0.1,
       duration: 0.6,
       repeat: Infinity,
-      repeatType: 'loop'
+      repeatType: 'loop' as const 
     }
   })
 };
