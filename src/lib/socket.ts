@@ -49,7 +49,6 @@ import {
   ChatInfo,
   Participant,
   WebRTCSignalPayload,
-  // KeyRotationRequestPayload and KeyRotationResponsePayload instead of Request/Response
   KeyRotationRequestPayload,
   KeyRotationResponsePayload,
   // Import the actual validation functions we'll use
@@ -58,9 +57,12 @@ import {
   isParticipantsPayload,
   isWebRTCSignalPayload,
   isKeyRotationRequestPayload,
-  isKeyRotationResponsePayload,
-  validateMessageStructure
+  isKeyRotationResponsePayload
+  // Removing validateMessageStructure since it's not exported from this module
 } from './socket/types'; // Ensure types.ts is updated and accurate
+
+// Import this from networking.ts since it has a validateMessageStructure function
+import { validateMessageStructure } from './socket/networking';
 
 // Import reconnection and networking utilities
 import { ReconnectionConfig } from './socket/reconnection'; // Assuming this file is kept for config definition
