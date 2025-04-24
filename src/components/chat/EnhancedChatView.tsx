@@ -32,6 +32,9 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     error
   } = useChat(chatId);
 
+  // Cast connectionStatus to extended type for use throughout the component
+  const extendedStatus = connectionStatus as ExtendedConnectionStatus;
+
   // Get encryption type from chatInfo or use default
   const encryptionType = chatInfo?.encryptionType || 'standard';
 
@@ -66,12 +69,9 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
 
   // Add connection status indicator
   const getConnectionStatusIndicator = () => {
-    // Cast connectionStatus to the extended type that includes p2p states
-    const status = connectionStatus as ExtendedConnectionStatus;
-    
-    if (status === 'connecting' || status === 'p2p-connecting') {
+    if (extendedStatus === 'connecting' || extendedStatus === 'p2p-connecting') {
       return <ConnectionIndicator status="connecting" message="Connecting..." />;
-    } else if (status === 'disconnected') {
+    } else if (extendedStatus === 'disconnected') {
       return <ConnectionIndicator status="error" message="Disconnected, trying to reconnect..." />;
     }
     return null;
@@ -95,7 +95,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
       bg={colorMode === 'dark' ? 'gray.900' : 'gray.50'}
     >
       {/* Connection status indicator */}
-      {connectionStatus !== 'connected' && connectionStatus !== 'p2p-connected' && (
+      {extendedStatus !== 'connected' && extendedStatus !== 'p2p-connected' && (
         <Box position="absolute" top="0" left="0" right="0" zIndex="10">
           {getConnectionStatusIndicator()}
         </Box>
@@ -104,7 +104,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
       {/* Security Status Bar */}
       <EncryptionIndicator 
         type={encryptionType}
-        isP2P={connectionStatus === 'p2p-connected'}
+        isP2P={extendedStatus === 'p2p-connected'}
         participants={participants.length}
       />
       
@@ -155,9 +155,9 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
         onSendMessage={sendMessage}
         isEncrypted={true}
         encryptionType={encryptionType}
-        isP2P={connectionStatus === 'p2p-connected'}
+        isP2P={extendedStatus === 'p2p-connected'}
         chatId={chatId}
-        isDisabled={connectionStatus !== 'connected' && connectionStatus !== 'p2p-connected'}
+        isDisabled={extendedStatus !== 'connected' && extendedStatus !== 'p2p-connected'}
       />
       
       {/* New Message Indicator */}
