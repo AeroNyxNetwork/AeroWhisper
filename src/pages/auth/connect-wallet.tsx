@@ -9,12 +9,12 @@ import { useAuth } from '../../contexts/AuthContext';
 const ConnectWalletPage = () => {
   const router = useRouter();
   const { colorMode } = useColorMode();
-  const { connect, isConnecting } = useAuth();
+  const { login, isLoading } = useAuth();
   const [error, setError] = useState('');
 
   const handleConnect = async () => {
     try {
-      await connect();
+      await login();
       router.push('/dashboard');
     } catch (error) {
       setError('Failed to connect wallet. Please try again.');
