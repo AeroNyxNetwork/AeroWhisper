@@ -182,7 +182,7 @@ export class AeroNyxSocket extends EventEmitter {
   private chatId: string | null = null;
   private publicKey: string | null = null; // Client's Ed25519 public key (Base58)
   private serverUrl: string = process.env.NEXT_PUBLIC_AERONYX_SERVER_URL || 'wss://aeronyx-server.example.com';
-  private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
+  private connectionState: InternalConnectionState = InternalConnectionState.DISCONNECTED;
   private autoReconnect: boolean = true;
   private forceReconnect: boolean = false; // Flag to force reconnect attempt
   private stateTransitionLock: Promise<void> = Promise.resolve();
@@ -584,8 +584,9 @@ export class AeroNyxSocket extends EventEmitter {
     }
   
     // 6. Ensure final state is DISCONNECTED unless explicitly closing
-    if (this.connectionState !== ConnectionState.CLOSING) {
-      this.safeChangeState(ConnectionState.DISCONNECTED);
+    if (this.connectionState !== InternalConnectionState.CONNECTED) {
+      this.safeChangeState(InternalConnectionState.DISCONNECTED);
+      this.scheduleReconnect();
     }
   
     console.debug('[Socket] Connection cleanup complete.');
@@ -596,19 +597,21 @@ export class AeroNyxSocket extends EventEmitter {
    */
   public getConnectionStatus(): ConnectionStatus {
     switch (this.connectionState) {
-      case ConnectionState.CONNECTED:
+      case InternalConnectionState.CONNECTED:
         return 'connected';
-      case ConnectionState.CONNECTING:
-      case ConnectionState.AUTHENTICATING:
+      case InternalConnectionState.CONNECTING:
+      case InternalConnectionState.AUTHENTICATING:
         return 'connecting';
-      case ConnectionState.RECONNECTING:
+      case InternalConnectionState.RECONNECTING:
         return 'reconnecting';
-      case ConnectionState.DISCONNECTED:
-      case ConnectionState.CLOSING:
+      case InternalConnectionState.DISCONNECTED:
+      case InternalConnectionState.CLOSING:
       default:
         return 'disconnected';
     }
   }
+
+  
 
   /**
    * Sends application-level data encrypted over the WebSocket.
@@ -2078,7 +2081,7 @@ export class AeroNyxSocket extends EventEmitter {
 
   // --- Connection State Management ---
 
-  private async safeChangeState(newState: ConnectionState): Promise<void> {
+  private async safeChangeState(newState: InternalConnectionState): Promise<void> {
     // Create a new promise chain to handle the state change
     this.stateTransitionLock = this.stateTransitionLock.then(async () => {
       if (this.connectionState === newState) return; // No change
