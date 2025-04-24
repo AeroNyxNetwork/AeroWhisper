@@ -5,45 +5,6 @@ import * as nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
 
 /**
- * Derive a session key from ECDH shared secret
- * (This is an alias to deriveSessionKeyHKDF for backward compatibility)
- * 
- * @param sharedSecret The raw 32-byte shared secret from ECDH
- * @param salt A salt (usually empty or specific string, must match server)
- * @returns Promise resolving to a 32-byte session key
- */
-export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
-  return deriveSessionKeyHKDF(sharedSecret, salt);
-}
-
-/**
- * Helper function to derive ECDH shared secret and session key in one step
- * 
- * @param clientSecretKey Client's Ed25519 secret key (64 bytes)
- * @param serverPublicKey Server's Ed25519 public key (32 bytes)
- * @returns Promise resolving to session key or null on failure
- */
-export async function deriveFullSessionKey(
-  clientSecretKey: Uint8Array,
-  serverPublicKey: Uint8Array
-): Promise<Uint8Array | null> {
-  try {
-    // 1. Derive raw ECDH shared secret
-    const sharedSecret = deriveECDHSharedSecret(clientSecretKey, serverPublicKey);
-    if (!sharedSecret) {
-      throw new Error('Failed to derive ECDH shared secret');
-    }
-    
-    // 2. Derive final session key using HKDF
-    const salt = new Uint8Array(); // Empty salt
-    return await deriveSessionKeyHKDF(sharedSecret, salt);
-  } catch (error) {
-    console.error('[Crypto] Failed to derive full session key:', error);
-    return null;
-  }
-}
-
-/**
  * Generate a cryptographically secure random nonce
  * @param length Length of nonce in bytes
  * @returns Nonce as Uint8Array
@@ -96,8 +57,6 @@ export async function isAesGcmSupported(): Promise<boolean> {
     return false;
   }
 }
-
-
 
 /**
  * Encrypt data using AES-GCM via Web Crypto API
@@ -472,9 +431,10 @@ export function deriveECDHSharedSecret(
  * @param salt A salt (usually empty or specific string, must match server)
  * @returns Promise resolving to a 32-byte session key
  */
-export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
-  return deriveSessionKeyHKDF(sharedSecret, salt);
-}
+export async function deriveSessionKeyHKDF(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
+  if (!sharedSecret || sharedSecret.length !== 32) {
+    throw new Error('Invalid shared secret for HKDF');
+  }
 
   console.debug('[Crypto] Deriving session key via HKDF:', {
     sharedSecretPrefix: Buffer.from(sharedSecret.slice(0, 8)).toString('hex'),
@@ -519,6 +479,45 @@ export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Arra
   } catch (error) {
     console.error('[Crypto] HKDF key derivation failed:', error);
     throw new Error(`HKDF derivation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Derive a session key from ECDH shared secret
+ * (This is an alias to deriveSessionKeyHKDF for backward compatibility)
+ * 
+ * @param sharedSecret The raw 32-byte shared secret from ECDH
+ * @param salt A salt (usually empty or specific string, must match server)
+ * @returns Promise resolving to a 32-byte session key
+ */
+export async function deriveSessionKey(sharedSecret: Uint8Array, salt: Uint8Array): Promise<Uint8Array> {
+  return deriveSessionKeyHKDF(sharedSecret, salt);
+}
+
+/**
+ * Helper function to derive ECDH shared secret and session key in one step
+ * 
+ * @param clientSecretKey Client's Ed25519 secret key (64 bytes)
+ * @param serverPublicKey Server's Ed25519 public key (32 bytes)
+ * @returns Promise resolving to session key or null on failure
+ */
+export async function deriveFullSessionKey(
+  clientSecretKey: Uint8Array,
+  serverPublicKey: Uint8Array
+): Promise<Uint8Array | null> {
+  try {
+    // 1. Derive raw ECDH shared secret
+    const sharedSecret = deriveECDHSharedSecret(clientSecretKey, serverPublicKey);
+    if (!sharedSecret) {
+      throw new Error('Failed to derive ECDH shared secret');
+    }
+    
+    // 2. Derive final session key using HKDF
+    const salt = new Uint8Array(); // Empty salt
+    return await deriveSessionKeyHKDF(sharedSecret, salt);
+  } catch (error) {
+    console.error('[Crypto] Failed to derive full session key:', error);
+    return null;
   }
 }
 
