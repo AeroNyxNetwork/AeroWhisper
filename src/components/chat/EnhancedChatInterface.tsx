@@ -83,6 +83,9 @@ import { useAuth } from '../../contexts/AuthContext';
 import { ReadReceipts } from './ReadReceipts';
 import { MessageType, ChatInfo, Participant, ConnectionStatus } from '../../types/chat';
 
+// Define an extended connection status type to include P2P states
+type ExtendedConnectionStatus = ConnectionStatus | 'p2p-connected' | 'p2p-connecting';
+
 // Animation variants for messages
 const messageVariants = {
   initial: { opacity: 0, y: 20 },
@@ -374,7 +377,7 @@ const MessageItem: React.FC<MessageItemProps> = ({
 
 // Connection status indicator
 interface ConnectionStatusIndicatorProps {
-  status: ConnectionStatus;
+  status: ExtendedConnectionStatus;
 }
 
 const ConnectionStatusIndicator: React.FC<ConnectionStatusIndicatorProps> = ({ status }) => {
@@ -854,11 +857,14 @@ export const EnhancedChatInterface: React.FC<EnhancedChatInterfaceProps> = ({ ch
     messages, 
     sendMessage, 
     participants, 
-    connectionStatus, 
+    connectionStatus: originalConnectionStatus, 
     chatInfo, 
     refreshParticipants,
     error
   } = useChat(chatId);
+  
+  // Cast connectionStatus to extended type
+  const connectionStatus = originalConnectionStatus as ExtendedConnectionStatus;
   
   const { user } = useAuth();
   const { colorMode } = useColorMode();
@@ -974,7 +980,7 @@ export const EnhancedChatInterface: React.FC<EnhancedChatInterfaceProps> = ({ ch
   
   // Check if P2P is active
   const isP2PActive = (): boolean => {
-    return (connectionStatus as string) === 'p2p-connected';
+    return connectionStatus === 'p2p-connected';
   };
   
   return (
