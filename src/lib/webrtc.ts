@@ -1041,7 +1041,7 @@ private async handleOfferSignal(signal: WebRTCSignal, sender: string): Promise<v
         console.debug('[WebRTC] Encrypting P2P message...');
         const messageString = JSON.stringify(message);
         
-        // Generate nonce or use the provided one
+        // Generate nonce for security
         const nonce = await generateNonce();
         
         // Encrypt the message
@@ -1059,16 +1059,23 @@ private async handleOfferSignal(signal: WebRTCSignal, sender: string): Promise<v
         payloadToSend = JSON.stringify(envelope);
         console.debug('[WebRTC] P2P message encrypted.');
       } else {
-        // Send unencrypted
+        // Send unencrypted warning
         if (this.config.enableEncryption) {
           console.warn('[WebRTC] Encryption enabled but no key available. Sending unencrypted message.');
+          // Add warning to message logs
+          this.emitError({
+            type: 'security',
+            message: 'Encryption enabled but no key available - message sent unencrypted',
+            recoverable: true,
+            details: 'Missing P2P encryption key'
+          });
         } else {
           console.debug('[WebRTC] Sending P2P message unencrypted (encryption not enabled).');
         }
         payloadToSend = JSON.stringify(message);
       }
 
-      // Check buffer threshold based on priority
+      // Check buffer threshold based on priority for backpressure management
       const threshold = this.config.bufferThreshold || 16 * 1024 * 1024;
       const priorityFactor = priority === 'high' ? 0.8 : (priority === 'low' ? 0.3 : 0.5);
       const effectiveThreshold = threshold * priorityFactor;
@@ -1118,7 +1125,6 @@ private async handleOfferSignal(signal: WebRTCSignal, sender: string): Promise<v
       return false;
     }
   }
-
   /**
    * Sets the internal connection state and emits an event with thread safety.
    * @param state The new connection state.
