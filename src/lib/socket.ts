@@ -29,6 +29,7 @@ import {
   validateMessageStructure // Generic validation fallback if needed
 } from '../utils/cryptoUtils'; // Adjust path if needed
 
+import { getStoredKeypair } from '../utils/keyStorage';
 
 import {
     // ... other imports
