@@ -13,9 +13,9 @@ import {
     AeroNyxSocket,
     ConnectionStatus as SocketConnectionStatus,
     SendResult,
-    SocketError,
-    MessageType as SocketMessageType
+    SocketError
 } from '../lib/socket';
+import { MessageType as SocketMessageType } from '../lib/socket/types';
 import { useToast } from '@chakra-ui/react';
 
 /**
