@@ -45,7 +45,7 @@ export const useChat = (chatId: string | null) => {
   const [chatInfo, setChatInfo] = useState<ChatInfo | null>(null);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [error, setError] = useState<SocketError | null>(null);
-
+const [currentSocketChatId, setCurrentSocketChatId] = useState<string | null>(null);
   // Refs
   const socketRef = useRef<AeroNyxSocket | null>(null);
   
@@ -109,14 +109,15 @@ export const useChat = (chatId: string | null) => {
     console.log(`[useChat] Effect triggered for chatId: ${chatId}`);
 
     // Initialize socket instance if it doesn't exist or chatId changed
-    if (!socketRef.current || socketRef.current.getChatId() !== chatId) {
+    if (!socketRef.current || currentSocketChatId !== chatId) {
         if (socketRef.current) {
             console.log('[useChat] Chat ID changed, disconnecting previous socket.');
             socketRef.current.disconnect();
         }
         console.log('[useChat] Creating new AeroNyxSocket instance.');
         socketRef.current = new AeroNyxSocket();
-        socketRef.current.setChatId(chatId);
+        // Store the chatId in our local state
+        setCurrentSocketChatId(chatId);
     }
 
     const socket = socketRef.current;
