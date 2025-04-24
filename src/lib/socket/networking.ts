@@ -11,6 +11,15 @@ export const WebSocketState = {
   CLOSED: 3
 };
 
+export function createPongMessage(timestamp: number, sequence: number): PongMessage {
+  return {
+    type: 'Pong',
+    echo_timestamp: timestamp,
+    server_timestamp: Date.now(),
+    sequence: sequence
+  };
+}
+
 /**
  * Standard WebSocket close codes
  */
