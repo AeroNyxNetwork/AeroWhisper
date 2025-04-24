@@ -28,7 +28,7 @@ export type WebRTCEvent =
  * WebRTC error types with structured information
  */
 export interface WebRTCError {
-  type: 'connection' | 'signaling' | 'dataChannel' | 'decryption' | 'parsing' | 'negotiation';
+  type: 'connection' | 'signaling' | 'dataChannel' | 'decryption' | 'parsing' | 'negotiation' | 'security';
   message: string;
   details?: any;
   recoverable: boolean;
