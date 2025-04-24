@@ -1,3 +1,4 @@
+// src/pages/_app.tsx
 import React, { useEffect } from 'react';
 import { AppProps } from 'next/app';
 import { ChakraProvider, ColorModeScript } from '@chakra-ui/react';
@@ -7,6 +8,7 @@ import theme from '../theme';
 import { AuthProvider } from '../contexts/AuthContext';
 import { NotificationProvider } from '../contexts/NotificationContext';
 import { ThemeProvider } from '../contexts/ThemeContext';
+import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import '../styles/globals.css';
 
 // Load Inter font
@@ -43,7 +45,9 @@ export default function App({ Component, pageProps }: AppProps) {
         <AuthProvider>
           <NotificationProvider>
             <ThemeProvider>
-              <Component {...pageProps} />
+              <ErrorBoundary>
+                <Component {...pageProps} />
+              </ErrorBoundary>
             </ThemeProvider>
           </NotificationProvider>
         </AuthProvider>
