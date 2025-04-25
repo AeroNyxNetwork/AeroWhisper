@@ -432,15 +432,13 @@ export async function createEncryptedDataPacket(
   const nonce = generateNonce();
   const { ciphertext } = await encryptWithAesGcm(messageString, sessionKey, nonce);
   
-  // Create the data packet with both field names for compatibility
-  // This addresses the field name inconsistency issue
+  // Create the data packet with the correct field name 
   return {
     type: 'Data',
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes256gcm', // Primary field name (server expects this)
-    encryption: 'aes256gcm' // Secondary field name (for backward compatibility)
+    encryption_algorithm: 'aes256gcm' // Use this field name as expected by server
   };
 }
 
