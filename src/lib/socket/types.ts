@@ -7,13 +7,24 @@ export interface BasePacket {
   type: string;
 }
 
+/**
+ * Socket error types used within AeroNyxSocket and emitted.
+ */
+export interface SocketError {
+  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message' | 'internal' | 'security';
+  message: string;
+  code: string; // Custom error code (e.g., 'AUTH_FAILED', 'CONN_TIMEOUT')
+  details?: string; // Optional additional details
+  retry: boolean; // Indicates if the operation might be retryable
+  originalError?: any; // The original error object, if available
+}
+
+
 // --- Core Packet Types (Matching Server Spec) ---
 
 /**
  * Initial authentication message sent by the client.
  * Matches server requirements document Section 3.1.
- * REMOVED incorrect fields like chat_id, client_version, protocol_version.
- * ADDED mandatory fields: features, encryption_algorithm, nonce (string).
  */
 export interface AuthMessage extends BasePacket {
   type: "Auth";
