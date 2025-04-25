@@ -7,33 +7,24 @@ export interface BasePacket {
   type: string;
 }
 
-
-export interface SocketError {
-  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message' | 'internal' | 'security';
-  message: string;
-  code: string;
-  details?: string;
-  retry: boolean;
-  originalError?: any;
-}
-
-export interface AuthMessage extends BasePacket {
-  type: "Auth";
-  public_key: string;            // Client's Ed25519 public key (Base58)
-  chat_id: string;               // ID of the chat room to join
-  client_version: string;        // Client version string
-  protocol_version: string;      // Protocol version for backward compatibility
-  version: string;               // Protocol version required by server
-  features: string[];            // Supported features
-  encryption_algorithm?: string; // Preferred encryption algorithm
-  nonce?: number[];              // Optional nonce for enhanced security
-}
-
+// --- Core Packet Types (Matching Server Spec) ---
 
 /**
  * Initial authentication message sent by the client.
  * Matches server requirements document Section 3.1.
+ * REMOVED incorrect fields like chat_id, client_version, protocol_version.
+ * ADDED mandatory fields: features, encryption_algorithm, nonce (string).
  */
+export interface AuthMessage extends BasePacket {
+  type: "Auth";
+  public_key: string;           // Client's Ed25519 public key (Base58)
+  version: string;              // Client version string (e.g., "1.0.0")
+  features: string[];           // Client capabilities (e.g., ["aes256gcm", "webrtc", "key-rotation"])
+  encryption_algorithm: "aes256gcm"; // MUST be this string for AES-GCM support
+  nonce: string;                // Unique STRING nonce for this request
+}
+
+
 /**
  * Challenge message sent by the server in response to Auth.
  * Matches server requirements document Section 3.2.
@@ -69,6 +60,7 @@ export interface IpAssignMessage extends BasePacket {
   encrypted_session_key: number[]; // AES-GCM encrypted 32-byte session key (as number[])
   key_nonce: number[];          // 12-byte nonce used for encrypting session key (as number[])
   encryption_algorithm: "aes256gcm"; // Confirms algorithm used for encrypted_session_key
+  // Removed lease_duration based on latest socket.ts usage, add back if needed by server
 }
 
 /**
@@ -81,6 +73,7 @@ export interface DataPacket extends BasePacket {
   nonce: number[];              // Unique 12-byte nonce for this specific packet (as number[])
   counter: number;              // Monotonically increasing counter for replay protection
   encryption_algorithm: "aes256gcm"; // MUST be included
+  // Removed padding field based on latest socket.ts usage, add back if needed by server
 }
 
 /**
@@ -124,6 +117,8 @@ export interface DisconnectMessage extends BasePacket {
   message: string;              // Optional human-readable reason
 }
 
+// --- Application-Level Types (Used within DataPacket) ---
+
 /**
  * Chat message type for application layer communication
  */
@@ -133,8 +128,8 @@ export interface MessageType {
   senderId: string;             // ID of the message sender
   senderName: string;           // Display name of the sender
   timestamp: string;            // ISO 8601 timestamp
-  isEncrypted?: boolean;        // Whether the content is encrypted
-  status?: 'sending' | 'sent' | 'delivered' | 'failed' | 'received'; // Message delivery status
+  isEncrypted?: boolean;        // Whether the content is encrypted (often true inside DataPacket)
+  status?: 'sending' | 'sent' | 'delivered' | 'failed' | 'received'; // Client-side delivery status
 }
 
 /**
@@ -164,7 +159,7 @@ export interface ChatInfo {
   metadata?: Record<string, any>; // Additional chat properties
 }
 
-// --- Application-Level Payloads ---
+// --- Application-Level Payloads (Used within DataPacket) ---
 
 /**
  * Structure for chat message payload
@@ -176,8 +171,7 @@ export interface MessagePayload extends BasePacket {
   senderId: string;
   senderName: string;
   timestamp: string;
-  isEncrypted?: boolean;
-  status?: 'sending' | 'sent' | 'delivered' | 'failed' | 'received';
+  // isEncrypted, status are typically handled client-side, not part of the core payload sent/received
 }
 
 /**
@@ -201,124 +195,203 @@ export interface ParticipantsPayload extends BasePacket {
  */
 export interface WebRTCSignalPayload extends BasePacket {
   type: 'webrtc-signal';
-  peerId: string;                // Target peer ID for the signal
+  peerId: string;               // Target peer ID for the signal
   signalType: 'offer' | 'answer' | 'candidate'; // Signal type
-  signalData: any;               // SDP or ICE candidate data
-  timestamp: number;             // Message timestamp
+  signalData: any;              // SDP or ICE candidate data
+  timestamp: number;            // Message timestamp
 }
 
 /**
- * Structure for Key Rotation Request
+ * Structure for Key Rotation Request (Client -> Server)
  */
 export interface KeyRotationRequestPayload extends BasePacket {
   type: 'request-key-rotation';
-  sessionId: string;             // Current session ID
-  timestamp: number;             // Request timestamp
+  sessionId?: string;           // Current session ID (optional, server might know)
+  timestamp: number;            // Request timestamp
+  // Add client's ephemeral public key if needed by protocol
 }
 
 /**
- * Structure for Key Rotation Response
+ * Structure for Key Rotation Response (Server -> Client)
  */
 export interface KeyRotationResponsePayload extends BasePacket {
-  type: 'key-rotation-response';
-  rotation_id: string;           // ID from the request
-  encrypted_key?: number[];      // New encrypted session key (if applicable)
-  key_nonce?: number[];          // Nonce for encrypted key
+  type: 'key-rotation-response'; // Server responds with this type
+  rotation_id?: string;         // ID to correlate request/response (optional)
+  encrypted_key?: number[];     // New encrypted session key (if applicable)
+  key_nonce?: number[];         // Nonce for encrypted key
   status: 'success' | 'failure';
-  message?: string;              // Optional status message
+  message?: string;             // Optional status message
 }
 
-// --- Type Guards ---
+/**
+ * Structure for Key Rotation Request initiated by Server
+ */
+export interface KeyRotationRequest extends BasePacket {
+    type: 'KeyRotationRequest'; // Server initiates with this type
+    rotation_id: string;        // ID for this rotation attempt
+    // Add other necessary fields from server
+}
 
 /**
- * Type guard for MessageType objects
+ * Structure for Client's Response to Server's Key Rotation Request
  */
+export interface KeyRotationResponse extends BasePacket {
+    type: 'KeyRotationResponse'; // Client responds with this type
+    rotation_id: string;         // ID from the request
+    nonce: number[];             // Client generated nonce for this response
+    // Add other necessary fields based on protocol
+    timestamp: number;
+}
+
+
+// --- Type Guards (Moved here for consistency) ---
+
+/** Checks if a value is a non-null object */
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+/** Checks if a value is a string */
+function isString(value: unknown, allowEmpty: boolean = false): value is string {
+    return typeof value === 'string' && (allowEmpty || value.length > 0);
+}
+/** Checks if a value is a number */
+function isNumber(value: unknown): value is number {
+    return typeof value === 'number' && !isNaN(value);
+}
+/** Checks if a value is a boolean */
+function isBoolean(value: unknown): value is boolean {
+    return typeof value === 'boolean';
+}
+
+/** Type guard for MessagePayload objects */
 export function isMessageType(payload: any): payload is MessagePayload {
   return (
-    payload &&
+    isObject(payload) &&
     payload.type === 'message' &&
-    typeof payload.id === 'string' &&
-    typeof payload.content === 'string' &&
-    typeof payload.senderId === 'string' &&
-    typeof payload.timestamp === 'string'
+    isString(payload.id) &&
+    isString(payload.content, true) && // Allow empty content
+    isString(payload.senderId) &&
+    isString(payload.senderName, true) && // Allow potentially empty senderName
+    isString(payload.timestamp)
   );
 }
 
-/**
- * Type guard for ChatInfoPayload objects
- */
+/** Type guard for ChatInfoPayload objects */
 export function isChatInfoPayload(payload: any): payload is ChatInfoPayload {
+  if (!isObject(payload) || payload.type !== 'chatInfo' || !isObject(payload.data)) {
+      return false;
+  }
+  const data = payload.data;
   return (
-    payload &&
-    payload.type === 'chatInfo' &&
-    payload.data &&
-    typeof payload.data.id === 'string'
+    isString(data.id) &&
+    isString(data.name, true) &&
+    isString(data.createdBy) &&
+    isString(data.createdAt) &&
+    isNumber(data.participantCount) &&
+    isBoolean(data.useP2P) &&
+    isBoolean(data.isEncrypted)
   );
 }
 
-/**
- * Type guard for ParticipantsPayload objects
- */
+/** Type guard for individual Participant objects */
+function isParticipant(participant: unknown): participant is Participant {
+    if (!isObject(participant)) return false;
+    return (
+        isString(participant.id) &&
+        isString(participant.name) &&
+        isString(participant.publicKey) &&
+        isString(participant.status) &&
+        ['online', 'offline', 'away'].includes(participant.status)
+    );
+}
+
+/** Type guard for ParticipantsPayload objects */
 export function isParticipantsPayload(payload: any): payload is ParticipantsPayload {
-  return (
-    payload &&
-    payload.type === 'participants' &&
-    Array.isArray(payload.data)
-  );
+  if (!isObject(payload) || payload.type !== 'participants' || !Array.isArray(payload.data)) {
+      return false;
+  }
+  // Optional: Validate first element for basic structure check
+  // if (payload.data.length > 0 && !isParticipant(payload.data[0])) {
+  //     console.warn("First participant in payload data has invalid structure");
+  //     return false;
+  // }
+  return true;
 }
 
-/**
- * Type guard for WebRTCSignalPayload objects
- */
+/** Type guard for WebRTCSignalPayload objects */
 export function isWebRTCSignalPayload(payload: any): payload is WebRTCSignalPayload {
+  if (!isObject(payload) || payload.type !== 'webrtc-signal') return false;
   return (
-    payload &&
-    payload.type === 'webrtc-signal' &&
-    typeof payload.peerId === 'string' &&
+    isString(payload.peerId) &&
+    isString(payload.signalType) &&
     ['offer', 'answer', 'candidate'].includes(payload.signalType) &&
-    payload.signalData !== undefined
+    payload.signalData !== undefined && // Existence check
+    isNumber(payload.timestamp)
+    // Deeper validation of signalData could be added here based on signalType
   );
 }
 
-/**
- * Type guard for KeyRotationRequestPayload objects
- */
+/** Type guard for KeyRotationRequestPayload objects (Client -> Server) */
 export function isKeyRotationRequestPayload(payload: any): payload is KeyRotationRequestPayload {
+  if (!isObject(payload) || payload.type !== 'request-key-rotation') return false;
   return (
-    payload &&
-    payload.type === 'request-key-rotation' &&
-    typeof payload.sessionId === 'string' &&
-    typeof payload.timestamp === 'number'
+    (payload.sessionId === undefined || isString(payload.sessionId)) && // Optional sessionId
+    isNumber(payload.timestamp)
+    // Add checks for other mandatory fields if any
   );
 }
 
-/**
- * Type guard for KeyRotationResponsePayload objects
- */
+/** Type guard for KeyRotationResponsePayload objects (Server -> Client) */
 export function isKeyRotationResponsePayload(payload: any): payload is KeyRotationResponsePayload {
-  return (
-    payload &&
-    payload.type === 'key-rotation-response' &&
-    typeof payload.rotation_id === 'string' &&
-    typeof payload.status === 'string'
-  );
+   if (!isObject(payload) || payload.type !== 'key-rotation-response') return false;
+   return (
+    (payload.rotation_id === undefined || isString(payload.rotation_id)) && // Optional rotation_id?
+    isString(payload.status) &&
+    ['success', 'failure'].includes(payload.status) &&
+    (payload.encrypted_key === undefined || Array.isArray(payload.encrypted_key)) &&
+    (payload.key_nonce === undefined || Array.isArray(payload.key_nonce)) &&
+    (payload.message === undefined || isString(payload.message, true))
+   );
 }
 
-// Union type for all possible incoming WebSocket message types (after JSON parsing)
+/** Type guard for KeyRotationRequest (Server -> Client) */
+export function isServerKeyRotationRequest(payload: any): payload is KeyRotationRequest {
+    if (!isObject(payload) || payload.type !== 'KeyRotationRequest') return false;
+    return isString(payload.rotation_id); // rotation_id is mandatory from server
+}
+
+/** Type guard for KeyRotationResponse (Client -> Server) */
+export function isClientKeyRotationResponse(payload: any): payload is KeyRotationResponse {
+     if (!isObject(payload) || payload.type !== 'KeyRotationResponse') return false;
+     return (
+        isString(payload.rotation_id) &&
+        Array.isArray(payload.nonce) && // Check if nonce is array
+        isNumber(payload.timestamp)
+        // Add checks for other mandatory fields
+     );
+}
+
+
+// --- Union Types ---
+
+/** Union type for all possible incoming WebSocket message types (after JSON parsing) */
 export type ReceivedPacket =
   | ChallengeMessage
   | IpAssignMessage
-  | DataPacket
+  | DataPacket // Contains encrypted application data
   | PingMessage
   | PongMessage
   | ErrorMessage
-  | DisconnectMessage;
+  | DisconnectMessage
+  | KeyRotationRequest; // If server can initiate rotation
 
-// Union type for known application-level payload types (after decryption)
+/** Union type for known application-level payload types (after decryption from DataPacket) */
 export type DecryptedPayload =
   | MessagePayload
   | ChatInfoPayload
   | ParticipantsPayload
   | WebRTCSignalPayload
-  | KeyRotationRequestPayload
-  | KeyRotationResponsePayload;
+  | KeyRotationRequestPayload // Client initiates rotation request
+  | KeyRotationResponsePayload // Server responds to client's request
+  | { type: string; [key: string]: any }; // Fallback for other/unknown types
+
