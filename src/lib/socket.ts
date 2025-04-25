@@ -36,8 +36,8 @@ import {
   WebRTCSignalPayload,
   KeyRotationRequestPayload,
   KeyRotationResponsePayload,
-  // Socket type definitions
-  SocketError,
+  // Socket type definitions - rename import to avoid conflict
+  SocketError as ImportedSocketError,
   BasePacket,
   DataPacket,
   MessagePayload,
@@ -67,8 +67,8 @@ export enum SendResult {
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'p2p-connecting';
 
-// Re-export SocketError for use in other modules
-export { SocketError };
+// Re-export with the correct name
+export type SocketError = ImportedSocketError;
 
 
 /**
