@@ -888,7 +888,8 @@ export class AeroNyxSocket extends EventEmitter {
         public_key: this.publicKey,
         client_version: '1.0.0',    // Client version
         protocol_version: '1.0',    // Protocol compatibility version
-        version: '1.0'              // Add this required field
+        version: '1.0',             // Added as required by type
+        features: []                // Add this required field
       };
   
       this.socket.send(JSON.stringify(authMessage));
