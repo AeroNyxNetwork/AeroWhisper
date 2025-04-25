@@ -612,7 +612,7 @@ export async function testEncryptionFormat(
     const { ciphertext } = await encryptWithAesGcm(messageString, testKey, nonce);
     
     // Create test packet with specified field name
-    const packet = {
+    const packet: EncryptionPacket = {
       type: 'Data',
       encrypted: Array.from(ciphertext),
       nonce: Array.from(nonce),
