@@ -1143,94 +1143,256 @@ export class AeroNyxSocket extends EventEmitter {
   private async handleIpAssign(message: IpAssignMessage): Promise<void> {
     console.log(`[Socket] Received IpAssign. Session ID: ${message.session_id}`);
     try {
-       // 1. Validate state and message
-      if (this.connectionState !== InternalConnectionState.AUTHENTICATING) throw new Error("Not in authenticating state.");
-      if (message.encryption_algorithm !== 'aes256gcm') throw new Error(`Unsupported encryption algorithm: ${message.encryption_algorithm}`);
-      if (!message.encrypted_session_key || !message.key_nonce) throw new Error('Missing encrypted_session_key or key_nonce');
-      if (!this.serverPublicKey) throw new Error('Server public key missing from previous step');
+      // 1. Validate state and message
+      if (this.connectionState !== InternalConnectionState.AUTHENTICATING) {
+        throw new Error("Not in authenticating state.");
+      }
+      
+      if (message.encryption_algorithm !== 'aes256gcm') {
+        throw new Error(`Unsupported encryption algorithm: ${message.encryption_algorithm}`);
+      }
+      
+      if (!message.encrypted_session_key || !message.key_nonce) {
+        throw new Error('Missing encrypted_session_key or key_nonce');
+      }
+      
+      if (!this.serverPublicKey) {
+        throw new Error('Server public key missing from previous step');
+      }
+      
       console.debug('[IpAssign] Prerequisites met.');
-
+      console.debug('[IpAssign] Server Public Key:', 
+        this.serverPublicKey ? 
+        `${this.serverPublicKey.substring(0, 8)}... (${this.serverPublicKey.length} chars)` : 
+        'null');
+  
       // 2. Get client secret key securely
       const keypair = await getStoredKeypair();
-      if (!keypair) throw new Error('Client keypair not found');
-      const clientEdSecretKeyBytes = typeof keypair.secretKey === 'string' 
-        ? bs58.decode(keypair.secretKey) 
-        : keypair.secretKey;
-      if (clientEdSecretKeyBytes.length !== 64) throw new Error('Invalid client secret key length');
-
+      if (!keypair) {
+        throw new Error('Client keypair not found');
+      }
+      
+      // Handle string or Uint8Array type correctly
+      let clientEdSecretKeyBytes: Uint8Array;
+      if (typeof keypair.secretKey === 'string') {
+        clientEdSecretKeyBytes = bs58.decode(keypair.secretKey);
+      } else {
+        clientEdSecretKeyBytes = keypair.secretKey;
+      }
+        
+      if (clientEdSecretKeyBytes.length !== 64) {
+        throw new Error(`Invalid client secret key length: ${clientEdSecretKeyBytes.length}, expected 64 bytes`);
+      }
+      
+      console.debug('[IpAssign] Client keypair loaded successfully.');
+  
       // 3. Decode server public key
-      const serverEdPublicKeyBytes = bs58.decode(this.serverPublicKey);
-      if (serverEdPublicKeyBytes.length !== 32) throw new Error('Invalid server public key length');
-
+      let serverEdPublicKeyBytes: Uint8Array;
+      try {
+        serverEdPublicKeyBytes = bs58.decode(this.serverPublicKey);
+      } catch (decodeError) {
+        throw new Error(`Failed to decode server public key: ${decodeError instanceof Error ? decodeError.message : String(decodeError)}`);
+      }
+      
+      if (serverEdPublicKeyBytes.length !== 32) {
+        throw new Error(`Invalid server public key length: ${serverEdPublicKeyBytes.length}, expected 32 bytes`);
+      }
+      
+      // Use safe hex conversion without relying on Buffer
+      const serverKeyPrefix = Array.from(serverEdPublicKeyBytes.slice(0, 4))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      console.debug(`[IpAssign] Server public key decoded successfully: ${serverKeyPrefix}...`);
+  
       // 4. Convert keys (Ensure utils match server exactly)
-       console.debug('[IpAssign] Converting keys for ECDH...');
-       const clientCurveSecretKey = convertEd25519SecretKeyToCurve25519(clientEdSecretKeyBytes);
-       const serverCurvePublicKey = convertEd25519PublicKeyToCurve25519(serverEdPublicKeyBytes);
-       if (!clientCurveSecretKey || !serverCurvePublicKey) throw new Error('Key conversion failed');
-       console.debug('[IpAssign] Keys converted.');
-
+      console.debug('[IpAssign] Converting keys for ECDH...');
+      const clientCurveSecretKey = convertEd25519SecretKeyToCurve25519(clientEdSecretKeyBytes);
+      const serverCurvePublicKey = convertEd25519PublicKeyToCurve25519(serverEdPublicKeyBytes);
+      
+      if (!clientCurveSecretKey || !serverCurvePublicKey) {
+        throw new Error('Key conversion failed');
+      }
+      
+      // Safe hex conversion without Buffer
+      const clientKeyPrefix = Array.from(clientCurveSecretKey.slice(0, 4))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      const serverCurveKeyPrefix = Array.from(serverCurvePublicKey.slice(0, 4))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+        
+      console.debug(`[IpAssign] Keys converted successfully: Client curve key prefix: ${clientKeyPrefix}..., Server curve key prefix: ${serverCurveKeyPrefix}...`);
+  
       // 5. Derive RAW shared secret (ECDH)
       console.debug('[IpAssign] Deriving raw ECDH shared secret...');
       const rawSharedSecret = deriveECDHRawSharedSecret(clientCurveSecretKey, serverCurvePublicKey);
-      if (!rawSharedSecret) throw new Error('ECDH failed');
-       console.debug('[IpAssign] Raw shared secret derived.');
-
+      
+      if (!rawSharedSecret) {
+        throw new Error('ECDH derivation failed');
+      }
+      
+      if (rawSharedSecret.length !== 32) {
+        throw new Error(`ECDH returned invalid length: ${rawSharedSecret.length}, expected 32 bytes`);
+      }
+      
+      // Safe hex conversion
+      const rawSecretPrefix = Array.from(rawSharedSecret.slice(0, 4))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      console.debug(`[IpAssign] Raw shared secret derived successfully: Length: ${rawSharedSecret.length} bytes, First 4 bytes: ${rawSecretPrefix}...`);
+  
       // 6. Derive FINAL shared secret (HKDF - used for session key decryption ONLY)
       console.debug('[IpAssign] Deriving final shared secret via HKDF...');
       const finalSharedSecret = await deriveKeyWithHKDF(rawSharedSecret);
-       console.debug('[IpAssign] Final shared secret derived.');
-
+      
+      if (!finalSharedSecret) {
+        throw new Error('HKDF derivation failed');
+      }
+      
+      if (finalSharedSecret.length !== 32) {
+        throw new Error(`HKDF returned invalid length: ${finalSharedSecret.length}, expected 32 bytes`);
+      }
+      
+      // Safe hex conversion
+      const finalSecretPrefix = Array.from(finalSharedSecret.slice(0, 4))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      console.debug(`[IpAssign] Final shared secret derived successfully: Length: ${finalSharedSecret.length} bytes, First 4 bytes: ${finalSecretPrefix}...`);
+  
       // 7. Prepare received data for decryption
       const encryptedSessionKeyBytes = numberArrayToUint8Array(message.encrypted_session_key);
       const keyNonceBytes = numberArrayToUint8Array(message.key_nonce);
-      if (keyNonceBytes.length !== 12) throw new Error(`Invalid nonce length: ${keyNonceBytes.length}`);
-       console.debug('[IpAssign] Preparing to decrypt session key...');
-
-      // 8. Decrypt the ACTUAL session key
-      const decryptedSessionKey = await decryptWithAesGcm(encryptedSessionKeyBytes,keyNonceBytes,finalSharedSecret,'binary') as Uint8Array;
       
-
+      // The encrypted key length can vary but should be at least 32 bytes (key) + some tag size
+      if (encryptedSessionKeyBytes.length < 32) {
+        throw new Error(`Invalid encrypted session key length: ${encryptedSessionKeyBytes.length}, expected at least 32 bytes`);
+      }
+      
+      if (keyNonceBytes.length !== 12) {
+        throw new Error(`Invalid nonce length: ${keyNonceBytes.length}, expected 12 bytes`);
+      }
+      
+      // Safe hex conversion for nonce
+      const nonceHex = Array.from(keyNonceBytes)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      console.debug(`[IpAssign] Preparing to decrypt session key: Encrypted key length: ${encryptedSessionKeyBytes.length} bytes, Nonce: ${nonceHex}`);
+  
+      // 8. Decrypt the ACTUAL session key
+      console.debug('[IpAssign] Beginning decryption of session key...');
+      let decryptedSessionKey: Uint8Array | null = null;
+      
+      try {
+        const result = await decryptWithAesGcm(
+          encryptedSessionKeyBytes,
+          keyNonceBytes,
+          finalSharedSecret,
+          'binary'
+        );
+        
+        // Ensure we have a Uint8Array result
+        if (!(result instanceof Uint8Array)) {
+          throw new Error('Decryption returned non-binary result');
+        }
+        
+        decryptedSessionKey = result;
+        console.debug('[IpAssign] Session key decrypted successfully.');
+      } catch (decryptError) {
+        console.error('[IpAssign] Session key decryption failed:', decryptError);
+        throw new Error(`Session key decryption failed: ${decryptError instanceof Error ? decryptError.message : String(decryptError)}`);
+      }
+  
       // 9. Validate and Store the DECRYPTED Session Key
-      if (!decryptedSessionKey || decryptedSessionKey.length !== 32) throw new Error('Decrypted session key invalid');
+      if (!decryptedSessionKey) {
+        throw new Error('Decryption returned null');
+      }
+      
+      if (decryptedSessionKey.length !== 32) {
+        throw new Error(`Decrypted session key has invalid length: ${decryptedSessionKey.length}, expected 32 bytes`);
+      }
+      
       this.sessionKey = decryptedSessionKey;
       this.sessionId = message.session_id;
       this.messageCounter = 0; // Reset counter for new session
       this.processedMessageIds.clear(); // Clear replay cache for new session
       this.lastKeyRotation = Date.now(); // Mark initial key time
+      
       console.log('[Socket] Session key decrypted and stored successfully.');
-      console.debug(' - Stored Session Key Prefix:', Buffer.from(this.sessionKey.slice(0,8)).toString('hex'));
-
+      
+      // Safe hex conversion for session key prefix
+      const sessionKeyPrefix = Array.from(this.sessionKey.slice(0, 4))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      console.debug(`[IpAssign] Session key details: Length: ${this.sessionKey.length} bytes, First 4 bytes: ${sessionKeyPrefix}...`);
+  
       // 10. Finalize Connection
       await this.safeChangeState(InternalConnectionState.CONNECTED);
       this.emit('connectionStatus', 'connected');
       this.startKeepAliveServices(); // Start ping, heartbeat, etc.
       this.startKeyRotationTimer();  // Start periodic key rotation check
-      this.processPendingMessages(); // Send any queued messages (don't await here)
+      this.processPendingMessages(); // Send any queued messages
       this.emit('connected', { ip: message.ip_address, sessionId: message.session_id });
       this.resolveConnection(); // Resolve the main connect() promise
-
+  
       // 11. Compatibility Test (Run async, don't block connection)
-       testEncryptionCompat(this.sessionKey).then(compatTestPassed => {
-            if (!compatTestPassed) {
-                console.error("[Socket] CRITICAL: Local encryption compatibility test FAILED!");
-                this.emit('error', this.createSocketError('auth','Encryption test failed','ENCRYPTION_TEST_FAILED',undefined,false));
-                this.disconnect().catch(e => console.error("Error during disconnect:", e)); // Disconnect if test fails
-            } else {
-                console.log("[Socket] Local encryption compatibility test PASSED.");
-            }
-       }).catch(testError => {
-            console.error("[Socket] Encryption compatibility test threw an error:", testError);
-            this.emit('error', this.createSocketError('auth','Encryption test error','ENCRYPTION_TEST_ERROR', testError instanceof Error ? testError.message : String(testError), false));
-            this.disconnect().catch(e => console.error("Error during disconnect:", e));
-       });
-
-
+      console.debug('[IpAssign] Starting encryption compatibility test...');
+      testEncryptionCompat(this.sessionKey)
+        .then(compatTestPassed => {
+          if (!compatTestPassed) {
+            console.error("[Socket] CRITICAL: Local encryption compatibility test FAILED!");
+            this.emit('error', this.createSocketError(
+              'auth',
+              'Encryption test failed',
+              'ENCRYPTION_TEST_FAILED',
+              undefined,
+              false
+            ));
+            this.disconnect().catch(e => console.error("Error during disconnect after encryption test failure:", e));
+          } else {
+            console.log("[Socket] Local encryption compatibility test PASSED.");
+          }
+        })
+        .catch(testError => {
+          console.error("[Socket] Encryption compatibility test threw an error:", testError);
+          this.emit('error', this.createSocketError(
+            'auth',
+            'Encryption test error',
+            'ENCRYPTION_TEST_ERROR', 
+            testError instanceof Error ? testError.message : String(testError), 
+            false
+          ));
+          this.disconnect().catch(e => console.error("Error during disconnect after encryption test error:", e));
+        });
+  
     } catch (error) {
+      // Thorough error reporting
       console.error('[Socket] Error handling IpAssign:', error);
-      this.emit('error', this.createSocketError('auth','Failed to establish secure session','IPASSIGN_PROCESS_ERROR',error instanceof Error ? error.message : String(error),true));
-      this.sessionKey = null; // Clear potentially bad key
+      if (error instanceof Error) {
+        console.error(`  Error type: ${error.name}`);
+        console.error(`  Message: ${error.message}`);
+        console.error(`  Stack: ${error.stack}`);
+      }
+      
+      this.emit('error', this.createSocketError(
+        'auth',
+        'Failed to establish secure session',
+        'IPASSIGN_PROCESS_ERROR',
+        error instanceof Error ? error.message : String(error),
+        true
+      ));
+      
+      // Clear potentially bad key
+      if (this.sessionKey) {
+        this.secureWipe(this.sessionKey);
+        this.sessionKey = null;
+      }
+      
       this.rejectConnection(error); // Reject connect promise
-      await this.disconnect(); // Ensure cleanup
+      
+      // Ensure disconnect is called outside the catch block
+      await this.disconnect().catch(disconnectError => {
+        console.error("[Socket] Error during disconnect after IpAssign failure:", disconnectError);
+      });
     }
   }
 
