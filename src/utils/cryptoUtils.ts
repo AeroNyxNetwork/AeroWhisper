@@ -370,14 +370,14 @@ export function deriveECDHRawSharedSecret(
  * Derive a key with HKDF (HMAC-based Key Derivation Function)
  * @param inputKeyMaterial The input key material (e.g., ECDH shared secret)
  * @param salt Optional salt (default: empty array)
- * @param info Optional context and application specific information (default: 'AERONYX-SESSION-KEY')
+ * @param info Optional context and application specific information (default: 'AERONYX-VPN-KEY')
  * @param length Output key length in bytes (default: 32)
  * @returns Derived key as Uint8Array
  */
 export async function deriveKeyWithHKDF(
   inputKeyMaterial: Uint8Array,
   salt: Uint8Array = new Uint8Array(0),
-  info: Uint8Array = new TextEncoder().encode('AERONYX-SESSION-KEY'),
+  info: Uint8Array = new TextEncoder().encode('AERONYX-VPN-KEY'),
   length: number = 32
 ): Promise<Uint8Array> {
   if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
