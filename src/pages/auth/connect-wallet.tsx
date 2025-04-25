@@ -63,9 +63,9 @@ const ConnectWalletPage = () => {
             Choose how you want to use AeroNyx Private Messaging
           </Text>
           
-          <ConnectionButton 
-            onClick={handleConnect} 
-            isLoading={isConnecting}
+          <ConnectionButton
+            onClick={handleConnect}
+            isLoading={isLoading}  // Changed from isConnecting to isLoading
             mb={4}
             w="100%"
           >
