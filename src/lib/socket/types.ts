@@ -7,6 +7,16 @@ export interface BasePacket {
   type: string;
 }
 
+
+export interface SocketError {
+  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message' | 'internal' | 'security';
+  message: string;
+  code: string;
+  details?: string;
+  retry: boolean;
+  originalError?: any;
+}
+
 export interface AuthMessage extends BasePacket {
   type: "Auth";
   public_key: string;           // Client's Ed25519 public key (Base58)
