@@ -868,57 +868,49 @@ export class AeroNyxSocket extends EventEmitter {
      * Sends the initial Auth message to start authentication flow
      */
     private sendAuthMessage(): void {
-    if (!this.socket || !isSocketOpen(this.socket)) {
-      console.error('[Socket] Cannot send Auth: Socket not open');
-      this.rejectConnection(new Error('Socket closed before Auth could be sent'));
-      return;
-    }
-  
-    try {
-      if (!this.chatId || !this.publicKey) {
-        throw new Error('Missing chatId or publicKey for Auth');
+      if (!this.socket || !isSocketOpen(this.socket)) {
+        console.error('[Socket] Cannot send Auth: Socket not open');
+        this.rejectConnection(new Error('Socket closed before Auth could be sent'));
+        return;
       }
-  
-      // Generate a random nonce as number array (12 bytes)
-      const nonce = new Uint8Array(12);
-      if (this.hasWebCrypto) {
-        window.crypto.getRandomValues(nonce);
-      } else {
-        // Fallback for environments without WebCrypto
-        for (let i = 0; i < 12; i++) {
-          nonce[i] = Math.floor(Math.random() * 256);
+    
+      try {
+        if (!this.chatId || !this.publicKey) {
+          throw new Error('Missing chatId or publicKey for Auth');
         }
+    
+        // Generate a string nonce using timestamp and random value
+        const nonceString = `${Date.now()}-${Math.random().toString(16).substring(2)}`;
+    
+        // Create AuthMessage with the CORRECT fields according to server expectations
+        const authMessage: AuthMessage = {
+          type: 'Auth',
+          public_key: this.publicKey,
+          version: '1.0.0',    // Client version string
+          features: ['aes256gcm', 'webrtc', 'key-rotation'], // Client capabilities
+          encryption_algorithm: 'aes256gcm',
+          nonce: nonceString   // String nonce as now required by the interface
+        };
+    
+        // Log the message for debugging
+        console.log('[Socket] Sending Auth message:', JSON.stringify(authMessage));
+    
+        this.socket.send(JSON.stringify(authMessage));
+        console.log('[Socket] Auth message sent successfully');
+      } catch (error) {
+        console.error('[Socket] Error sending Auth message:', error);
+        this.emit('error', this.createSocketError(
+          'auth',
+          'Failed to send Auth message',
+          'AUTH_SEND_ERROR',
+          error instanceof Error ? error.message : String(error),
+          true
+        ));
+        this.rejectConnection(error);
+        // Ensure we disconnect properly after auth failure
+        this.disconnect().catch(e => console.error("Error during disconnect after auth failure:", e));
       }
-  
-      // Create AuthMessage with the CORRECT fields according to server expectations
-      const authMessage: AuthMessage = {
-        type: 'Auth',
-        public_key: this.publicKey,
-        version: '1.0.0',    // Client version
-        features: ['aes256gcm', 'webrtc', 'key-rotation'], // Specific capabilities
-        encryption_algorithm: 'aes256gcm',
-        nonce: Array.from(nonce)   // Convert Uint8Array to number[] as expected by the interface
-      };
-  
-      // Log the message for debugging
-      console.log('[Socket] Sending Auth message:', JSON.stringify(authMessage));
-  
-      this.socket.send(JSON.stringify(authMessage));
-      console.log('[Socket] Auth message sent successfully');
-    } catch (error) {
-      console.error('[Socket] Error sending Auth message:', error);
-      this.emit('error', this.createSocketError(
-        'auth',
-        'Failed to send Auth message',
-        'AUTH_SEND_ERROR',
-        error instanceof Error ? error.message : String(error),
-        true
-      ));
-      this.rejectConnection(error);
-      // Ensure we disconnect properly after auth failure
-      this.disconnect().catch(e => console.error("Error during disconnect after auth failure:", e));
     }
-  }
   /**
    * Handles WebSocket message event. Parses, processes, and updates activity time.
    */
