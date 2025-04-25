@@ -858,16 +858,16 @@ export class AeroNyxSocket extends EventEmitter {
    * Handles WebSocket open event. Changes state and sends Auth message.
    */
   private handleSocketOpen(): void {
-    this.clearConnectionTimeout(); // Connection successful, clear timeout
-    console.log('[Socket] WebSocket connection opened. Sending Auth...');
-    this.safeChangeState(InternalConnectionState.AUTHENTICATING); // Move to authenticating state
-    this.sendAuthMessage();
-  }
-
-  /**
-   * Sends the initial Auth message to start authentication flow
-   */
-  private sendAuthMessage(): void {
+      this.clearConnectionTimeout(); // Connection successful, clear timeout
+      console.log('[Socket] WebSocket connection opened. Sending Auth...');
+      this.safeChangeState(InternalConnectionState.AUTHENTICATING); // Move to authenticating state
+      this.sendAuthMessage();
+    }
+  
+    /**
+     * Sends the initial Auth message to start authentication flow
+     */
+    private sendAuthMessage(): void {
     if (!this.socket || !isSocketOpen(this.socket)) {
       console.error('[Socket] Cannot send Auth: Socket not open');
       this.rejectConnection(new Error('Socket closed before Auth could be sent'));
@@ -879,8 +879,16 @@ export class AeroNyxSocket extends EventEmitter {
         throw new Error('Missing chatId or publicKey for Auth');
       }
   
-      // Generate a string nonce using timestamp and random value
-      const nonceString = `${Date.now()}-${Math.random().toString(16).substring(2)}`;
+      // Generate a random nonce as number array (12 bytes)
+      const nonce = new Uint8Array(12);
+      if (this.hasWebCrypto) {
+        window.crypto.getRandomValues(nonce);
+      } else {
+        // Fallback for environments without WebCrypto
+        for (let i = 0; i < 12; i++) {
+          nonce[i] = Math.floor(Math.random() * 256);
+        }
+      }
   
       // Create AuthMessage with the CORRECT fields according to server expectations
       const authMessage: AuthMessage = {
@@ -889,7 +897,7 @@ export class AeroNyxSocket extends EventEmitter {
         version: '1.0.0',    // Client version
         features: ['aes256gcm', 'webrtc', 'key-rotation'], // Specific capabilities
         encryption_algorithm: 'aes256gcm',
-        nonce: nonceString   // String nonce as expected by server
+        nonce: Array.from(nonce)   // Convert Uint8Array to number[] as expected by the interface
       };
   
       // Log the message for debugging
@@ -910,7 +918,7 @@ export class AeroNyxSocket extends EventEmitter {
       // Ensure we disconnect properly after auth failure
       this.disconnect().catch(e => console.error("Error during disconnect after auth failure:", e));
     }
-}
+  }
   /**
    * Handles WebSocket message event. Parses, processes, and updates activity time.
    */
