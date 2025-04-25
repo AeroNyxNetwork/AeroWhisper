@@ -8,9 +8,10 @@ export interface BasePacket {
 }
 
 export interface DataEnvelope {
-  payloadType: 'json';  // Only 'json' is needed for chat
+  payload_type: 'json';  // Changed from payloadType to payload_type
   payload: any;         // The actual message payload
 }
+
 
 /**
  * Socket error types used within AeroNyxSocket and emitted.
@@ -210,11 +211,21 @@ export interface ParticipantsPayload extends BasePacket {
  * Structure for WebRTC signaling payloads
  */
 export interface WebRTCSignalPayload extends BasePacket {
-  type: 'webrtc-signal';
-  peerId: string;               // Target peer ID for the signal
+  type: 'webrtc_signal';     // Changed from webrtc-signal to webrtc_signal
+  peerId: string;            // Target peer ID for the signal
   signalType: 'offer' | 'answer' | 'candidate'; // Signal type
-  signalData: any;              // SDP or ICE candidate data
-  timestamp: number;            // Message timestamp
+  signalData: any;           // SDP or ICE candidate data
+  timestamp: number;         // Message timestamp
+}
+
+/** Type guard for chat info response from server */
+export function isChatInfoResponse(payload: any): boolean {
+  return isObject(payload) && payload.type === 'chat_info_response' && isObject(payload.data);
+}
+
+/** Type guard for participants response from server */
+export function isParticipantsResponse(payload: any): boolean {
+  return isObject(payload) && payload.type === 'participants_response' && Array.isArray(payload.participants);
 }
 
 /**
