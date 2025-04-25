@@ -5,6 +5,16 @@ import * as bs58 from 'bs58';
 import * as ed2curve from 'ed2curve';
 import { Buffer } from 'buffer';
 
+interface EncryptionPacket {
+  type: string;
+  encrypted: number[];
+  nonce: number[];
+  counter: number;
+  encryption?: string;
+  encryption_algorithm?: string;
+  [key: string]: any; // Allow additional string-indexed properties
+}
+
 /**
  * Generate a cryptographically secure random nonce
  * @param length Length of nonce in bytes
@@ -301,24 +311,24 @@ export function convertEd25519PublicKeyToCurve25519(edPublicKey: Uint8Array): Ui
  * @param edSecretKey64 Ed25519 secret key (64 bytes)
  * @returns Curve25519 secret key (32 bytes)
  */
-export function convertEd25519SecretKeyToCurve25519(edSecretKey64: Uint8Array): Uint8Array {
+export function convertEd25519SecretKeyToCurve25519(edSecretKey64: Uint8Array): Uint8Array | null {
   if (edSecretKey64.length !== 64) {
-    throw new Error(`Invalid Ed25519 secret key length: ${edSecretKey64.length} (expected 64 bytes)`);
+    console.error(`[Crypto] Invalid Ed25519 secret key length: ${edSecretKey64.length} (expected 64 bytes)`);
+    return null;
   }
   
-  // Extract the seed (first 32 bytes) from the Ed25519 secret key
-  const seed = edSecretKey64.slice(0, 32);
-  
-  // Use tweetnacl to derive Curve25519 keys
-  const hash = nacl.hash(seed);
-  const curve25519SecretKey = hash.slice(0, 32);
-  
-  // Apply clamping as required for Curve25519
-  curve25519SecretKey[0] &= 248;
-  curve25519SecretKey[31] &= 127;
-  curve25519SecretKey[31] |= 64;
-  
-  return curve25519SecretKey;
+  try {
+    // Use ed2curve for key conversion
+    const curveKey = ed2curve.convertSecretKey(edSecretKey64);
+    if (!curveKey) {
+      console.error("[Crypto] Failed to convert Ed25519 secret key to Curve25519");
+      return null;
+    }
+    return curveKey;
+  } catch (error) {
+    console.error("[Crypto] Error converting Ed25519 secret key:", error);
+    return null;
+  }
 }
 
 /**
