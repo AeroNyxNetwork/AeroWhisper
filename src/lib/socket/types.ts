@@ -19,13 +19,17 @@ export interface SocketError {
 
 export interface AuthMessage extends BasePacket {
   type: "Auth";
-  public_key: string;           // Client's Ed25519 public key (Base58)
-  chat_id: string;              // ID of the chat room to join
-  client_version: string;       // Client version string
-  protocol_version: string;     // Protocol version for backward compatibility
-  version: string;              // Protocol version (required by server)
-  features: string[];           // Supported features (required by server)
+  public_key: string;            // Client's Ed25519 public key (Base58)
+  chat_id: string;               // ID of the chat room to join
+  client_version: string;        // Client version string
+  protocol_version: string;      // Protocol version for backward compatibility
+  version: string;               // Protocol version required by server
+  features: string[];            // Supported features
+  encryption_algorithm?: string; // Preferred encryption algorithm
+  nonce?: number[];              // Optional nonce for enhanced security
 }
+
+
 /**
  * Initial authentication message sent by the client.
  * Matches server requirements document Section 3.1.
