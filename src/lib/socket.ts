@@ -42,7 +42,7 @@ import {
   MessagePayload,
   ChatInfoPayload,
   ParticipantsPayload,
-
+  SocketError as ImportedSocketError,
   isMessageType,
   isChatInfoPayload,
   isParticipantsPayload,
@@ -50,9 +50,6 @@ import {
   isKeyRotationRequestPayload,
   isKeyRotationResponsePayload
 } from './socket/types';
-
-import { SocketError } from './socket/types';
-export { SocketError };
 
 // Import network and reconnection utilities
 import { ReconnectionConfig } from './socket/reconnection';
@@ -75,9 +72,9 @@ export enum SendResult {
 }
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'p2p-connecting';
-// Re-export with the correct name
-export type SocketError = ImportedSocketError;
 
+// Re-export the SocketError type
+export type SocketError = ImportedSocketError;
 
 /**
  * Testing interface for non-production environments
