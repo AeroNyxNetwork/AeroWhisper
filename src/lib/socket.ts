@@ -1,5 +1,4 @@
 // src/lib/socket.ts
-
 import { EventEmitter } from 'events';
 import * as bs58 from 'bs58';
 import { Buffer } from 'buffer'; // Ensure buffer polyfill is available
@@ -46,8 +45,6 @@ import {
   ParticipantsPayload
 } from './socket/types';
 
-
-
 // Import network and reconnection utilities
 import { ReconnectionConfig } from './socket/reconnection';
 import { 
@@ -69,6 +66,9 @@ export enum SendResult {
 }
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'p2p-connecting';
+
+// Re-export SocketError for use in other modules
+export { SocketError };
 
 
 /**
@@ -120,6 +120,15 @@ export enum MessagePriority {
   NORMAL = 2,     // Standard operations (e.g., requesting info)
   LOW = 3,        // Background updates
   BACKGROUND = 4  // Non-essential information
+}
+
+export interface SocketError {
+  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message' | 'internal' | 'security';
+  message: string;
+  code: string;
+  details?: string;
+  retry: boolean;
+  originalError?: any;
 }
 
 /**
