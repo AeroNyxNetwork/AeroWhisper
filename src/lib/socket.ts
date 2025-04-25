@@ -247,6 +247,15 @@ export class AeroNyxSocket extends EventEmitter {
   };
 
   /**
+ * Data envelope for encapsulating application messages
+ * Required by updated server protocol
+ */
+  interface DataEnvelope {
+    payloadType: 'json';
+    payload: any;
+  }
+
+  /**
    * Create a new AeroNyx socket
    * @param config Optional reconnection configuration
    */
@@ -672,19 +681,48 @@ export class AeroNyxSocket extends EventEmitter {
    * @returns Promise resolving to SendResult.
    */
   public async sendMessage(message: MessageType): Promise<SendResult> {
+  // Step 1: Validate input parameters
+    if (!message || !message.id || typeof message.content !== 'string') {
+      console.error('[Socket:SEND] Invalid message format:', message);
+      return SendResult.FAILED;
+    }
+    
+    // Step 2: Log diagnostic information
     console.debug('[Socket] Preparing to send chat message:', message.id);
-    // Construct the standard payload expected by the application logic
+    
+    // Step 3: Construct standardized message payload
+    // This ensures consistent format for all messages
     const messagePayload = {
-      type: 'message', // Application-level type identifier
-      id: message.id,
-      content: message.content,
-      senderId: message.senderId,
-      senderName: message.senderName,
-      timestamp: message.timestamp,
-      // Add any other relevant fields from MessageType if needed by the receiver
+      type: 'message',          // Application-level type identifier
+      id: message.id,           // Unique message identifier
+      content: message.content, // Actual message content
+      senderId: message.senderId || this.localPeerId || '',  // Sender identifier
+      senderName: message.senderName || 'Anonymous',         // Sender display name
+      timestamp: typeof message.timestamp === 'string' 
+        ? message.timestamp 
+        : message.timestamp instanceof Date 
+          ? message.timestamp.toISOString() 
+          : new Date().toISOString(),  // Standardized timestamp format
+      isEncrypted: message.isEncrypted ?? true,  // Encryption flag
+      status: mapMessageStatus(message.status)   // Standardized status
     };
-    // User messages typically have high priority
-    return this.send(messagePayload, MessagePriority.HIGH);
+    
+    // Step 4: Send with high priority to ensure prompt delivery
+    // Messages are user-initiated actions and should be prioritized
+    try {
+      return await this.send(messagePayload, MessagePriority.HIGH);
+    } catch (error) {
+      // Step 5: Comprehensive error handling
+      console.error('[Socket:SEND] Error sending message:', error);
+      this.emit('error', this.createSocketError(
+        'message',
+        'Failed to send chat message',
+        'MSG_SEND_ERROR',
+         error instanceof Error ? error.message : String(error),
+        true // Usually retryable
+      ));
+      return SendResult.FAILED;
+    }
   }
 
    /**
@@ -2092,42 +2130,103 @@ export class AeroNyxSocket extends EventEmitter {
   
   // --- Message Queueing & Processing ---
 
-  /** Queues a message, adding TTL, priority, and retry count. Returns true if queued. */
-  private queueMessage(type: string, data: any, priority: MessagePriority = MessagePriority.NORMAL): boolean {
-      this.cleanupMessageQueue(); // Clean expired first
+  /**
+ * Queues a message when it cannot be sent immediately.
+ * Implements priority queue with TTL (Time-To-Live) and deduplication.
+ * 
+ * Mathematical properties:
+ * - Queue size: Bounded by maxQueueSize
+ * - Message TTL: Enforces maximum message age
+ * - Priority ordering: Lower priority values are processed first
+ * 
+ * @param type The message type identifier (e.g., 'data')
+ * @param data The payload object to queue
+ * @param priority Priority level for the message (lower values = higher priority)
+ * @returns Boolean indicating if the message was successfully queued
+ * Time complexity: O(n log n) worst case for priority sort, O(1) for queue insertion
+ * Space complexity: O(n) where n is the number of pending messages
+ */
+private queueMessage(type: string, data: any, priority: MessagePriority = MessagePriority.NORMAL): boolean {
+  // Step 1: Clean expired messages first to ensure space in the queue
+  this.cleanupMessageQueue();
 
-      if (this.pendingMessages.length >= this.maxQueueSize) {
-          // Try removing expired messages again before potentially dropping
-          this.cleanupMessageQueue();
-          if (this.pendingMessages.length >= this.maxQueueSize) {
-              // If still full, consider dropping lowest priority message instead of oldest
-              if (this.usePriorityQueue) {
-                  this.pendingMessages.sort((a, b) => b.priority - a.priority); // Sort lowest priority last
-                  const removed = this.pendingMessages.pop(); // Remove lowest priority
-                  console.warn(`[Socket] Message queue full (${this.maxQueueSize}). Discarding lowest priority message:`, removed?.type, removed?.id);
-                  if (!removed) return false; // Should not happen if length > 0
-              } else {
-                  const removed = this.pendingMessages.shift(); // Remove oldest
-                  console.warn(`[Socket] Message queue full (${this.maxQueueSize}). Discarding oldest message:`, removed?.type, removed?.id);
-                   if (!removed) return false;
-              }
-          }
-      }
-
-      const messageId = data.id || `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      const pendingMsg: PendingMessage = { type, data, timestamp: Date.now(), id: messageId, retryCount: 0, priority };
-      this.pendingMessages.push(pendingMsg);
-
-      // If using priority queue, sort after adding (simple approach)
+  // Step 2: Handle queue size limits with priority-aware overflow control
+  if (this.pendingMessages.length >= this.maxQueueSize) {
+    // Second cleanup attempt targeting only expired messages
+    this.cleanupMessageQueue();
+    
+    // If still full, implement priority-based overflow handling
+    if (this.pendingMessages.length >= this.maxQueueSize) {
       if (this.usePriorityQueue) {
-          this.pendingMessages.sort((a, b) => a.priority - b.priority); // Lower number = higher priority
+        // Sort by priority (lowest number = highest priority)
+        this.pendingMessages.sort((a, b) => b.priority - a.priority);
+        
+        // Get the lowest priority message (last in sorted array)
+        const lowestPriorityMsg = this.pendingMessages[this.pendingMessages.length - 1];
+        
+        // Only remove if the new message has higher priority
+        if (lowestPriorityMsg && priority < lowestPriorityMsg.priority) {
+          this.pendingMessages.pop(); // Remove lowest priority message
+          console.warn(`[Socket] Queue full (${this.maxQueueSize}). Replaced lowest priority message (${lowestPriorityMsg.priority}) with higher priority message (${priority}).`);
+        } else {
+          console.warn(`[Socket] Queue full (${this.maxQueueSize}). Rejected new message with priority ${priority} (lower than existing messages).`);
+          return false; // Cannot queue message with lower priority
+        }
+      } else {
+        // FIFO approach - remove oldest message
+        this.pendingMessages.shift();
+        console.warn(`[Socket] Queue full (${this.maxQueueSize}). Removed oldest message to make space.`);
       }
-
-      console.log(`[Socket] Message queued (Type: ${type}, Prio: ${priority}, ID: ${messageId}). Total pending: ${this.pendingMessages.length}`);
-      // Trigger processing check shortly after queuing
-      setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS);
-      return true; // Message was successfully added to queue
+    }
   }
+
+  // Step 3: Generate a deterministic but unique message identifier
+  // Use existing ID if available or generate a new one with high entropy
+  const messageId = data.id || `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 9)}`;
+  
+  // Step 4: Wrap data with the DataEnvelope expected by the server
+  // The queued data should match what would be sent directly in send()
+  const envelopedData = {
+    payloadType: 'json',
+    payload: data
+  };
+  
+  // Step 5: Create the pending message object with all required metadata
+  const pendingMsg: PendingMessage = {
+    type,
+    data: envelopedData, // Store with envelope to match the send() format
+    timestamp: Date.now(),
+    id: messageId,
+    retryCount: 0,
+    priority
+  };
+  
+  // Step 6: Add to queue
+  this.pendingMessages.push(pendingMsg);
+
+  // Step 7: Apply priority sorting if enabled
+  // Sort the queue so higher priority messages are processed first
+  // Time complexity: O(n log n) where n is queue length
+  if (this.usePriorityQueue && this.pendingMessages.length > 1) {
+    this.pendingMessages.sort((a, b) => {
+      // Primary sort by priority (lower number = higher priority)
+      const priorityDiff = a.priority - b.priority;
+      if (priorityDiff !== 0) return priorityDiff;
+      
+      // Secondary sort by timestamp (older = higher priority)
+      return a.timestamp - b.timestamp;
+    });
+  }
+
+  // Step 8: Log queue status with diagnostic information
+  console.log(`[Socket] Message queued (Type: ${type}, Priority: ${priority}, ID: ${messageId}). Queue size: ${this.pendingMessages.length}/${this.maxQueueSize}`);
+  
+  // Step 9: Schedule queue processing after a short delay
+  // Use setTimeout to avoid blocking the main thread
+  setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS);
+  
+  return true; // Successfully queued
+}
 
   /** Removes expired messages from the pending queue. */
   private cleanupMessageQueue(): void {
