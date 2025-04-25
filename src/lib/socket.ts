@@ -876,20 +876,21 @@ export class AeroNyxSocket extends EventEmitter {
       this.rejectConnection(new Error('Socket closed before Auth could be sent'));
       return;
     }
-
+  
     try {
       if (!this.chatId || !this.publicKey) {
         throw new Error('Missing chatId or publicKey for Auth');
       }
-
+  
       const authMessage: AuthMessage = {
         type: 'Auth',
         chat_id: this.chatId,
         public_key: this.publicKey,
-        client_version: '1.0.0', // Consider moving to constants
-        protocol_version: '1.0' // Consider moving to constants
+        client_version: '1.0.0',    // Client version
+        protocol_version: '1.0',    // Protocol compatibility version
+        version: '1.0'              // Add this required field
       };
-
+  
       this.socket.send(JSON.stringify(authMessage));
       console.log('[Socket] Auth message sent successfully');
     } catch (error) {
