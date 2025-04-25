@@ -12,6 +12,16 @@ export interface DataEnvelope {
   payload: any;         // The actual message payload
 }
 
+// Add these additional type guards
+/** Type guard for chat info response from server */
+export function isChatInfoResponse(payload: any): boolean {
+  return isObject(payload) && payload.type === 'chat_info_response' && isObject(payload.data);
+}
+
+/** Type guard for participants response from server */
+export function isParticipantsResponse(payload: any): boolean {
+  return isObject(payload) && payload.type === 'participants_response' && Array.isArray(payload.participants);
+}
 
 /**
  * Socket error types used within AeroNyxSocket and emitted.
