@@ -641,55 +641,153 @@ export class AeroNyxSocket extends EventEmitter {
    * @returns Promise resolving to SendResult indicating outcome.
    */
   public async send(data: any, priority: MessagePriority = MessagePriority.NORMAL): Promise<SendResult> {
-    if (!this.isConnected()) {
-      console.warn('[Socket:SEND] Not connected. Queuing message.');
-      const queued = this.queueMessage('data', data, priority);
-      setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS * 2);
-      return queued ? SendResult.QUEUED : SendResult.FAILED;
+  if (!this.isConnected()) {
+    console.warn('[Socket:SEND] Not connected. Queuing message.');
+    const queued = this.queueMessage('data', data, priority);
+    setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS * 2);
+    return queued ? SendResult.QUEUED : SendResult.FAILED;
+  }
+
+  // Ensure session key exists
+  if (!this.sessionKey) {
+    console.error('[Socket:SEND] CRITICAL: isConnected is true but sessionKey is null!');
+    this.emit('error', this.createSocketError('internal', 'Session key missing despite connected state', 'MISSING_SESSION_KEY', undefined, false));
+    const queued = this.queueMessage('data', data, priority);
+    return queued ? SendResult.QUEUED : SendResult.FAILED;
+  }
+
+  try {
+    // Wrap the data in a DataEnvelope with the server-expected field name
+    const envelope = {
+      payload_type: 'json', // Changed from payloadType to payload_type
+      payload: data
+    };
+
+    // Create the encrypted Data packet
+    const dataPacket = await createEncryptedDataPacket(
+      envelope,
+      this.sessionKey,
+      this.messageCounter
+    );
+
+    // Increment the counter after successfully creating the packet
+    this.messageCounter++;
+
+    // Send the JSON stringified packet
+    const packetJson = JSON.stringify(dataPacket);
+    this.socket!.send(packetJson);
+    console.debug('[Socket:SEND] Encrypted Data packet sent. Counter:', dataPacket.counter);
+    this.lastMessageTime = Date.now();
+    return SendResult.SENT;
+  } catch (error) {
+    console.error('[Socket:SEND] Error encrypting or sending data packet:', error);
+    const queued = this.queueMessage('data', data, priority);
+    this.emit('error', this.createSocketError(
+      'data',
+      'Failed to send encrypted data',
+      'DATA_SEND_ERROR',
+      error instanceof Error ? error.message : String(error),
+      true
+    ));
+    return queued ? SendResult.QUEUED : SendResult.FAILED;
+  }
+}
+
+public async sendMessage(message: MessageType): Promise<SendResult> {
+  // Step 1: Validate input parameters
+    if (!message || !message.id || typeof message.content !== 'string') {
+      console.error('[Socket:SEND] Invalid message format:', message);
+      return SendResult.FAILED;
     }
-  
-    // Ensure session key exists
-    if (!this.sessionKey) {
-      console.error('[Socket:SEND] CRITICAL: isConnected is true but sessionKey is null!');
-      this.emit('error', this.createSocketError('internal', 'Session key missing despite connected state', 'MISSING_SESSION_KEY', undefined, false));
-      const queued = this.queueMessage('data', data, priority);
-      return queued ? SendResult.QUEUED : SendResult.FAILED;
-    }
-  
+    
+    // Step 2: Log diagnostic information
+    console.debug('[Socket] Preparing to send chat message:', message.id);
+    
+    // Step 3: Construct standardized message payload
+    // This ensures consistent format for all messages
+    const messagePayload = {
+      type: 'message',          // Application-level type identifier
+      id: message.id,           // Unique message identifier
+      content: message.content, // Actual message content
+      senderId: message.senderId || this.localPeerId || '',  // Sender identifier
+      senderName: message.senderName || 'Anonymous',         // Sender display name
+      timestamp: typeof message.timestamp === 'string' 
+        ? message.timestamp 
+        : message.timestamp instanceof Date 
+          ? message.timestamp.toISOString() 
+          : new Date().toISOString(),  // Standardized timestamp format
+      isEncrypted: message.isEncrypted ?? true,  // Encryption flag
+      status: message.status || 'sending',   // Fixed to avoid undefined mapMessageStatus function
+      chatId: this.chatId       // Added field to match server expectation
+    };
+    
+    // Step 4: Send with high priority to ensure prompt delivery
     try {
-      // Wrap the data in a DataEnvelope
-      const envelope = {
-        payload_type: 'json', // Change from payloadType to payload_type
-        payload: data
-      };
-  
-      // Create the encrypted Data packet
-      const dataPacket = await createEncryptedDataPacket(
-        envelope,  // Send the envelope instead of raw data
-        this.sessionKey,
-        this.messageCounter
-      );
-  
-      // Increment the counter after successfully creating the packet
-      this.messageCounter++;
-  
-      // Send the JSON stringified packet
-      const packetJson = JSON.stringify(dataPacket);
-      this.socket!.send(packetJson);
-      console.debug('[Socket:SEND] Encrypted Data packet sent. Counter:', dataPacket.counter);
-      this.lastMessageTime = Date.now();
-      return SendResult.SENT;
+      return await this.send(messagePayload, MessagePriority.HIGH);
     } catch (error) {
-      console.error('[Socket:SEND] Error encrypting or sending data packet:', error);
-      const queued = this.queueMessage('data', data, priority);
+      // Step 5: Comprehensive error handling
+      console.error('[Socket:SEND] Error sending message:', error);
       this.emit('error', this.createSocketError(
-        'data',
-        'Failed to send encrypted data',
-        'DATA_SEND_ERROR',
-        error instanceof Error ? error.message : String(error),
-        true
+        'message',
+        'Failed to send chat message',
+        'MSG_SEND_ERROR',
+         error instanceof Error ? error.message : String(error),
+        true // Usually retryable
       ));
-      return queued ? SendResult.QUEUED : SendResult.FAILED;
+      return SendResult.FAILED;
+    }
+  }
+  
+  public async requestChatInfo(): Promise<SendResult> {
+      console.debug('[Socket] Requesting chat info...');
+      return this.send({ type: 'chat_info_request' }, MessagePriority.NORMAL); // Changed from request-chat-info
+  }
+  
+  public async requestParticipants(): Promise<SendResult> {
+      console.debug('[Socket] Requesting participants list...');
+      return this.send({ type: 'participants_request' }, MessagePriority.NORMAL); // Changed from request-participants
+  }
+  
+  public async sendWebRTCSignal(
+    peerId: string, 
+    signalType: 'offer' | 'answer' | 'candidate', 
+    signalData: any
+  ): Promise<SendResult> {
+    const payload = {
+      type: 'webrtc_signal', // Changed from webrtc-signal to match server expectation
+      peerId: peerId,
+      signalType: signalType,
+      signalData: signalData,
+      timestamp: Date.now()
+    };
+    
+    // WebRTC signaling should be high priority
+    return this.send(payload, MessagePriority.HIGH);
+  }
+  
+  private async routeDecryptedMessage(decryptedData: any): Promise<void> {
+    if (isMessageType(decryptedData)) {
+      this.emit('message', decryptedData);
+    } else if (isChatInfoPayload(decryptedData)) {
+      this.emit('chatInfo', decryptedData.data);
+    } else if (isParticipantsPayload(decryptedData)) {
+      this.emit('participants', decryptedData.data);
+    } else if (isWebRTCSignalPayload(decryptedData)) {
+      this.emit('webrtcSignal', decryptedData);
+    } else if (isKeyRotationRequestPayload(decryptedData)) {
+      await this.handleKeyRotationRequest(decryptedData);
+    } else if (isKeyRotationResponsePayload(decryptedData)) {
+      await this.handleKeyRotationResponse(decryptedData);
+    } else if (decryptedData && decryptedData.type === 'chat_info_response') {
+      // Handle chat info response from server
+      this.emit('chatInfo', decryptedData.data || decryptedData);
+    } else if (decryptedData && decryptedData.type === 'participants_response') {
+      // Handle participants response from server
+      this.emit('participants', decryptedData.participants || decryptedData.data || []);
+    } else {
+      // If structure is fundamentally valid
+      console.warn('[Socket] Received unrecognized message type:', decryptedData?.type);
+      this.emit('data', decryptedData); // Still emit for application layer
     }
   }
   /**
