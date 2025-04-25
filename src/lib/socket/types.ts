@@ -7,6 +7,11 @@ export interface BasePacket {
   type: string;
 }
 
+export interface DataEnvelope {
+  payloadType: 'json';  // Only 'json' is needed for chat
+  payload: any;         // The actual message payload
+}
+
 /**
  * Socket error types used within AeroNyxSocket and emitted.
  */
