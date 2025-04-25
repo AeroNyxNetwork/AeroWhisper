@@ -886,28 +886,21 @@ export class AeroNyxSocket extends EventEmitter {
         throw new Error('Missing chatId or publicKey for Auth');
       }
   
-      // Generate a nonce for enhanced security
-      const nonce = new Uint8Array(12);
-      if (this.hasWebCrypto) {
-        window.crypto.getRandomValues(nonce);
-      } else {
-        // Fallback for environments without WebCrypto
-        for (let i = 0; i < 12; i++) {
-          nonce[i] = Math.floor(Math.random() * 256);
-        }
-      }
+      // Generate a string nonce using timestamp and random value
+      const nonceString = `${Date.now()}-${Math.random().toString(16).substring(2)}`;
   
+      // Create AuthMessage with the CORRECT fields according to server expectations
       const authMessage: AuthMessage = {
         type: 'Auth',
-        chat_id: this.chatId,
         public_key: this.publicKey,
-        client_version: '1.0.0',    // Client version
-        protocol_version: '1.0',    // Protocol compatibility version
-        version: '1.0',             // Protocol version
-        features: ['messaging', 'encryption'],  // Supported features
-        encryption_algorithm: 'aes256gcm',     // Preferred encryption algorithm
-        nonce: Array.from(nonce)               // Random nonce for security
+        version: '1.0.0',    // Client version
+        features: ['aes256gcm', 'webrtc', 'key-rotation'], // Specific capabilities
+        encryption_algorithm: 'aes256gcm',
+        nonce: nonceString   // String nonce as expected by server
       };
+  
+      // Log the message for debugging
+      console.log('[Socket] Sending Auth message:', JSON.stringify(authMessage));
   
       this.socket.send(JSON.stringify(authMessage));
       console.log('[Socket] Auth message sent successfully');
@@ -921,9 +914,10 @@ export class AeroNyxSocket extends EventEmitter {
         true
       ));
       this.rejectConnection(error);
+      // Ensure we disconnect properly after auth failure
+      this.disconnect().catch(e => console.error("Error during disconnect after auth failure:", e));
     }
-  }
-
+}
   /**
    * Handles WebSocket message event. Parses, processes, and updates activity time.
    */
