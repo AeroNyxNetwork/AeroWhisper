@@ -2,6 +2,7 @@
 
 import * as nacl from 'tweetnacl';
 import * as bs58 from 'bs58';
+import * as ed2curve from 'ed2curve';
 import { Buffer } from 'buffer';
 
 /**
@@ -280,8 +281,8 @@ export function convertEd25519PublicKeyToCurve25519(edPublicKey: Uint8Array): Ui
   }
   
   try {
-    // Use tweetnacl's built-in conversion function
-    const curveKey = nacl.convertPublicKey(edPublicKey);
+    // Use ed2curve for key conversion
+    const curveKey = ed2curve.convertPublicKey(edPublicKey);
     if (!curveKey) {
       console.error("[Crypto] Failed to convert Ed25519 public key to Curve25519");
       return null;
