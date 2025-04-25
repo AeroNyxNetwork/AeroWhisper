@@ -25,6 +25,7 @@ export interface AuthMessage extends BasePacket {
   chat_id: string;              // ID of the chat room to join
   client_version: string;       // Client version string
   protocol_version: string;     // Protocol version for backward compatibility
+  version: string;              // Protocol version (required by server)
 }
 
 /**
