@@ -30,15 +30,6 @@ export interface AuthMessage extends BasePacket {
  * Initial authentication message sent by the client.
  * Matches server requirements document Section 3.1.
  */
-export interface AuthMessage extends BasePacket {
-  type: "Auth";
-  public_key: string;           // Client's Ed25519 public key (Base58)
-  chat_id: string;              // ID of the chat room to join
-  client_version: string;       // Client version string
-  protocol_version: string;     // Protocol version for backward compatibility
-  version: string;              // Protocol version (required by server)
-}
-
 /**
  * Challenge message sent by the server in response to Auth.
  * Matches server requirements document Section 3.2.
