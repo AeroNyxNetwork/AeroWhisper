@@ -14,6 +14,7 @@ import {
 const DISPLAY_NAME_KEY = 'aero-display-name';
 const AUTH_STATE_KEY = 'aero-auth-state';
 const REVALIDATION_INTERVAL = 1000 * 60 * 60; // Revalidate auth every hour
+const AUTH_TIMEOUT = 10000; // 10 second timeout for auth operations
 
 // --- Types ---
 export type AuthStatus = 'initializing' | 'authenticated' | 'unauthenticated' | 'error';
@@ -52,13 +53,29 @@ interface AuthContextType {
 // --- Helper Functions ---
 
 /**
+ * Creates a timeout promise to prevent indefinite waiting
+ */
+const createTimeout = (ms: number, message: string): Promise<never> => {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Timeout after ${ms}ms: ${message}`)), ms);
+  });
+}
+
+/**
  * Converts a StoredKeypair to a User object
  */
 const createUserFromKeypair = (keypair: StoredKeypair, existingUser?: Partial<User> | null): User => {
   const now = Date.now();
-  const displayName = localStorage.getItem(DISPLAY_NAME_KEY) || 
-                      existingUser?.displayName || 
-                      `User_${keypair.publicKeyBase58.substring(0, 6)}`;
+  let displayName;
+  
+  try {
+    displayName = localStorage.getItem(DISPLAY_NAME_KEY) || 
+                  existingUser?.displayName || 
+                  `User_${keypair.publicKeyBase58.substring(0, 6)}`;
+  } catch (error) {
+    console.warn('[AuthContext] Failed to get display name from localStorage:', error);
+    displayName = existingUser?.displayName || `User_${keypair.publicKeyBase58.substring(0, 6)}`;
+  }
   
   return {
     id: keypair.publicKeyBase58,
@@ -95,6 +112,10 @@ const loadPersistedAuthState = (): Partial<AuthState> | null => {
     return JSON.parse(storedState);
   } catch (error) {
     console.warn('[AuthContext] Failed to load persisted auth state:', error);
+    // Clear potentially corrupted auth state
+    try {
+      sessionStorage.removeItem(AUTH_STATE_KEY);
+    } catch {}
     return null;
   }
 };
@@ -116,18 +137,34 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+  console.log('[AuthContext] AuthProvider initializing');
+  
   // Core authentication state
   const [authState, setAuthState] = useState<AuthState>(() => {
     // Try to restore state from session storage during initialization
-    const persistedState = loadPersistedAuthState();
-    
-    // Return restored state or initial state
-    return {
-      status: persistedState?.status || 'initializing',
-      user: persistedState?.user || null,
-      error: null,
-      lastValidated: persistedState?.lastValidated || 0
-    };
+    try {
+      const persistedState = loadPersistedAuthState();
+      console.log('[AuthContext] Loaded persisted state:', 
+        persistedState ? 
+        { status: persistedState.status, hasUser: !!persistedState.user } :
+        'none');
+      
+      // Return restored state or initial state
+      return {
+        status: persistedState?.status || 'initializing',
+        user: persistedState?.user || null,
+        error: null,
+        lastValidated: persistedState?.lastValidated || 0
+      };
+    } catch (error) {
+      console.error('[AuthContext] Error in initial state setup:', error);
+      return {
+        status: 'initializing',
+        user: null,
+        error: null,
+        lastValidated: 0
+      };
+    }
   });
   
   // Setup derived state for easier access
@@ -136,6 +173,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   
   // Helper to update state and persist changes
   const updateAuthState = useCallback((newState: Partial<AuthState>) => {
+    console.log('[AuthContext] Updating auth state:', newState);
+    
     setAuthState(prevState => {
       const updatedState = { ...prevState, ...newState };
       
@@ -153,6 +192,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
    * Returns true if authenticated, false otherwise
    */
   const validateAuth = useCallback(async (): Promise<boolean> => {
+    console.log('[AuthContext] Validating auth...');
+    
     try {
       // Skip validation if we've validated recently
       const now = Date.now();
@@ -161,66 +202,98 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         authState.lastValidated && 
         now - authState.lastValidated < REVALIDATION_INTERVAL
       ) {
+        console.log('[AuthContext] Skipping validation, recently validated');
         return true;
       }
       
-      // Check if keypair exists
-      const exists = await keypairExists();
-      if (!exists) {
-        updateAuthState({ 
-          status: 'unauthenticated', 
-          user: null,
-          lastValidated: now
-        });
-        return false;
-      }
+      const validationResult = await Promise.race([
+        (async () => {
+          try {
+            // Check if keypair exists
+            console.log('[AuthContext] Checking if keypair exists');
+            const exists = await keypairExists();
+            
+            if (!exists) {
+              console.log('[AuthContext] No keypair exists');
+              updateAuthState({ 
+                status: 'unauthenticated', 
+                user: null,
+                lastValidated: now
+              });
+              return false;
+            }
+            
+            // Verify we can access the keypair
+            console.log('[AuthContext] Getting public key info');
+            const publicKeyInfo = await getPublicKeyInfo();
+            
+            if (!publicKeyInfo) {
+              console.log('[AuthContext] Failed to get public key info');
+              updateAuthState({ 
+                status: 'unauthenticated', 
+                user: null,
+                lastValidated: now
+              });
+              return false;
+            }
+            
+            // If we already have a user with matching public key, just update lastValidated
+            if (authState.user?.publicKey === publicKeyInfo.publicKeyBase58) {
+              console.log('[AuthContext] Existing user validated');
+              updateAuthState({ 
+                status: 'authenticated',
+                lastValidated: now
+              });
+              return true;
+            }
+            
+            // Otherwise, need to get full keypair to create user object
+            console.log('[AuthContext] Getting full keypair');
+            const keypair = await getStoredKeypair();
+            
+            if (!keypair) {
+              console.log('[AuthContext] Failed to get keypair');
+              updateAuthState({ 
+                status: 'unauthenticated', 
+                user: null,
+                lastValidated: now
+              });
+              return false;
+            }
+            
+            // Create user from keypair, preserving existing user data if possible
+            console.log('[AuthContext] Creating user from keypair');
+            const user = createUserFromKeypair(keypair, authState.user || undefined);
+            updateAuthState({ 
+              status: 'authenticated', 
+              user,
+              lastValidated: now
+            });
+            return true;
+          } catch (error) {
+            console.error('[AuthContext] Error in validation process:', error);
+            throw error;
+          }
+        })(),
+        createTimeout(AUTH_TIMEOUT, 'Auth validation timeout')
+      ]);
       
-      // Verify we can access the keypair
-      const publicKeyInfo = await getPublicKeyInfo();
-      if (!publicKeyInfo) {
-        updateAuthState({ 
-          status: 'unauthenticated', 
-          user: null,
-          lastValidated: now
-        });
-        return false;
-      }
-      
-      // If we already have a user with matching public key, just update lastValidated
-      if (authState.user?.publicKey === publicKeyInfo.publicKeyBase58) {
-        updateAuthState({ 
-          status: 'authenticated',
-          lastValidated: now
-        });
-        return true;
-      }
-      
-      // Otherwise, need to get full keypair to create user object
-      const keypair = await getStoredKeypair();
-      if (!keypair) {
-        updateAuthState({ 
-          status: 'unauthenticated', 
-          user: null,
-          lastValidated: now
-        });
-        return false;
-      }
-      
-      // Create user from keypair, preserving existing user data if possible
-      const user = createUserFromKeypair(keypair, authState.user || undefined);
-      updateAuthState({ 
-        status: 'authenticated', 
-        user,
-        lastValidated: now
-      });
-      return true;
-      
+      return validationResult;
     } catch (error) {
       console.error('[AuthContext] Error validating auth state:', error);
       updateAuthState({ 
         status: 'error',
         error: error instanceof Error ? error : new Error('Unknown validation error')
       });
+      
+      // After setting error state, transition to unauthenticated
+      setTimeout(() => {
+        updateAuthState({
+          status: 'unauthenticated',
+          error: null
+        });
+      }, 3000);
+      
       return false;
     }
   }, [authState.lastValidated, authState.status, authState.user, updateAuthState]);
@@ -236,32 +309,46 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
     
     try {
-      // First check if keypair exists
-      const exists = await keypairExists();
+      const loginResult = await Promise.race([
+        (async () => {
+          try {
+            // First check if keypair exists
+            console.log('[AuthContext] Checking for existing keypair');
+            const exists = await keypairExists();
+            
+            let keypair: StoredKeypair;
+            if (exists) {
+              console.log('[AuthContext] Keypair exists, retrieving...');
+              const existingKeypair = await getStoredKeypair();
+              if (!existingKeypair) {
+                throw new Error('Failed to retrieve existing keypair');
+              }
+              keypair = existingKeypair;
+            } else {
+              console.log('[AuthContext] No keypair found, generating new one...');
+              keypair = await generateAndStoreKeypair();
+            }
+            
+            // Create user object and update state
+            console.log('[AuthContext] Creating user from keypair');
+            const user = createUserFromKeypair(keypair, authState.user || undefined);
+            updateAuthState({
+              status: 'authenticated',
+              user,
+              error: null,
+              lastValidated: Date.now()
+            });
+            
+            return user;
+          } catch (error) {
+            console.error('[AuthContext] Error in login process:', error);
+            throw error;
+          }
+        })(),
+        createTimeout(AUTH_TIMEOUT, 'Auth login timeout')
+      ]);
       
-      let keypair: StoredKeypair;
-      if (exists) {
-        console.log('[AuthContext] Keypair exists, retrieving...');
-        const existingKeypair = await getStoredKeypair();
-        if (!existingKeypair) {
-          throw new Error('Failed to retrieve existing keypair');
-        }
-        keypair = existingKeypair;
-      } else {
-        console.log('[AuthContext] No keypair found, generating new one...');
-        keypair = await generateAndStoreKeypair();
-      }
-      
-      // Create user object and update state
-      const user = createUserFromKeypair(keypair, authState.user || undefined);
-      updateAuthState({
-        status: 'authenticated',
-        user,
-        error: null,
-        lastValidated: Date.now()
-      });
-      
-      return user;
+      return loginResult;
     } catch (error) {
       console.error('[AuthContext] Authentication failed:', error);
       updateAuthState({ 
@@ -269,6 +356,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         user: null,
         error: error instanceof Error ? error : new Error('Unknown authentication error')
       });
+      
+      // After setting error state, transition to unauthenticated
+      setTimeout(() => {
+        updateAuthState({
+          status: 'unauthenticated',
+          error: null
+        });
+      }, 3000);
+      
       return null;
     }
   }, [authState.user, updateAuthState]);
@@ -284,20 +380,33 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
     
     try {
-      // Delete the keypair
-      await deleteStoredKeypair();
-      
-      // Clear auth state
-      updateAuthState({
-        status: 'unauthenticated',
-        user: null,
-        lastValidated: Date.now()
-      });
-      
-      // Clear any local storage items
-      localStorage.removeItem(DISPLAY_NAME_KEY);
-      sessionStorage.removeItem(AUTH_STATE_KEY);
-      
+      await Promise.race([
+        (async () => {
+          try {
+            // Delete the keypair
+            await deleteStoredKeypair();
+            
+            // Clear auth state
+            updateAuthState({
+              status: 'unauthenticated',
+              user: null,
+              lastValidated: Date.now()
+            });
+            
+            // Clear any local storage items
+            try {
+              localStorage.removeItem(DISPLAY_NAME_KEY);
+              sessionStorage.removeItem(AUTH_STATE_KEY);
+            } catch (e) {
+              console.warn('[AuthContext] Error clearing storage during logout:', e);
+            }
+          } catch (error) {
+            console.error('[AuthContext] Error in logout process:', error);
+            throw error;
+          }
+        })(),
+        createTimeout(AUTH_TIMEOUT, 'Auth logout timeout')
+      ]);
     } catch (error) {
       console.error('[AuthContext] Logout failed:', error);
       
@@ -322,25 +431,46 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
     
     try {
-      // Generate and store a new keypair
-      const keypair = await generateAndStoreKeypair();
+      const result = await Promise.race([
+        (async () => {
+          try {
+            // Generate and store a new keypair
+            const keypair = await generateAndStoreKeypair();
+            
+            // Create user with the new keypair
+            const user = createUserFromKeypair(keypair);
+            updateAuthState({
+              status: 'authenticated',
+              user,
+              error: null,
+              lastValidated: Date.now()
+            });
+            
+            return user;
+          } catch (error) {
+            console.error('[AuthContext] Error in keypair generation:', error);
+            throw error;
+          }
+        })(),
+        createTimeout(AUTH_TIMEOUT, 'Keypair generation timeout')
+      ]);
       
-      // Create user with the new keypair
-      const user = createUserFromKeypair(keypair);
-      updateAuthState({
-        status: 'authenticated',
-        user,
-        error: null,
-        lastValidated: Date.now()
-      });
-      
-      return user;
+      return result;
     } catch (error) {
       console.error('[AuthContext] Failed to generate new keypair:', error);
       updateAuthState({
         status: 'error',
         error: error instanceof Error ? error : new Error('Failed to generate new keypair')
       });
+      
+      // After setting error state, transition to unauthenticated
+      setTimeout(() => {
+        updateAuthState({
+          status: 'unauthenticated',
+          error: null
+        });
+      }, 3000);
+      
       return null;
     }
   }, [updateAuthState]);
@@ -359,28 +489,57 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       throw new Error('Display name cannot be empty');
     }
     
-    // Store in localStorage
-    localStorage.setItem(DISPLAY_NAME_KEY, trimmedName);
-    
-    // Update user in state
-    updateAuthState({
-      user: {
-        ...authState.user,
-        displayName: trimmedName
-      }
-    });
+    try {
+      // Store in localStorage
+      localStorage.setItem(DISPLAY_NAME_KEY, trimmedName);
+      
+      // Update user in state
+      updateAuthState({
+        user: {
+          ...authState.user,
+          displayName: trimmedName
+        }
+      });
+    } catch (error) {
+      console.error('[AuthContext] Failed to update display name:', error);
+      throw error;
+    }
   }, [authState.user, updateAuthState]);
   
-  // Initialize auth on mount
+  // Initialize auth on mount with timeout
   useEffect(() => {
-    // Only run initialization if we're not already authenticated or initializing
+    console.log('[AuthContext] Initial auth effect, status:', authState.status);
+    
+    let initTimeout: NodeJS.Timeout | null = null;
+    
+    // Set a timeout to exit initializing state if it takes too long
+    if (authState.status === 'initializing') {
+      initTimeout = setTimeout(() => {
+        console.warn('[AuthContext] Auth initialization timeout - forcing to unauthenticated state');
+        updateAuthState({
+          status: 'unauthenticated',
+          error: new Error('Authentication initialization timed out')
+        });
+      }, AUTH_TIMEOUT);
+    }
+    
+    // Perform normal initialization if needed
     if (authState.status !== 'authenticated' && authState.status !== 'initializing') {
-      login();
+      login().catch(error => {
+        console.error('[AuthContext] Login during initialization failed:', error);
+      });
     } else if (authState.status === 'authenticated') {
       // If already authenticated, validate the auth state
-      validateAuth();
+      validateAuth().catch(error => {
+        console.error('[AuthContext] Auth validation during initialization failed:', error);
+      });
     }
-  }, [authState.status, login, validateAuth]);
+    
+    // Clean up timeout on unmount
+    return () => {
+      if (initTimeout) clearTimeout(initTimeout);
+    };
+  }, [authState.status, login, validateAuth, updateAuthState]);
   
   // Set up periodic revalidation when authenticated
   useEffect(() => {
@@ -394,6 +553,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     
     return () => clearInterval(interval);
   }, [authState.status, validateAuth]);
+  
+  // Handle any issues if we stay in initializing state too long
+  useEffect(() => {
+    if (authState.status !== 'initializing') return;
+    
+    const timeout = setTimeout(() => {
+      if (authState.status === 'initializing') {
+        console.warn('[AuthContext] Still in initializing state after timeout - forcing to unauthenticated');
+        updateAuthState({
+          status: 'unauthenticated',
+          error: new Error('Authentication stuck in initializing state')
+        });
+      }
+    }, AUTH_TIMEOUT);
+    
+    return () => clearTimeout(timeout);
+  }, [authState.status, updateAuthState]);
   
   // Memoize the context value to prevent unnecessary renders
   const contextValue = useMemo(() => ({
