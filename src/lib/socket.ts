@@ -413,6 +413,23 @@ export class AeroNyxSocket extends EventEmitter {
 
   // --- Public Methods ---
 
+  public async sendWebRTCSignal(
+    peerId: string, 
+    signalType: 'offer' | 'answer' | 'candidate', 
+    signalData: any
+  ): Promise<SendResult> {
+    const payload = {
+      type: 'webrtc_signal', // Changed from webrtc-signal to match server expectation
+      peerId: peerId,
+      signalType: signalType,
+      signalData: signalData,
+      timestamp: Date.now()
+    };
+    
+    // WebRTC signaling should be high priority
+    return this.send(payload, MessagePriority.HIGH);
+  }
+
   /**
    * Connects to the AeroNyx server. Manages concurrent calls and state.
    * @param chatId The ID of the chat room.
@@ -641,8 +658,8 @@ export class AeroNyxSocket extends EventEmitter {
   
     try {
       // Wrap the data in a DataEnvelope
-      const envelope: DataEnvelope = {
-        payloadType: 'json',
+      const envelope = {
+        payload_type: 'json', // Change from payloadType to payload_type
         payload: data
       };
   
@@ -707,6 +724,7 @@ export class AeroNyxSocket extends EventEmitter {
       status: mapMessageStatus(message.status)   // Standardized status
     };
     
+    
     // Step 4: Send with high priority to ensure prompt delivery
     // Messages are user-initiated actions and should be prioritized
     try {
@@ -731,8 +749,8 @@ export class AeroNyxSocket extends EventEmitter {
    */
    public async requestChatInfo(): Promise<SendResult> {
         console.debug('[Socket] Requesting chat info...');
-        return this.send({ type: 'request-chat-info' }, MessagePriority.NORMAL);
-    }
+    return this.send({ type: 'chat_info_request' }, MessagePriority.NORMAL); // Changed from request-chat-info
+  }
 
     /**
      * Requests the current list of participants from the server.
@@ -740,7 +758,7 @@ export class AeroNyxSocket extends EventEmitter {
      */
     public async requestParticipants(): Promise<SendResult> {
         console.debug('[Socket] Requesting participants list...');
-        return this.send({ type: 'request-participants' }, MessagePriority.NORMAL);
+        return this.send({ type: 'participants_request' }, MessagePriority.NORMAL); // Changed from request-participants
     }
 
     /**
@@ -772,21 +790,57 @@ export class AeroNyxSocket extends EventEmitter {
      * @param signalType Type of signal (offer, answer, candidate)
      * @param signalData The actual signal data
      */
-    public async sendWebRTCSignal(
-      peerId: string, 
-      signalType: 'offer' | 'answer' | 'candidate', 
-      signalData: any
-    ): Promise<SendResult> {
-      const payload: WebRTCSignalPayload = {
-        type: 'webrtc-signal',
-        peerId: peerId,
-        signalType: signalType,
-        signalData: signalData,
-        timestamp: Date.now()
-      };
-      
-      // WebRTC signaling should be high priority
-      return this.send(payload, MessagePriority.HIGH);
+    public async send(data: any, priority: MessagePriority = MessagePriority.NORMAL): Promise<SendResult> {
+      if (!this.isConnected()) {
+        console.warn('[Socket:SEND] Not connected. Queuing message.');
+        const queued = this.queueMessage('data', data, priority);
+        setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS * 2);
+        return queued ? SendResult.QUEUED : SendResult.FAILED;
+      }
+    
+      // Ensure session key exists
+      if (!this.sessionKey) {
+        console.error('[Socket:SEND] CRITICAL: isConnected is true but sessionKey is null!');
+        this.emit('error', this.createSocketError('internal', 'Session key missing despite connected state', 'MISSING_SESSION_KEY', undefined, false));
+        const queued = this.queueMessage('data', data, priority);
+        return queued ? SendResult.QUEUED : SendResult.FAILED;
+      }
+    
+      try {
+        // Wrap the data in a DataEnvelope with the server-expected field name
+        const envelope = {
+          payload_type: 'json', // Changed from payloadType to payload_type
+          payload: data
+        };
+    
+        // Create the encrypted Data packet
+        const dataPacket = await createEncryptedDataPacket(
+          envelope,
+          this.sessionKey,
+          this.messageCounter
+        );
+    
+        // Increment the counter after successfully creating the packet
+        this.messageCounter++;
+    
+        // Send the JSON stringified packet
+        const packetJson = JSON.stringify(dataPacket);
+        this.socket!.send(packetJson);
+        console.debug('[Socket:SEND] Encrypted Data packet sent. Counter:', dataPacket.counter);
+        this.lastMessageTime = Date.now();
+        return SendResult.SENT;
+      } catch (error) {
+        console.error('[Socket:SEND] Error encrypting or sending data packet:', error);
+        const queued = this.queueMessage('data', data, priority);
+        this.emit('error', this.createSocketError(
+          'data',
+          'Failed to send encrypted data',
+          'DATA_SEND_ERROR',
+          error instanceof Error ? error.message : String(error),
+          true
+        ));
+        return queued ? SendResult.QUEUED : SendResult.FAILED;
+      }
     }
 
     /**
@@ -1521,6 +1575,12 @@ export class AeroNyxSocket extends EventEmitter {
       await this.handleKeyRotationRequest(decryptedData);
     } else if (isKeyRotationResponsePayload(decryptedData)) {
       await this.handleKeyRotationResponse(decryptedData);
+    } else if (decryptedData && decryptedData.type === 'chat_info_response') {
+      // Handle chat info response from server
+      this.emit('chatInfo', decryptedData.data || decryptedData);
+    } else if (decryptedData && decryptedData.type === 'participants_response') {
+      // Handle participants response from server
+      this.emit('participants', decryptedData.participants || decryptedData.data || []);
     } else {
       // If structure is fundamentally valid
       console.warn('[Socket] Received unrecognized message type:', decryptedData?.type);
