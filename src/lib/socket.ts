@@ -13,13 +13,12 @@ import {
   convertEd25519SecretKeyToCurve25519,
   deriveECDHRawSharedSecret,
   deriveKeyWithHKDF,
-  decryptWithAesGcm, // Specifically needed for IpAssign
+  decryptWithAesGcm,
   createEncryptedDataPacket,
   processEncryptedDataPacket,
   testEncryptionCompat,
   numberArrayToUint8Array
-  // Remove duplicated type guards from here
-} from '../utils/cryptoUtils'; // Adjust path if needed
+} from '../utils/cryptoUtils';
 
 import { getStoredKeypair } from '../utils/keyStorage';
 
@@ -50,23 +49,28 @@ import {
   WebRTCSignalPayload,
   KeyRotationRequestPayload,
   KeyRotationResponsePayload,
-  // Import the actual validation functions we'll use
+  // Import type guards directly from types.ts
   isMessageType,
   isChatInfoPayload,
   isParticipantsPayload,
   isWebRTCSignalPayload,
   isKeyRotationRequestPayload,
   isKeyRotationResponsePayload
-  // Removing validateMessageStructure since it's not exported from this module
-} from './socket/types'; // Ensure types.ts is updated and accurate
+} from './socket/types';
 
 // Import this from networking.ts since it has a validateMessageStructure function
 import { validateMessageStructure } from './socket/networking';
-
-// Import reconnection and networking utilities
-import { ReconnectionConfig } from './socket/reconnection'; // Assuming this file is kept for config definition
-import { calculateBackoffDelay, canRetry, shouldAttemptReconnect } from './socket/reconnection'; // Assuming helpers are kept
-import { createWebSocketUrl, isSocketOpen, createDisconnectMessage as formatDisconnectMessage } from './socket/networking';
+import { ReconnectionConfig } from './socket/reconnection';
+import { 
+  calculateBackoffDelay, 
+  canRetry, 
+  shouldAttemptReconnect 
+} from './socket/reconnection';
+import { 
+  createWebSocketUrl, 
+  isSocketOpen, 
+  createDisconnectMessage as formatDisconnectMessage 
+} from './socket/networking';
 
 
 /**
@@ -882,14 +886,27 @@ export class AeroNyxSocket extends EventEmitter {
         throw new Error('Missing chatId or publicKey for Auth');
       }
   
+      // Generate a nonce for enhanced security
+      const nonce = new Uint8Array(12);
+      if (this.hasWebCrypto) {
+        window.crypto.getRandomValues(nonce);
+      } else {
+        // Fallback for environments without WebCrypto
+        for (let i = 0; i < 12; i++) {
+          nonce[i] = Math.floor(Math.random() * 256);
+        }
+      }
+  
       const authMessage: AuthMessage = {
         type: 'Auth',
         chat_id: this.chatId,
         public_key: this.publicKey,
         client_version: '1.0.0',    // Client version
         protocol_version: '1.0',    // Protocol compatibility version
-        version: '1.0',             // Added as required by type
-        features: []                // Add this required field
+        version: '1.0',             // Protocol version
+        features: ['messaging', 'encryption'],  // Supported features
+        encryption_algorithm: 'aes256gcm',     // Preferred encryption algorithm
+        nonce: Array.from(nonce)               // Random nonce for security
       };
   
       this.socket.send(JSON.stringify(authMessage));
