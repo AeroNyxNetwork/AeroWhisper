@@ -1,3 +1,5 @@
+//src/pages/auth/connect-wallet.tsx
+
 import React, { useState } from 'react';
 import { useRouter } from 'next/router';
 import { Button, Text, Flex, Box, useColorMode } from '@chakra-ui/react';
@@ -15,7 +17,10 @@ const ConnectWalletPage = () => {
   const handleConnect = async () => {
     try {
       await login();
+      console.log('Login successful, redirecting to dashboard');
       router.push('/dashboard');
+      console.log('Redirect initiated');
+      
     } catch (error) {
       setError('Failed to connect wallet. Please try again.');
       console.error(error);
@@ -25,7 +30,15 @@ const ConnectWalletPage = () => {
   const handleGenerateKeyPair = async () => {
     try {
       const keyPair = await generateKeyPair();
-      localStorage.setItem('aero-keypair', JSON.stringify(keyPair));
+      
+      // Convert Uint8Arrays to regular arrays for proper serialization
+      const serializableKeyPair = {
+        publicKey: Array.from(keyPair.publicKey),
+        secretKey: Array.from(keyPair.secretKey),
+        publicKeyBase58: keyPair.publicKeyBase58
+      };
+      
+      localStorage.setItem('aero-keypair', JSON.stringify(serializableKeyPair));
       router.push('/dashboard');
     } catch (error) {
       setError('Failed to generate keypair. Please try again.');
