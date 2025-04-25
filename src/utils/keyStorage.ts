@@ -62,14 +62,13 @@ function openDatabase(): Promise<IDBDatabase> {
 
       // Open database
       const request = window.indexedDB.open(DB_NAME, DB_VERSION);
-
       request.onerror = (event) => {
         console.error('[KeyStorage] IndexedDB error:', request.error);
         dbPromise = null;
         reject(new KeyStorageError(
           `IndexedDB error: ${request.error?.message || 'Unknown error'}`,
           'DB_ERROR',
-          request.error
+          request.error || undefined  // Added "|| undefined" to fix the type error
         ));
       };
 
