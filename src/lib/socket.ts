@@ -5,7 +5,6 @@ import * as bs58 from 'bs58';
 import { Buffer } from 'buffer'; // Ensure buffer polyfill is available
 
 // Import ALL necessary crypto functions from the centralized cryptoUtils
-// Assuming these functions are correctly implemented and validated against the server spec
 import {
   parseChallengeData,
   signChallenge,
@@ -22,18 +21,7 @@ import {
 
 import { getStoredKeypair } from '../utils/keyStorage';
 
-// Keep the validation imports but with aliases
-import {
-  isMessageType as isMessageTypeValidation,
-  isChatInfoPayload as isChatInfoPayloadValidation,
-  isParticipantsPayload as isParticipantsPayloadValidation,
-  isWebRTCSignalPayload as isWebRTCSignalPayloadValidation,
-  isKeyRotationRequestPayload as isKeyRotationRequestPayloadValidation,
-  isKeyRotationResponsePayload as isKeyRotationResponsePayloadValidation,
-  validateMessageStructure as validateMessageStructureValidation
-} from '../types/validation'; // Adjust path if needed
-
-// Import packet types and the actual validation functions we'll use
+// Import ALL message types from ONE place (types.ts)
 import {
   AuthMessage,
   ChallengeMessage,
@@ -49,17 +37,27 @@ import {
   WebRTCSignalPayload,
   KeyRotationRequestPayload,
   KeyRotationResponsePayload,
-  // Import type guards directly from types.ts
+  // Socket type definitions
+  SocketError,
+  BasePacket,
+  DataPacket,
+  MessagePayload,
+  ChatInfoPayload,
+  ParticipantsPayload
+} from './socket/types';
+
+// Import ALL validation functions from ONE place
+import {
   isMessageType,
   isChatInfoPayload,
   isParticipantsPayload,
   isWebRTCSignalPayload,
   isKeyRotationRequestPayload,
-  isKeyRotationResponsePayload
-} from './socket/types';
+  isKeyRotationResponsePayload,
+  validateMessageStructure
+} from './socket/validation'; // Assuming you have a validation.ts file or import from types.ts
 
-// Import this from networking.ts since it has a validateMessageStructure function
-import { validateMessageStructure } from './socket/networking';
+// Import network and reconnection utilities
 import { ReconnectionConfig } from './socket/reconnection';
 import { 
   calculateBackoffDelay, 
@@ -72,20 +70,15 @@ import {
   createDisconnectMessage as formatDisconnectMessage 
 } from './socket/networking';
 
-
-/**
- * Result of sending a message through the socket
- */
+// Define local types that aren't imported
 export enum SendResult {
-  SENT = 'sent',         // Message was sent immediately
-  QUEUED = 'queued',       // Message was queued for later sending
-  FAILED = 'failed'        // Message couldn't be sent or queued (fatal error)
+  SENT = 'sent',
+  QUEUED = 'queued',
+  FAILED = 'failed'
 }
 
-/**
- * Connection status types for external consumers
- */
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'p2p-connecting';
+
 
 /**
  * Socket error types
