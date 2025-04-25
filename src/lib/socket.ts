@@ -36,14 +36,23 @@ import {
   WebRTCSignalPayload,
   KeyRotationRequestPayload,
   KeyRotationResponsePayload,
-  // Socket type definitions - rename import to avoid conflict
-  SocketError as ImportedSocketError,
+  // Socket type definitions
   BasePacket,
   DataPacket,
   MessagePayload,
   ChatInfoPayload,
-  ParticipantsPayload
+  ParticipantsPayload,
+
+  isMessageType,
+  isChatInfoPayload,
+  isParticipantsPayload,
+  isWebRTCSignalPayload,
+  isKeyRotationRequestPayload,
+  isKeyRotationResponsePayload
 } from './socket/types';
+
+import { SocketError } from './socket/types';
+export { SocketError };
 
 // Import network and reconnection utilities
 import { ReconnectionConfig } from './socket/reconnection';
@@ -66,7 +75,6 @@ export enum SendResult {
 }
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'p2p-connecting';
-
 // Re-export with the correct name
 export type SocketError = ImportedSocketError;
 
@@ -122,14 +130,6 @@ export enum MessagePriority {
   BACKGROUND = 4  // Non-essential information
 }
 
-export interface SocketError {
-  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message' | 'internal' | 'security';
-  message: string;
-  code: string;
-  details?: string;
-  retry: boolean;
-  originalError?: any;
-}
 
 /**
  * Pending message interface with TTL, retry count, and priority
