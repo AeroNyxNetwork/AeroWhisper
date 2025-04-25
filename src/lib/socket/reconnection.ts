@@ -23,9 +23,9 @@ export interface ReconnectionConfig {
  * Default reconnection configuration
  */
 export const DEFAULT_RECONNECTION_CONFIG: ReconnectionConfig = {
-  initialDelay: 1000,   // 1 second
-  maxDelay: 30000,      // 30 seconds
-  maxAttempts: 10,
+  initialDelay: 2000,   // Changed from 1000 to 2000ms
+  maxDelay: 60000,      // Changed from 30000 to 60000ms (1 minute cap)
+  maxAttempts: 3,       // Changed from 10 to 3
   jitter: true,
   strategy: 'exponential',
   resetThreshold: 60000, // 1 minute
@@ -151,8 +151,9 @@ export function calculateBackoffDelay(
       
     case 'exponential':
     default:
-      // Exponential: delay = initialDelay * 2^attempt
-      delay = initialDelay * Math.pow(2, Math.min(attempt, 10)); // Cap power to avoid overflow
+      // More aggressive exponential backoff: delay = initialDelay * 2^min(attempt,6)
+      // Cap the exponent at 6 to avoid overflow but still allow significant delay growth
+      delay = initialDelay * Math.pow(2, Math.min(attempt, 6)); 
       break;
   }
   
@@ -163,10 +164,9 @@ export function calculateBackoffDelay(
     delay *= jitterFactor;
   }
   
-  // Apply bounds
+  // Apply bounds: ensure minimum is initialDelay, maximum is maxDelay
   return Math.min(Math.max(Math.round(delay), initialDelay), maxDelay);
 }
-
 /**
  * Calculates connection timeout based on reconnection delay
  * @param delay The calculated reconnection delay
