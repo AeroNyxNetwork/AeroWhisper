@@ -46,16 +46,7 @@ import {
   ParticipantsPayload
 } from './socket/types';
 
-// Import ALL validation functions from ONE place
-import {
-  isMessageType,
-  isChatInfoPayload,
-  isParticipantsPayload,
-  isWebRTCSignalPayload,
-  isKeyRotationRequestPayload,
-  isKeyRotationResponsePayload,
-  validateMessageStructure
-} from './socket/validation'; // Assuming you have a validation.ts file or import from types.ts
+
 
 // Import network and reconnection utilities
 import { ReconnectionConfig } from './socket/reconnection';
