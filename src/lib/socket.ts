@@ -72,18 +72,6 @@ export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 're
 
 
 /**
- * Socket error types
- */
-export interface SocketError {
-  type: 'connection' | 'auth' | 'data' | 'signaling' | 'server' | 'message' | 'internal' | 'security';
-  message: string;
-  code: string;
-  details?: string;
-  retry: boolean;
-  originalError?: any;
-}
-
-/**
  * Testing interface for non-production environments
  */
 export interface AeroNyxSocketTestingInterface {
