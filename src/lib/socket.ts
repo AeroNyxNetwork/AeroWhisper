@@ -617,52 +617,55 @@ export class AeroNyxSocket extends EventEmitter {
   public async send(data: any, priority: MessagePriority = MessagePriority.NORMAL): Promise<SendResult> {
     if (!this.isConnected()) {
       console.warn('[Socket:SEND] Not connected. Queuing message.');
-      const queued = this.queueMessage('data', data, priority); // Queue with priority
-      // Trigger queue processing check in case connection happens quickly
+      const queued = this.queueMessage('data', data, priority);
       setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS * 2);
       return queued ? SendResult.QUEUED : SendResult.FAILED;
     }
-
-    // Ensure session key exists (should always be true if isConnected() is true)
+  
+    // Ensure session key exists
     if (!this.sessionKey) {
       console.error('[Socket:SEND] CRITICAL: isConnected is true but sessionKey is null!');
       this.emit('error', this.createSocketError('internal', 'Session key missing despite connected state', 'MISSING_SESSION_KEY', undefined, false));
-      const queued = this.queueMessage('data', data, priority); // Still queue defensively
-      return queued ? SendResult.QUEUED : SendResult.FAILED; // Indicate queueing, but there's an issue
+      const queued = this.queueMessage('data', data, priority);
+      return queued ? SendResult.QUEUED : SendResult.FAILED;
     }
-
+  
     try {
-      // Create the encrypted Data packet using the centralized utility
+      // Wrap the data in a DataEnvelope
+      const envelope: DataEnvelope = {
+        payloadType: 'json',
+        payload: data
+      };
+  
+      // Create the encrypted Data packet
       const dataPacket = await createEncryptedDataPacket(
-        data,
+        envelope,  // Send the envelope instead of raw data
         this.sessionKey,
-        this.messageCounter // Use the current counter
+        this.messageCounter
       );
-
-      // Increment the counter *after* successfully creating the packet
+  
+      // Increment the counter after successfully creating the packet
       this.messageCounter++;
-
+  
       // Send the JSON stringified packet
       const packetJson = JSON.stringify(dataPacket);
-      this.socket!.send(packetJson); // Use non-null assertion as isConnected() checks socket
+      this.socket!.send(packetJson);
       console.debug('[Socket:SEND] Encrypted Data packet sent. Counter:', dataPacket.counter);
-      this.lastMessageTime = Date.now(); // Update activity time
+      this.lastMessageTime = Date.now();
       return SendResult.SENT;
-
     } catch (error) {
       console.error('[Socket:SEND] Error encrypting or sending data packet:', error);
-      const queued = this.queueMessage('data', data, priority); // Queue the original data on failure
+      const queued = this.queueMessage('data', data, priority);
       this.emit('error', this.createSocketError(
         'data',
         'Failed to send encrypted data',
         'DATA_SEND_ERROR',
-         error instanceof Error ? error.message : String(error),
-        true // Usually retryable via queue
+        error instanceof Error ? error.message : String(error),
+        true
       ));
       return queued ? SendResult.QUEUED : SendResult.FAILED;
     }
   }
-
   /**
    * Sends a chat message. Wraps the message data and calls `send`.
    * @param message The message object conforming to MessageType.
@@ -1406,7 +1409,7 @@ export class AeroNyxSocket extends EventEmitter {
       if (!this.sessionKey) {
         throw new Error('Cannot decrypt Data packet: Session key is missing');
       }
-
+  
       // Process the encrypted data packet through our crypto utils
       const decryptedData = await processEncryptedDataPacket(message, this.sessionKey);
       
@@ -1414,15 +1417,26 @@ export class AeroNyxSocket extends EventEmitter {
       if (message.counter !== undefined && typeof message.counter === 'number') {
         // Additional counter-based replay protection could be implemented here
       }
-
+  
       // Check for replay using message ID cache
       if (this.shouldPreventReplay(decryptedData)) {
         return; // Skip processing if message is a replay
       }
-
-      // Process the decrypted data based on its type
-      await this.routeDecryptedMessage(decryptedData);
-      
+  
+      // Process the decrypted data based on the envelope format
+      if (decryptedData && typeof decryptedData === 'object') {
+        if (decryptedData.payloadType === 'json' && decryptedData.payload) {
+          // Handle envelope format - extract and route the payload
+          await this.routeDecryptedMessage(decryptedData.payload);
+        } else if (!decryptedData.payloadType && !decryptedData.payload) {
+          // Backward compatibility for old format (direct message without envelope)
+          await this.routeDecryptedMessage(decryptedData);
+        } else {
+          console.warn(`[Socket] Unrecognized message format:`, decryptedData);
+        }
+      } else {
+        console.warn('[Socket] Received invalid decrypted data structure');
+      }
     } catch (error) {
       console.error('[Socket] Error processing Data packet:', error);
       this.emit('error', this.createSocketError(
@@ -1430,7 +1444,7 @@ export class AeroNyxSocket extends EventEmitter {
         'Failed to process encrypted data packet',
         'DATA_PROCESS_ERROR',
         error instanceof Error ? error.message : String(error),
-        false, // Decrypt failures generally not retryable (usually indicates protocol/key mismatch)
+        false,
         error
       ));
     }
