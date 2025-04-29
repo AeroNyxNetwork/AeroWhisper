@@ -660,9 +660,9 @@ export class AeroNyxSocket extends EventEmitter {
       senderName: message.senderName || 'Anonymous',         // Sender display name
       timestamp: typeof message.timestamp === 'string' 
         ? message.timestamp 
-        : message.timestamp instanceof Date 
+        : typeof message.timestamp?.toISOString === 'function'
           ? message.timestamp.toISOString() 
-          : new Date().toISOString(),  // Standardized timestamp format
+          : new Date().toISOString(),
       isEncrypted: message.isEncrypted ?? true,  // Encryption flag
       status: mapMessageStatus(message.status)   // Standardized status
     };
