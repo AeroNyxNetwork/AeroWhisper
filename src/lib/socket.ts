@@ -635,66 +635,6 @@ export class AeroNyxSocket extends EventEmitter {
   }
 
   /**
-   * Sends application-level data encrypted over the WebSocket.
-   * Queues the message if not currently connected.
-   * @param data The payload object to send.
-   * @param priority Optional priority level for the message.
-   * @returns Promise resolving to SendResult indicating outcome.
-   */
-  public async send(data: any, priority: MessagePriority = MessagePriority.NORMAL): Promise<SendResult> {
-  if (!this.isConnected()) {
-    console.warn('[Socket:SEND] Not connected. Queuing message.');
-    const queued = this.queueMessage('data', data, priority);
-    setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS * 2);
-    return queued ? SendResult.QUEUED : SendResult.FAILED;
-  }
-
-  // Ensure session key exists
-  if (!this.sessionKey) {
-    console.error('[Socket:SEND] CRITICAL: isConnected is true but sessionKey is null!');
-    this.emit('error', this.createSocketError('internal', 'Session key missing despite connected state', 'MISSING_SESSION_KEY', undefined, false));
-    const queued = this.queueMessage('data', data, priority);
-    return queued ? SendResult.QUEUED : SendResult.FAILED;
-  }
-
-  try {
-    // Wrap the data in a DataEnvelope with the server-expected field name
-    const envelope = {
-      payload_type: 'json', // Changed from payloadType to payload_type
-      payload: data
-    };
-
-    // Create the encrypted Data packet
-    const dataPacket = await createEncryptedDataPacket(
-      envelope,
-      this.sessionKey,
-      this.messageCounter
-    );
-
-    // Increment the counter after successfully creating the packet
-    this.messageCounter++;
-
-    // Send the JSON stringified packet
-    const packetJson = JSON.stringify(dataPacket);
-    this.socket!.send(packetJson);
-    console.debug('[Socket:SEND] Encrypted Data packet sent. Counter:', dataPacket.counter);
-    this.lastMessageTime = Date.now();
-    return SendResult.SENT;
-  } catch (error) {
-    console.error('[Socket:SEND] Error encrypting or sending data packet:', error);
-    const queued = this.queueMessage('data', data, priority);
-    this.emit('error', this.createSocketError(
-      'data',
-      'Failed to send encrypted data',
-      'DATA_SEND_ERROR',
-      error instanceof Error ? error.message : String(error),
-      true
-    ));
-    return queued ? SendResult.QUEUED : SendResult.FAILED;
-  }
-}
-
-  /**
    * Sends a chat message. Wraps the message data and calls `send`.
    * @param message The message object conforming to MessageType.
    * @returns Promise resolving to SendResult.
