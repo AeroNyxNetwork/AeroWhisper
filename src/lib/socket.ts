@@ -169,6 +169,16 @@ const MAX_BATCH_SIZE = 10;    // Maximum batch size
 const MIN_BATCH_SIZE = 1;     // Minimum batch size
 const BATCH_PROCESS_DELAY_MS = 10; // Delay between processing batches
 
+
+  /**
+ * Data envelope for encapsulating application messages
+ * Required by updated server protocol
+ */
+interface DataEnvelope {
+  payloadType: 'json';
+  payload: any;
+}
+
 /**
  * AeroNyx Socket - Manages WebSocket connections with robust error handling,
  * reconnection logic, state management, and secure messaging according to spec.
@@ -245,15 +255,6 @@ export class AeroNyxSocket extends EventEmitter {
     INTERNAL: { retry: true, log: 'error' },
     SECURITY: { retry: false, log: 'error' }
   };
-
-  /**
- * Data envelope for encapsulating application messages
- * Required by updated server protocol
- */
-  interface DataEnvelope {
-    payloadType: 'json';
-    payload: any;
-  }
 
   /**
    * Create a new AeroNyx socket
