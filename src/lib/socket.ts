@@ -761,7 +761,7 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
       try {
         // Wrap the data in a DataEnvelope with the server-expected field name
         const envelope = {
-          payload_type: 'json', // Changed from payloadType to payload_type
+          payload_type: 'Json', // Changed from payloadType to payload_type
           payload: data
         };
     
@@ -2199,7 +2199,7 @@ private queueMessage(type: string, data: any, priority: MessagePriority = Messag
   // Step 4: Wrap data with the DataEnvelope expected by the server
   // The queued data should match what would be sent directly in send()
   const envelopedData = {
-    payloadType: 'json',
+    payloadType: 'Json',
     payload: data
   };
   
