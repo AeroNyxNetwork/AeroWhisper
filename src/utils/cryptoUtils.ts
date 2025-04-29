@@ -425,20 +425,20 @@ export async function createEncryptedDataPacket(
   sessionKey: Uint8Array,
   counter: number
 ): Promise<any> {
-  // Convert data to string if it's an object
-  const messageString = typeof data === 'string' ? data : JSON.stringify(data);
+  // Ensure data is properly serialized as an envelope
+  const messageString = JSON.stringify(data);
   
   // Generate nonce and encrypt
   const nonce = generateNonce();
   const { ciphertext } = await encryptWithAesGcm(messageString, sessionKey, nonce);
   
-  // Create the data packet with the correct field name 
+  // Create the data packet
   return {
     type: 'Data',
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes256gcm' // Use this field name as expected by server
+    encryption_algorithm: 'aes256gcm'
   };
 }
 
