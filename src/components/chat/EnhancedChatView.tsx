@@ -8,6 +8,7 @@ import { EncryptionIndicator } from './EncryptionIndicator';
 import { useChat } from '../../hooks/useChat';
 import { MessageType } from '../../types/chat';
 import { ConnectionIndicator } from '../ui/ConnectionIndicator';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface EnhancedChatViewProps {
   chatId: string;
@@ -18,6 +19,7 @@ type ExtendedConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'r
 
 export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) => {
   const { colorMode } = useColorMode();
+  const { user } = useAuth();
   const theme = useTheme();
   const toast = useToast();
   const messagesEndRef = useRef<HTMLDivElement>(null);
