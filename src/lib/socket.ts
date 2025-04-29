@@ -661,42 +661,47 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
     // Step 2: Log diagnostic information
     console.debug('[Socket] Preparing to send chat message:', message.id);
     
+    // Helper function to safely get timestamp as string
+    const getTimestampString = () => {
+      if (typeof message.timestamp === 'string') {
+        return message.timestamp;
+      }
+      
+      if (message.timestamp && typeof message.timestamp === 'object') {
+        // Use type assertion to help TypeScript understand the type
+        const timestampObj = message.timestamp as { toISOString?: () => string };
+        if (timestampObj.toISOString && typeof timestampObj.toISOString === 'function') {
+          return timestampObj.toISOString();
+        }
+      }
+      
+      return new Date().toISOString();
+    };
+    
     // Step 3: Construct standardized message payload
-    // This ensures consistent format for all messages
     const messagePayload = {
-      type: 'message',          // Application-level type identifier
-      id: message.id,           // Unique message identifier
-      content: message.content, // Actual message content
-      senderId: message.senderId || this.localPeerId || '',  // Sender identifier
-      senderName: message.senderName || 'Anonymous',         // Sender display name
-      
-      // Handle timestamp with proper type checking
-      timestamp: typeof message.timestamp === 'string' 
-        ? message.timestamp 
-        : (message.timestamp && 
-           typeof message.timestamp === 'object' && 
-           'toISOString' in message.timestamp)
-          ? message.timestamp.toISOString() 
-          : new Date().toISOString(),
-          
-      isEncrypted: message.isEncrypted ?? true,  // Encryption flag
-      
-      // Simple status handling without dependency on external function
+      type: 'message',
+      id: message.id,
+      content: message.content,
+      senderId: message.senderId || this.localPeerId || '',
+      senderName: message.senderName || 'Anonymous',
+      timestamp: getTimestampString(),
+      isEncrypted: message.isEncrypted ?? true,
       status: typeof message.status === 'string' ? message.status : 'sending'
     };
     
-    // Step 4: Send with high priority to ensure prompt delivery
+    // Step 4: Send with high priority
     try {
       return await this.send(messagePayload, MessagePriority.HIGH);
     } catch (error) {
-      // Step 5: Comprehensive error handling
+      // Step 5: Error handling
       console.error('[Socket:SEND] Error sending message:', error);
       this.emit('error', this.createSocketError(
         'message',
         'Failed to send chat message',
         'MSG_SEND_ERROR',
         error instanceof Error ? error.message : String(error),
-        true // Usually retryable
+        true
       ));
       return SendResult.FAILED;
     }
