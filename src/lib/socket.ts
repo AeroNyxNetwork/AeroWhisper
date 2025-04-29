@@ -188,6 +188,7 @@ export class AeroNyxSocket extends EventEmitter {
   private socket: WebSocket | null = null;
   private chatId: string | null = null;
   private publicKey: string | null = null; // Client's Ed25519 public key (Base58)
+  private localPeerId: string | null = null;
   private serverUrl: string = process.env.NEXT_PUBLIC_AERONYX_SERVER_URL || 'wss://p2p.aeronyx.network';
   private connectionState: InternalConnectionStateType = InternalConnectionState.DISCONNECTED;
   private autoReconnect: boolean = true;
