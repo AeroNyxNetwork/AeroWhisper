@@ -652,7 +652,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @returns Promise resolving to SendResult.
    */
   public async sendMessage(message: MessageType): Promise<SendResult> {
-  // Step 1: Validate input parameters
+    // Step 1: Validate input parameters
     if (!message || !message.id || typeof message.content !== 'string') {
       console.error('[Socket:SEND] Invalid message format:', message);
       return SendResult.FAILED;
@@ -661,29 +661,24 @@ export class AeroNyxSocket extends EventEmitter {
     // Step 2: Log diagnostic information
     console.debug('[Socket] Preparing to send chat message:', message.id);
     
-    // Step 3: Construct standardized message payload
-    // This ensures consistent format for all messages
+    // Step 3: Construct standardized message payload with proper type handling
     const messagePayload = {
-      type: 'message',
-      id: message.id,
-      content: message.content,
-      senderId: message.senderId || this.localPeerId || '',
-      senderName: message.senderName || 'Anonymous',
+      type: 'message',          // Application-level type identifier
+      id: message.id,           // Unique message identifier
+      content: message.content, // Actual message content
+      senderId: message.senderId || this.localPeerId || '',  // Sender identifier
+      senderName: message.senderName || 'Anonymous',         // Sender display name
       timestamp: typeof message.timestamp === 'string' 
         ? message.timestamp 
-        : (message.timestamp && 
-           typeof message.timestamp === 'object' && 
-           'toISOString' in message.timestamp && 
-           typeof message.timestamp.toISOString === 'function')
+        : message.timestamp instanceof Date 
           ? message.timestamp.toISOString() 
-          : new Date().toISOString(),
-      isEncrypted: message.isEncrypted ?? true,
-      status: this.mapMessageStatus(message.status)
+          : new Date().toISOString(),  // Fix the type error by using instanceof instead
+      isEncrypted: message.isEncrypted ?? true,  // Encryption flag
+      status: message.status || 'sending',
+      chatId: this.chatId       // Added field to match server expectation
     };
     
-    
     // Step 4: Send with high priority to ensure prompt delivery
-    // Messages are user-initiated actions and should be prioritized
     try {
       return await this.send(messagePayload, MessagePriority.HIGH);
     } catch (error) {
