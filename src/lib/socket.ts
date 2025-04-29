@@ -634,7 +634,18 @@ export class AeroNyxSocket extends EventEmitter {
         return 'disconnected';
     }
   }
-
+  private mapMessageStatus(status: any): string {
+    // Add appropriate status mapping logic here
+    // This is a simple example - adjust based on your actual status values
+    if (!status) return 'unknown';
+    
+    // Check if status is already a string
+    if (typeof status === 'string') return status;
+    
+    // If status is a custom type or object, map it appropriately
+    // Example: if status is a numeric enum or object with a status property
+    return String(status); // Basic fallback
+  }
   /**
    * Sends a chat message. Wraps the message data and calls `send`.
    * @param message The message object conforming to MessageType.
@@ -653,18 +664,18 @@ export class AeroNyxSocket extends EventEmitter {
     // Step 3: Construct standardized message payload
     // This ensures consistent format for all messages
     const messagePayload = {
-      type: 'message',          // Application-level type identifier
-      id: message.id,           // Unique message identifier
-      content: message.content, // Actual message content
-      senderId: message.senderId || this.localPeerId || '',  // Sender identifier
-      senderName: message.senderName || 'Anonymous',         // Sender display name
+      type: 'message',
+      id: message.id,
+      content: message.content,
+      senderId: message.senderId || this.localPeerId || '',
+      senderName: message.senderName || 'Anonymous',
       timestamp: typeof message.timestamp === 'string' 
         ? message.timestamp 
-        : typeof message.timestamp?.toISOString === 'function'
+        : message.timestamp && typeof message.timestamp.toISOString === 'function'
           ? message.timestamp.toISOString() 
           : new Date().toISOString(),
-      isEncrypted: message.isEncrypted ?? true,  // Encryption flag
-      status: mapMessageStatus(message.status)   // Standardized status
+      isEncrypted: message.isEncrypted ?? true,
+      status: this.mapMessageStatus(message.status)
     };
     
     
