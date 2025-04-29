@@ -671,7 +671,10 @@ export class AeroNyxSocket extends EventEmitter {
       senderName: message.senderName || 'Anonymous',
       timestamp: typeof message.timestamp === 'string' 
         ? message.timestamp 
-        : message.timestamp && typeof message.timestamp.toISOString === 'function'
+        : (message.timestamp && 
+           typeof message.timestamp === 'object' && 
+           'toISOString' in message.timestamp && 
+           typeof message.timestamp.toISOString === 'function')
           ? message.timestamp.toISOString() 
           : new Date().toISOString(),
       isEncrypted: message.isEncrypted ?? true,
