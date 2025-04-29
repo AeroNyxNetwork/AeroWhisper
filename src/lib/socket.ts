@@ -647,11 +647,11 @@ export class AeroNyxSocket extends EventEmitter {
     return String(status); // Basic fallback
   }
   /**
-   * Sends a chat message. Wraps the message data and calls `send`.
-   * @param message The message object conforming to MessageType.
-   * @returns Promise resolving to SendResult.
-   */
-  public async sendMessage(message: MessageType): Promise<SendResult> {
+ * Sends a chat message. Wraps the message data and calls `send`.
+ * @param message The message object conforming to MessageType.
+ * @returns Promise resolving to SendResult.
+ */
+public async sendMessage(message: MessageType): Promise<SendResult> {
     // Step 1: Validate input parameters
     if (!message || !message.id || typeof message.content !== 'string') {
       console.error('[Socket:SEND] Invalid message format:', message);
@@ -661,21 +661,28 @@ export class AeroNyxSocket extends EventEmitter {
     // Step 2: Log diagnostic information
     console.debug('[Socket] Preparing to send chat message:', message.id);
     
-    // Step 3: Construct standardized message payload with proper type handling
+    // Step 3: Construct standardized message payload
+    // This ensures consistent format for all messages
     const messagePayload = {
       type: 'message',          // Application-level type identifier
       id: message.id,           // Unique message identifier
       content: message.content, // Actual message content
       senderId: message.senderId || this.localPeerId || '',  // Sender identifier
       senderName: message.senderName || 'Anonymous',         // Sender display name
+      
+      // Handle timestamp with proper type checking
       timestamp: typeof message.timestamp === 'string' 
         ? message.timestamp 
-        : message.timestamp instanceof Date 
+        : (message.timestamp && 
+           typeof message.timestamp === 'object' && 
+           'toISOString' in message.timestamp)
           ? message.timestamp.toISOString() 
-          : new Date().toISOString(),  // Fix the type error by using instanceof instead
+          : new Date().toISOString(),
+          
       isEncrypted: message.isEncrypted ?? true,  // Encryption flag
-      status: message.status || 'sending',
-      chatId: this.chatId       // Added field to match server expectation
+      
+      // Simple status handling without dependency on external function
+      status: typeof message.status === 'string' ? message.status : 'sending'
     };
     
     // Step 4: Send with high priority to ensure prompt delivery
@@ -688,7 +695,7 @@ export class AeroNyxSocket extends EventEmitter {
         'message',
         'Failed to send chat message',
         'MSG_SEND_ERROR',
-         error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.message : String(error),
         true // Usually retryable
       ));
       return SendResult.FAILED;
