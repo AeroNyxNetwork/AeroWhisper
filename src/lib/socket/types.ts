@@ -8,7 +8,7 @@ export interface BasePacket {
 }
 
 export interface DataEnvelope {
-  payload_type: 'json';  // Changed from payloadType to payload_type
+  payload_type: 'Json';  // Changed from payloadType to payload_type
   payload: any;         // The actual message payload
 }
 
