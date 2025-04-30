@@ -89,7 +89,7 @@ export const ReadReceipts: React.FC<ReadReceiptsProps> = ({
         _hover={{ opacity: 1 }}
         transition="opacity 0.2s"
       >
-      <Icon as={icon} boxSize="12px" mr={1} />
+      <Icon as={icon} fontSize="12px" mr={1} />
       </Flex>
     </Tooltip>
   );
