@@ -440,14 +440,19 @@ export class AeroNyxSocket extends EventEmitter {
    * @throws Error if connection or authentication fails definitively.
    */
   public async connect(chatId: string, publicKey: string): Promise<void> {
+    console.log(`[Socket] Attempting to connect to chat: ${chatId} with public key: ${publicKey.substring(0, 10)}...`);
+    
     // 1. Handle already connected state
-    if (this.connectionState === InternalConnectionState.CONNECTED && this.chatId === chatId && !this.forceReconnect) {
+    if (this.connectionState === InternalConnectionState.CONNECTED && 
+        this.chatId === chatId && 
+        !this.forceReconnect) {
       console.log('[Socket] Already connected to this chat.');
       return Promise.resolve();
     }
-
+  
     // 2. Handle concurrent connection attempts
-    if (this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) {
+    if (this.connectionState === InternalConnectionState.CONNECTING || 
+        this.connectionState === InternalConnectionState.AUTHENTICATING) {
       console.warn('[Socket] Connection attempt already in progress.');
       if (this.connectionPromise && this.chatId === chatId) {
         console.log('[Socket] Returning existing connection promise for the same chat.');
@@ -458,9 +463,8 @@ export class AeroNyxSocket extends EventEmitter {
         await this.disconnect(); // Abort previous attempt cleanly
       }
     }
-
+  
     // 3. Initialize connection
-    console.log(`[Socket] Attempting to connect to chat: ${chatId}`);
     this.chatId = chatId;
     this.publicKey = publicKey;
     await this.safeChangeState(InternalConnectionState.CONNECTING); // Set state before async ops
@@ -468,32 +472,45 @@ export class AeroNyxSocket extends EventEmitter {
     this.autoReconnect = true;
     this.reconnectAttempts = 0;
     this.emit('connectionStatus', 'connecting');
-
+  
     // 4. Cleanup any previous connection remnants
     this.cleanupConnection(false); // Don't emit disconnect during explicit connect
-
+  
     // 5. Create and manage the connection promise
     this.connectionPromise = new Promise<void>((resolve, reject) => {
       this.connectionResolve = resolve;
       this.connectionReject = reject;
-
+  
       // 6. Initiate WebSocket connection within a try/catch
       try {
         const wsUrl = createWebSocketUrl(this.serverUrl, chatId);
         console.log(`[Socket] Connecting to WebSocket URL: ${wsUrl}`);
+        
+        // Make sure WebSocket constructor is available
+        if (typeof WebSocket === 'undefined') {
+          throw new Error('WebSocket API is not available in this environment');
+        }
+        
         this.socket = new WebSocket(wsUrl);
         this.setupSocketEventHandlers(); // Attach listeners
-        this.startConnectionTimeout();    // Start timeout for the connection attempt
+        this.startConnectionTimeout(); // Start timeout for the connection attempt
       } catch (error) {
         console.error('[Socket] Failed to create WebSocket instance:', error);
         this.safeChangeState(InternalConnectionState.DISCONNECTED); // Ensure state is correct
         this.clearConnectionTimeout();
         const initError = new Error(`WebSocket initialization failed: ${error instanceof Error ? error.message : String(error)}`);
-        this.emit('error', this.createSocketError('connection', 'Failed to initialize WebSocket', 'INIT_ERROR', undefined, false, error));
+        this.emit('error', this.createSocketError(
+          'connection', 
+          'Failed to initialize WebSocket', 
+          'INIT_ERROR', 
+          undefined, 
+          false, 
+          error
+        ));
         this.rejectConnection(initError); // Reject the promise immediately
       }
     });
-
+  
     return this.connectionPromise;
   }
 
@@ -891,58 +908,67 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
    * Handles WebSocket open event. Changes state and sends Auth message.
    */
   private handleSocketOpen(): void {
-      this.clearConnectionTimeout(); // Connection successful, clear timeout
-      console.log('[Socket] WebSocket connection opened. Sending Auth...');
-      this.safeChangeState(InternalConnectionState.AUTHENTICATING); // Move to authenticating state
+    this.clearConnectionTimeout(); // Connection successful, clear timeout
+    console.log('[Socket] WebSocket connection opened. Starting authentication flow...');
+    
+    // Add a small delay before sending Auth message to ensure socket is fully established
+    setTimeout(() => {
+      this.safeChangeState(InternalConnectionState.AUTHENTICATING); 
       this.sendAuthMessage();
+    }, 100);
+  }
+  
+  private sendAuthMessage(): void {
+    if (!this.socket || !isSocketOpen(this.socket)) {
+      console.error('[Socket] Cannot send Auth: Socket not open');
+      this.rejectConnection(new Error('Socket closed before Auth could be sent'));
+      return;
     }
   
-    /**
-     * Sends the initial Auth message to start authentication flow
-     */
-    private sendAuthMessage(): void {
-      if (!this.socket || !isSocketOpen(this.socket)) {
-        console.error('[Socket] Cannot send Auth: Socket not open');
-        this.rejectConnection(new Error('Socket closed before Auth could be sent'));
-        return;
+    try {
+      if (!this.chatId || !this.publicKey) {
+        throw new Error('Missing chatId or publicKey for Auth');
       }
-    
+  
+      // Generate a string nonce using timestamp and random value
+      const nonceString = `${Date.now()}-${Math.random().toString(16).substring(2)}`;
+  
+      // Create AuthMessage strictly following the server's expected format
+      // The server spec explicitly requires snake_case field names
+      const authMessage = {
+        type: 'Auth',
+        public_key: this.publicKey,
+        version: '1.0.0',
+        features: ['aes256gcm', 'webrtc', 'key-rotation'],
+        encryption_algorithm: 'aes256gcm',
+        nonce: nonceString
+      };
+      
+      // Log the exact message we're sending for debugging
+      console.log('[Socket] Auth message to be sent:', JSON.stringify(authMessage));
+      
+      // Wrap in try-catch to ensure we catch any serialization errors
       try {
-        if (!this.chatId || !this.publicKey) {
-          throw new Error('Missing chatId or publicKey for Auth');
-        }
-    
-        // Generate a string nonce using timestamp and random value
-        const nonceString = `${Date.now()}-${Math.random().toString(16).substring(2)}`;
-    
-        // Create AuthMessage according to the EXACT server expectations
-        const authMessage = {
-          type: 'Auth',
-          public_key: this.publicKey,           // Must use underscore format
-          version: '1.0.0',                      
-          features: ['aes256gcm', 'webrtc', 'key-rotation'],
-          encryption_algorithm: 'aes256gcm',     // Must use underscore format
-          nonce: nonceString
-        };
-        
-        console.log('[Socket] Auth message to be sent:', JSON.stringify(authMessage));
-        
-        this.socket.send(JSON.stringify(authMessage));
+        const messageString = JSON.stringify(authMessage);
+        this.socket.send(messageString);
         console.log('[Socket] Auth message sent successfully');
-      } catch (error) {
-        console.error('[Socket] Error sending Auth message:', error);
-        this.emit('error', this.createSocketError(
-          'auth',
-          'Failed to send Auth message',
-          'AUTH_SEND_ERROR',
-          error instanceof Error ? error.message : String(error),
-          true
-        ));
-        this.rejectConnection(error);
-        // Ensure we disconnect properly after auth failure
-        this.disconnect().catch(e => console.error("Error during disconnect after auth failure:", e));
+      } catch (sendError) {
+        throw new Error(`Failed to serialize or send Auth message: ${sendError instanceof Error ? sendError.message : String(sendError)}`);
       }
+    } catch (error) {
+      console.error('[Socket] Error sending Auth message:', error);
+      this.emit('error', this.createSocketError(
+        'auth',
+        'Failed to send Auth message',
+        'AUTH_SEND_ERROR',
+        error instanceof Error ? error.message : String(error),
+        true
+      ));
+      this.rejectConnection(error);
+      // Ensure we disconnect properly after auth failure
+      this.disconnect().catch(e => console.error("Error during disconnect after auth failure:", e));
     }
+  }
   /**
    * Handles WebSocket message event. Parses, processes, and updates activity time.
    */
@@ -2420,19 +2446,38 @@ private queueMessage(type: string, data: any, priority: MessagePriority = Messag
     }
   }
 
+  private isSocketReady(): boolean {
+    return this.socket !== null && 
+           this.socket.readyState === WebSocket.OPEN && 
+           typeof this.socket.send === 'function';
+  }
+
   private startConnectionTimeout(): void {
     this.clearConnectionTimeout();
-    console.debug(`[Socket] Starting connection timeout (${CONNECTION_TIMEOUT_MS}ms)`);
+    const timeoutMs = 15000; // Extended timeout for slower connections
+    console.debug(`[Socket] Starting connection timeout (${timeoutMs}ms)`);
     this.connectionTimeout = setTimeout(() => {
       this.connectionTimeout = null;
       // Only act if still in a connecting/authenticating state
-      if (this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) {
+      if (this.connectionState === InternalConnectionState.CONNECTING || 
+          this.connectionState === InternalConnectionState.AUTHENTICATING) {
         console.error('[Socket] Connection attempt timed out.');
         const timeoutError = new Error('Connection timed out');
-        this.emit('error', this.createSocketError('connection','Connection attempt timed out','CONN_TIMEOUT',undefined,true));
+        this.emit('error', this.createSocketError(
+          'connection',
+          'Connection attempt timed out',
+          'CONN_TIMEOUT',
+          undefined,
+          true
+        ));
         // Ensure socket is closed if timeout occurs
         if (this.socket) {
-          try { this.socket.close(1006, "Connection Timeout"); } catch(e) {}
+          try { 
+            console.log('[Socket] Closing socket due to timeout');
+            this.socket.close(1006, "Connection Timeout"); 
+          } catch(e) {
+            console.error('[Socket] Error closing socket:', e);
+          }
         }
         this.rejectConnection(timeoutError); // Reject the connect promise
         this.cleanupConnection(true); // Cleanup and emit disconnected
@@ -2443,6 +2488,5 @@ private queueMessage(type: string, data: any, priority: MessagePriority = Messag
       } else {
         console.debug("[Socket] Connection timeout fired but state is no longer connecting/authenticating.");
       }
-    }, CONNECTION_TIMEOUT_MS);
+    }, timeoutMs);
   }
-}
