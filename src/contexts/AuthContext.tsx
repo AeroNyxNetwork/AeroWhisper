@@ -14,7 +14,7 @@ import {
 const DISPLAY_NAME_KEY = 'aero-display-name';
 const AUTH_STATE_KEY = 'aero-auth-state';
 const REVALIDATION_INTERVAL = 1000 * 60 * 60; // Revalidate auth every hour
-const AUTH_TIMEOUT = 10000; // 10 second timeout for auth operations
+const AUTH_TIMEOUT = 30000; // 10 second timeout for auth operations
 
 // --- Types ---
 export type AuthStatus = 'initializing' | 'authenticated' | 'unauthenticated' | 'error';
