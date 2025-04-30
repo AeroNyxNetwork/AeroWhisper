@@ -1469,14 +1469,19 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
   
       // Process the decrypted data based on the envelope format
       if (decryptedData && typeof decryptedData === 'object') {
-        if (decryptedData.payloadType === 'json' && decryptedData.payload) {
-          // Handle envelope format - extract and route the payload
+        console.debug('[Socket] Decrypted data structure:', decryptedData);
+        
+        // Handle server format with payload_type
+        if (decryptedData.payload_type === 'Json' && decryptedData.payload) {
           await this.routeDecryptedMessage(decryptedData.payload);
-        } else if (!decryptedData.payloadType && !decryptedData.payload) {
-          // Backward compatibility for old format (direct message without envelope)
+        } 
+        // Handle client format with payloadType (backward compatibility)
+        else if (decryptedData.payloadType === 'json' && decryptedData.payload) {
+          await this.routeDecryptedMessage(decryptedData.payload);
+        } 
+        // Try direct format if no envelope structure detected
+        else {
           await this.routeDecryptedMessage(decryptedData);
-        } else {
-          console.warn(`[Socket] Unrecognized message format:`, decryptedData);
         }
       } else {
         console.warn('[Socket] Received invalid decrypted data structure');
@@ -1493,7 +1498,6 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
       ));
     }
   }
-
   // Add this missing method referenced above
   private recordError(): void {
     this.consecutiveFailedPings++;
