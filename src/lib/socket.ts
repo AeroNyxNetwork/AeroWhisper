@@ -1016,8 +1016,14 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
   private handleSocketError(event: Event): void {
     this.clearConnectionTimeout(); // Ensure timeout is cleared
     console.error('[Socket] WebSocket error:', event);
+    
+    // Enhanced debugging
+    console.debug('[Socket] Connection state when error occurred:', 
+      CONNECTION_STATE_NAMES[this.connectionState]);
+    console.debug('[Socket] Auto-reconnect enabled:', this.autoReconnect);
+    
     const errorMsg = 'WebSocket connection error occurred.';
-
+  
     // Emit a generic connection error
     this.emit('error', this.createSocketError(
       'connection',
@@ -1027,14 +1033,16 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
       true, // Assume potentially retryable unless onclose gives a specific code
       event
     ));
-
+  
     // If the error occurred during connection/auth, reject the promise
-    if (this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) {
+    if (this.connectionState === InternalConnectionState.CONNECTING || 
+        this.connectionState === InternalConnectionState.AUTHENTICATING) {
+      console.error('[Socket] Error during connection/authentication phase');
       this.rejectConnection(new Error(errorMsg));
       // Note: cleanupConnection and state change will be handled by the subsequent 'onclose' event
     } else {
-        // If error on established connection, trigger health check which might lead to reconnect
-        this.checkConnectionHealth();
+      // If error on established connection, trigger health check which might lead to reconnect
+      this.checkConnectionHealth();
     }
   }
 
