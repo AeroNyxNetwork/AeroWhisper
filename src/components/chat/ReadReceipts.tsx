@@ -89,12 +89,12 @@ export const ReadReceipts: React.FC<ReadReceiptsProps> = ({
         _hover={{ opacity: 1 }}
         transition="opacity 0.2s"
       >
-        <Icon 
-          as={icon} 
-          color={color} 
-          boxSize={3} 
-          mr={1}
-        />
+       <Icon 
+        as={icon} 
+        color={color} 
+        boxSize="12px" // Use a string dimension instead of a number
+        mr={1}
+      />
       </Flex>
     </Tooltip>
   );
