@@ -138,12 +138,12 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2 }}
-            >
-               <Message 
+            >        
+              <Message 
                 message={message}
                 previousMessage={index > 0 ? messages[index - 1] : null}
                 showAvatar={shouldShowAvatar(message, index > 0 ? messages[index - 1] : null)}
-                isOwnMessage={message.senderId === user?.id}
+                isOwnMessage={message.senderId === user?.id || message.senderId === user?.publicKey}
                 onRetry={handleRetryMessage}
               />
             </motion.div>
