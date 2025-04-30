@@ -2209,7 +2209,6 @@ private queueMessage(type: string, data: any, priority: MessagePriority = Messag
     payloadType: 'Json',
     payload: data
   };
-  console.debug('[Socket:SEND] Sending with envelope:', JSON.stringify(envelope).substring(0, 100) + '...');
   
   // Step 5: Create the pending message object with all required metadata
   const pendingMsg: PendingMessage = {
