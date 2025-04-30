@@ -140,15 +140,6 @@ interface PendingMessage {
   priority: MessagePriority; // Added for priority queue support
 }
 
-interface AuthMessage {
-  type: 'Auth';
-  public_key: string; // Changed from publicKey
-  version: string;
-  features: string[];
-  encryption_algorithm: string; // Changed from encryptionAlgorithm
-  nonce: string;
-}
-
 /**
  * Default reconnection configuration with exponential backoff
  */
@@ -753,56 +744,56 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
      * @param signalData The actual signal data
      */
     public async send(data: any, priority: MessagePriority = MessagePriority.NORMAL): Promise<SendResult> {
-      if (!this.isConnected()) {
-        console.warn('[Socket:SEND] Not connected. Queuing message.');
-        const queued = this.queueMessage('data', data, priority);
-        setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS * 2);
-        return queued ? SendResult.QUEUED : SendResult.FAILED;
-      }
-    
-      // Ensure session key exists
-      if (!this.sessionKey) {
-        console.error('[Socket:SEND] CRITICAL: isConnected is true but sessionKey is null!');
-        this.emit('error', this.createSocketError('internal', 'Session key missing despite connected state', 'MISSING_SESSION_KEY', undefined, false));
-        const queued = this.queueMessage('data', data, priority);
-        return queued ? SendResult.QUEUED : SendResult.FAILED;
-      }
-    
-      try {
-        // Wrap the data in a DataEnvelope with the server-expected field name
-        const envelope = {
-          payload_type: 'Json', // Changed from payloadType to payload_type
-          payload: data
-        };
-    
-        // Create the encrypted Data packet
-        const dataPacket = await createEncryptedDataPacket(
-          envelope,
-          this.sessionKey,
-          this.messageCounter
-        );
-    
-        // Increment the counter after successfully creating the packet
-        this.messageCounter++;
-    
-        // Send the JSON stringified packet
-        const packetJson = JSON.stringify(dataPacket);
-        this.socket!.send(packetJson);
-        console.debug('[Socket:SEND] Encrypted Data packet sent. Counter:', dataPacket.counter);
-        this.lastMessageTime = Date.now();
-        return SendResult.SENT;
-      } catch (error) {
-        console.error('[Socket:SEND] Error encrypting or sending data packet:', error);
-        const queued = this.queueMessage('data', data, priority);
-        this.emit('error', this.createSocketError(
-          'data',
-          'Failed to send encrypted data',
-          'DATA_SEND_ERROR',
-          error instanceof Error ? error.message : String(error),
-          true
-        ));
-        return queued ? SendResult.QUEUED : SendResult.FAILED;
-      }
+        if (!this.isConnected()) {
+          console.warn('[Socket:SEND] Not connected. Queuing message.');
+          const queued = this.queueMessage('data', data, priority);
+          setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS * 2);
+          return queued ? SendResult.QUEUED : SendResult.FAILED;
+        }
+      
+        // Ensure session key exists
+        if (!this.sessionKey) {
+          console.error('[Socket:SEND] CRITICAL: isConnected is true but sessionKey is null!');
+          this.emit('error', this.createSocketError('internal', 'Session key missing despite connected state', 'MISSING_SESSION_KEY', undefined, false));
+          const queued = this.queueMessage('data', data, priority);
+          return queued ? SendResult.QUEUED : SendResult.FAILED;
+        }
+      
+        try {
+          // Wrap the data in a DataEnvelope with the server-expected field name
+          const envelope = {
+            payload_type: 'Json', // Changed from payloadType to payload_type
+            payload: data
+          };
+      
+          // Create the encrypted Data packet
+          const dataPacket = await createEncryptedDataPacket(
+            envelope,
+            this.sessionKey,
+            this.messageCounter
+          );
+      
+          // Increment the counter after successfully creating the packet
+          this.messageCounter++;
+      
+          // Send the JSON stringified packet
+          const packetJson = JSON.stringify(dataPacket);
+          this.socket!.send(packetJson);
+          console.debug('[Socket:SEND] Encrypted Data packet sent. Counter:', dataPacket.counter);
+          this.lastMessageTime = Date.now();
+          return SendResult.SENT;
+        } catch (error) {
+          console.error('[Socket:SEND] Error encrypting or sending data packet:', error);
+          const queued = this.queueMessage('data', data, priority);
+          this.emit('error', this.createSocketError(
+            'data',
+            'Failed to send encrypted data',
+            'DATA_SEND_ERROR',
+            error instanceof Error ? error.message : String(error),
+            true
+          ));
+          return queued ? SendResult.QUEUED : SendResult.FAILED;
+        }
     }
 
     /**
@@ -933,10 +924,8 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
           encryption_algorithm: 'aes256gcm',
           nonce: nonceString   // String nonce as now required by the interface
         };
+        console.log('[Socket] Auth message to be sent:', JSON.stringify(authMessage));
         
-        // Log the message for debugging
-        console.log('[Socket] Sending Auth message:', JSON.stringify(authMessage));
-    
         this.socket.send(JSON.stringify(authMessage));
         console.log('[Socket] Auth message sent successfully');
       } catch (error) {
