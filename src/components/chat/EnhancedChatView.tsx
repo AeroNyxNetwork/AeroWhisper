@@ -139,11 +139,11 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2 }}
             >
-              <Message 
+               <Message 
                 message={message}
                 previousMessage={index > 0 ? messages[index - 1] : null}
                 showAvatar={shouldShowAvatar(message, index > 0 ? messages[index - 1] : null)}
-                isOwnMessage={message.senderId === user?.id} // Changed from chatInfo?.createdBy to user?.id
+                isOwnMessage={message.senderId === user?.id}
                 onRetry={handleRetryMessage}
               />
             </motion.div>
