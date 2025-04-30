@@ -36,6 +36,11 @@ export async function getStaticPaths() {
   };
 }
 
+useEffect(() => {
+  debugNetworkIssues();
+}, []);
+
+
 const ChatPage = () => {
   const router = useRouter();
   const { id } = router.query;
@@ -111,6 +116,53 @@ const ChatPage = () => {
   const handleCopyAction = () => {
     copyToClipboard();
     // If InviteModal has onClosed, we would call it here
+  };
+
+  const debugNetworkIssues = () => {
+    if (typeof window === 'undefined') return;
+    
+    // Capture WebSocket errors
+    const originalWebSocket = window.WebSocket;
+    window.WebSocket = function(url, protocols) {
+      console.log(`[Debug] Creating WebSocket connection to: ${url}`);
+      const ws = new originalWebSocket(url, protocols);
+      
+      const originalSend = ws.send;
+      ws.send = function(data) {
+        console.log(`[Debug] WebSocket sending data:`, data);
+        return originalSend.call(ws, data);
+      };
+      
+      ws.addEventListener('open', (event) => {
+        console.log('[Debug] WebSocket connection opened');
+      });
+      
+      ws.addEventListener('error', (event) => {
+        console.error('[Debug] WebSocket error:', event);
+      });
+      
+      ws.addEventListener('close', (event) => {
+        console.log(`[Debug] WebSocket closed: code=${event.code}, reason=${event.reason}, wasClean=${event.wasClean}`);
+      });
+      
+      return ws;
+    };
+    
+    // Capture fetch errors
+    const originalFetch = window.fetch;
+    window.fetch = function(resource, init) {
+      const url = typeof resource === 'string' ? resource : resource.url;
+      console.log(`[Debug] Fetch request to: ${url}`);
+      return originalFetch.apply(this, arguments)
+        .then(response => {
+          console.log(`[Debug] Fetch response from ${url}: ${response.status}`);
+          return response;
+        })
+        .catch(err => {
+          console.error(`[Debug] Fetch error for ${url}:`, err);
+          throw err;
+        });
+    };
   };
   
   return (
