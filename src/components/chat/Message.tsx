@@ -48,15 +48,15 @@ export const Message: React.FC<MessageProps> = ({
   const getStatusIndicator = () => {
     if (isOwnMessage) {
       if (message.status === 'sending') {
-        return <Icon as={FaClock} color="gray.400" />;
+        return <Icon as={FaClock} fontSize="xs" color="gray.400" />; // Changed boxSize to fontSize
       } else if (message.status === 'sent') {
-        return <Icon as={FaCheck} color="gray.500" />;
+        return <Icon as={FaCheck} fontSize="xs" color="gray.500" />; // Changed boxSize to fontSize
       } else if (message.status === 'delivered') {
-        return <Icon as={FaCheckDouble} color="gray.500" />;
+        return <Icon as={FaCheckDouble} fontSize="xs" color="gray.500" />; // Changed boxSize to fontSize
       } else if (message.status === 'read') {
-        return <Icon as={FaCheckDouble} color="blue.500" />;
+        return <Icon as={FaCheckDouble} fontSize="xs" color="blue.500" />; // Changed boxSize to fontSize
       } else if (message.status === 'failed') {
-        return <Icon as={FaTimes} color="red.500" />;
+        return <Icon as={FaTimes} fontSize="xs" color="red.500" />; // Changed boxSize to fontSize
       }
     }
     return null;
