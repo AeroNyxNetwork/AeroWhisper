@@ -135,8 +135,12 @@ export async function processDataPacket(
     const nonceUint8 = new Uint8Array(packet.nonce);
     
     // Check if server specified an encryption algorithm
-    // Support both field names for backward compatibility
-    const algorithm = packet.encryption_algorithm || (packet as any).encryption || 'aes256gcm';
+    // Support both field names for backward compatibility, but prioritize snake_case
+    // as it's what the server expects according to the specification
+    const algorithm = packet.encryption_algorithm || 
+                     (packet as any).encryptionAlgorithm || 
+                     (packet as any).encryption || 
+                     'aes256gcm';
     
     // Log packet details for debugging
     console.debug('[Socket] Processing encrypted data packet:', {
@@ -156,7 +160,22 @@ export async function processDataPacket(
     
     // Parse the decrypted JSON - ensure we're working with a string
     if (typeof decryptedText === 'string') {
-      return JSON.parse(decryptedText);
+      const parsed = JSON.parse(decryptedText);
+      
+      // Check for the payload envelope format used by server and unwrap if needed
+      if (parsed && typeof parsed === 'object') {
+        // Server sends with payload_type: 'Json' and the actual data in payload
+        if (parsed.payload_type === 'Json' && parsed.payload) {
+          return parsed.payload;
+        }
+        // Fallback for older versions that might use camelCase
+        if (parsed.payloadType === 'json' && parsed.payload) {
+          return parsed.payload;
+        }
+      }
+      
+      // Return the parsed object directly if it doesn't follow the envelope pattern
+      return parsed;
     } else if (decryptedText instanceof Uint8Array) {
       // Convert Uint8Array to string if needed
       const textDecoder = new TextDecoder();
