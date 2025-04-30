@@ -764,7 +764,6 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
           payload_type: 'Json', // Changed from payloadType to payload_type
           payload: data
         };
-        console.debug('[Socket:SEND] Sending with envelope:', JSON.stringify(envelope).substring(0, 100) + '...');
     
         // Create the encrypted Data packet
         const dataPacket = await createEncryptedDataPacket(
