@@ -34,7 +34,7 @@ export const Message: React.FC<MessageProps> = ({
       status: message.status,
       isEncrypted: message.isEncrypted,
       timestamp: typeof message.timestamp === 'string' ? message.timestamp : message.timestamp?.toISOString()
-    });
+    }); 
   }
   
   // Convert timestamp to Date if it's a string or number
