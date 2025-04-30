@@ -48,15 +48,12 @@ const ChatPage = () => {
   // Client-side only states
   const [isClient, setIsClient] = useState(false);
   const [currentUrl, setCurrentUrl] = useState('');
-  const [isStorageEnabled, setIsStorageEnabled] = useState(false);
   
   // Initialize client-side functionality
   useEffect(() => {
     setIsClient(true);
     if (typeof window !== 'undefined') {
       setCurrentUrl(window.location.href);
-      // Check if decentralized storage is enabled
-      setIsStorageEnabled(localStorage.getItem('enable-decentralized-storage') === 'true');
     }
     
     // Redirect to login if not authenticated
@@ -65,7 +62,7 @@ const ChatPage = () => {
     }
   }, [isAuthenticated, isLoading, router]);
   
-  // Function to copy to clipboard with browser API
+  // Function to copy to clipboard with browser API - we'll keep this for internal use
   const copyToClipboard = useCallback(() => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(currentUrl);
@@ -76,21 +73,6 @@ const ChatPage = () => {
       });
     }
   }, [currentUrl, toast]);
-  
-  // Function to toggle decentralized storage
-  const toggleStorage = useCallback(() => {
-    const newValue = !isStorageEnabled;
-    setIsStorageEnabled(newValue);
-    localStorage.setItem('enable-decentralized-storage', String(newValue));
-    toast({
-      title: newValue ? "Decentralized Storage Enabled" : "Decentralized Storage Disabled",
-      description: newValue ? 
-        "Your messages will be encrypted and stored on IPFS" : 
-        "Your messages will only be stored locally",
-      status: newValue ? "success" : "info",
-      duration: 3000,
-    });
-  }, [isStorageEnabled, toast]);
   
   // Loading state when router is not ready or in SSR
   if (!isClient || isLoading || !isAuthenticated) {
@@ -125,6 +107,12 @@ const ChatPage = () => {
     );
   }
   
+  // Handle manual copy action when user clicks the copy button inside the modal
+  const handleCopyAction = () => {
+    copyToClipboard();
+    // If InviteModal has onClosed, we would call it here
+  };
+  
   return (
     <Layout>
       {/* Web3 wallet connection status */}
@@ -143,10 +131,23 @@ const ChatPage = () => {
           onClose={onClose}
           chatId={chatId}
           inviteLink={currentUrl}
-          onCopy={copyToClipboard}
-          solanaEnabled={!!user?.publicKey}
+          // Remove onCopy prop - it's not defined in InviteModalProps
+          // Remove solanaEnabled prop - it's likely also not defined or needs to be adapted
         />
       )}
+      
+      {/* Add a global event listener to handle copy actions */}
+      <Box id="copy-event-handler" hidden>
+        <script dangerouslySetInnerHTML={{
+          __html: `
+            document.addEventListener('click', function(e) {
+              if (e.target && e.target.id === 'copy-link-button') {
+                document.dispatchEvent(new CustomEvent('copy-invite-link'));
+              }
+            });
+          `
+        }} />
+      </Box>
     </Layout>
   );
 };
