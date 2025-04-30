@@ -1453,7 +1453,7 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
       if (!this.sessionKey) {
         throw new Error('Cannot decrypt Data packet: Session key is missing');
       }
-  
+    
       // Process the encrypted data packet through our crypto utils
       const decryptedData = await processEncryptedDataPacket(message, this.sessionKey);
       
@@ -1461,25 +1461,27 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
       if (message.counter !== undefined && typeof message.counter === 'number') {
         // Additional counter-based replay protection could be implemented here
       }
-  
+    
       // Check for replay using message ID cache
       if (this.shouldPreventReplay(decryptedData)) {
         return; // Skip processing if message is a replay
       }
-  
+    
       // Process the decrypted data based on the envelope format
       if (decryptedData && typeof decryptedData === 'object') {
-        console.debug('[Socket] Decrypted data structure:', decryptedData);
+        console.debug('[Socket] Decrypted data format:', 
+          decryptedData.payload_type ? 'server-style (payload_type)' : 
+          decryptedData.payloadType ? 'client-style (payloadType)' : 'direct message');
         
         // Handle server format with payload_type
         if (decryptedData.payload_type === 'Json' && decryptedData.payload) {
           await this.routeDecryptedMessage(decryptedData.payload);
         } 
-        // Handle client format with payloadType (backward compatibility)
+        // Handle client format with payloadType (legacy support)
         else if (decryptedData.payloadType === 'json' && decryptedData.payload) {
           await this.routeDecryptedMessage(decryptedData.payload);
         } 
-        // Try direct format if no envelope structure detected
+        // Try to process as direct message without envelope
         else {
           await this.routeDecryptedMessage(decryptedData);
         }
@@ -1498,6 +1500,7 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
       ));
     }
   }
+  
   // Add this missing method referenced above
   private recordError(): void {
     this.consecutiveFailedPings++;
