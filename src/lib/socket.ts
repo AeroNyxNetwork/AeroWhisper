@@ -915,15 +915,16 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
         // Generate a string nonce using timestamp and random value
         const nonceString = `${Date.now()}-${Math.random().toString(16).substring(2)}`;
     
-        // Create AuthMessage with the CORRECT fields according to server expectations
-        const authMessage: AuthMessage = {
+        // Create AuthMessage according to the EXACT server expectations
+        const authMessage = {
           type: 'Auth',
-          public_key: this.publicKey,
-          version: '1.0.0',    // Client version string
-          features: ['aes256gcm', 'webrtc', 'key-rotation'], // Client capabilities
-          encryption_algorithm: 'aes256gcm',
-          nonce: nonceString   // String nonce as now required by the interface
+          public_key: this.publicKey,           // Must use underscore format
+          version: '1.0.0',                      
+          features: ['aes256gcm', 'webrtc', 'key-rotation'],
+          encryption_algorithm: 'aes256gcm',     // Must use underscore format
+          nonce: nonceString
         };
+        
         console.log('[Socket] Auth message to be sent:', JSON.stringify(authMessage));
         
         this.socket.send(JSON.stringify(authMessage));
