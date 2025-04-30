@@ -280,20 +280,27 @@ export const useChat = (chatId: string | null) => {
             setConnectionStatus('connecting');
             
             socket.connect(chatId, user.publicKey)
-                .then(() => {
-                    console.log('[useChat] socket.connect() promise resolved.');
-                })
-                .catch(connectError => {
-                    console.error('[useChat] socket.connect() promise rejected:', connectError);
-                    
-                    setError(createSocketError(
-                        connectError, 
-                        'connection', 
-                        'CONNECT_FAILED', 
-                        true
-                    ));
-                    setConnectionStatus('disconnected');
+              .then(() => {
+                console.log('[useChat] socket.connect() promise resolved successfully');
+                console.log('[useChat] Connection status after connect:', socket.getConnectionStatus());
+                // Maybe add additional connection validation here
+              })
+              .catch(connectError => {
+                console.error('[useChat] socket.connect() promise rejected:', connectError);
+                console.error('[useChat] Error details:', {
+                  message: connectError.message,
+                  name: connectError.name,
+                  stack: connectError.stack
                 });
+                
+                setError(createSocketError(
+                  connectError, 
+                  'connection', 
+                  'CONNECT_FAILED', 
+                  true
+                ));
+                setConnectionStatus('disconnected');
+              });
         } else {
             // Update local state if socket already exists
             setConnectionStatus(mapSocketStatus(socket.getConnectionStatus()));
