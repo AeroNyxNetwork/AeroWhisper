@@ -8,7 +8,7 @@ export interface BasePacket {
 }
 
 export interface DataEnvelope {
-  payload_type: 'Json';  // Changed from payloadType to payload_type
+  payload_type: 'Json';  // Already correct - matches server expectation
   payload: any;         // The actual message payload
 }
 
@@ -36,7 +36,7 @@ export interface AuthMessage extends BasePacket {
   public_key: string;           // Client's Ed25519 public key (Base58)
   version: string;              // Client version string (e.g., "1.0.0")
   features: string[];           // Client capabilities (e.g., ["aes256gcm", "webrtc", "key-rotation"])
-  encryption_algorithm: "aes256gcm"; // MUST be this string for AES-GCM support
+  encryption_algorithm: string; // MUST be "aes256gcm" for AES-GCM support
   nonce: string;                // Unique STRING nonce for this request
 }
 
@@ -75,7 +75,7 @@ export interface IpAssignMessage extends BasePacket {
   session_id: string;           // Unique ID for this session
   encrypted_session_key: number[]; // AES-GCM encrypted 32-byte session key (as number[])
   key_nonce: number[];          // 12-byte nonce used for encrypting session key (as number[])
-  encryption_algorithm: "aes256gcm"; // Confirms algorithm used for encrypted_session_key
+  encryption_algorithm: string; // Confirms algorithm used for encrypted_session_key
   // Removed lease_duration based on latest socket.ts usage, add back if needed by server
 }
 
@@ -88,7 +88,7 @@ export interface DataPacket extends BasePacket {
   encrypted: number[];          // Payload encrypted with AES-GCM using session key (as number[])
   nonce: number[];              // Unique 12-byte nonce for this specific packet (as number[])
   counter: number;              // Monotonically increasing counter for replay protection
-  encryption_algorithm: "aes256gcm"; // MUST be included
+  encryption_algorithm: string; // MUST be included
   // Removed padding field based on latest socket.ts usage, add back if needed by server
 }
 
@@ -191,26 +191,42 @@ export interface MessagePayload extends BasePacket {
 }
 
 /**
+ * Structure for chat info request payload
+ */
+export interface ChatInfoRequestPayload extends BasePacket {
+  type: 'chat_info_request';  // Changed to match server expectation
+  chatId?: string;            // Optional, server might use current session
+}
+
+/**
  * Structure for chat info payload
  */
 export interface ChatInfoPayload extends BasePacket {
-  type: 'chatInfo';
+  type: 'chat_info_response';  // Changed to match server expectation
   data: ChatInfo;
+}
+
+/**
+ * Structure for participants request payload
+ */
+export interface ParticipantsRequestPayload extends BasePacket {
+  type: 'participants_request';  // Changed to match server expectation
+  roomId?: string;              // Optional, server might use current session
 }
 
 /**
  * Structure for participants list payload
  */
 export interface ParticipantsPayload extends BasePacket {
-  type: 'participants';
-  data: Participant[];
+  type: 'participants_response';  // Changed to match server expectation
+  participants: Participant[];    // Changed from data to participants to match server
 }
 
 /**
  * Structure for WebRTC signaling payloads
  */
 export interface WebRTCSignalPayload extends BasePacket {
-  type: 'webrtc_signal';     // Changed from webrtc-signal to webrtc_signal
+  type: 'webrtc_signal';     // Already changed to match server expectation
   peerId: string;            // Target peer ID for the signal
   signalType: 'offer' | 'answer' | 'candidate'; // Signal type
   signalData: any;           // SDP or ICE candidate data
@@ -304,7 +320,7 @@ export function isMessageType(payload: any): payload is MessagePayload {
 
 /** Type guard for ChatInfoPayload objects */
 export function isChatInfoPayload(payload: any): payload is ChatInfoPayload {
-  if (!isObject(payload) || payload.type !== 'chatInfo' || !isObject(payload.data)) {
+  if (!isObject(payload) || payload.type !== 'chat_info_response' || !isObject(payload.data)) {
       return false;
   }
   const data = payload.data;
@@ -333,11 +349,11 @@ function isParticipant(participant: unknown): participant is Participant {
 
 /** Type guard for ParticipantsPayload objects */
 export function isParticipantsPayload(payload: any): payload is ParticipantsPayload {
-  if (!isObject(payload) || payload.type !== 'participants' || !Array.isArray(payload.data)) {
+  if (!isObject(payload) || payload.type !== 'participants_response' || !Array.isArray(payload.participants)) {
       return false;
   }
   // Optional: Validate first element for basic structure check
-  // if (payload.data.length > 0 && !isParticipant(payload.data[0])) {
+  // if (payload.participants.length > 0 && !isParticipant(payload.participants[0])) {
   //     console.warn("First participant in payload data has invalid structure");
   //     return false;
   // }
@@ -346,7 +362,7 @@ export function isParticipantsPayload(payload: any): payload is ParticipantsPayl
 
 /** Type guard for WebRTCSignalPayload objects */
 export function isWebRTCSignalPayload(payload: any): payload is WebRTCSignalPayload {
-  if (!isObject(payload) || payload.type !== 'webrtc-signal') return false;
+  if (!isObject(payload) || payload.type !== 'webrtc_signal') return false;  // Updated to match correct type
   return (
     isString(payload.peerId) &&
     isString(payload.signalType) &&
@@ -420,4 +436,3 @@ export type DecryptedPayload =
   | KeyRotationRequestPayload // Client initiates rotation request
   | KeyRotationResponsePayload // Server responds to client's request
   | { type: string; [key: string]: any }; // Fallback for other/unknown types
-
