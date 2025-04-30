@@ -366,6 +366,91 @@ export async function getStoredKeypair(): Promise<StoredKeypair | null> {
   }
 }
 
+
+export async function getStoredKeypair(): Promise<StoredKeypair | null> {
+  try {
+    // Get keypair from database
+    const result = await executeDbOperation('readwrite', (store) => {
+      return store.get(USER_KEYPAIR_ID);
+    });
+    
+    // If not found, return null
+    if (!result) {
+      console.log('[KeyStorage] No keypair found in storage.');
+      
+      // Check for localStorage fallback
+      if (typeof localStorage !== 'undefined') {
+        const localStorageData = localStorage.getItem('aero-keypair');
+        if (localStorageData) {
+          console.log('[KeyStorage] Found keypair in localStorage, using as fallback');
+          try {
+            const parsed = JSON.parse(localStorageData);
+            
+            // Handle stored arrays properly
+            if (Array.isArray(parsed.publicKey)) {
+              parsed.publicKey = new Uint8Array(parsed.publicKey);
+            }
+            
+            if (Array.isArray(parsed.secretKey)) {
+              parsed.secretKey = new Uint8Array(parsed.secretKey);
+            }
+            
+            return parsed;
+          } catch (e) {
+            console.error('[KeyStorage] Error parsing localStorage keypair:', e);
+          }
+        }
+      }
+      return null;
+    }
+    
+    // Ensure correct types and format for return
+    return {
+      publicKey: ensureUint8Array(result.publicKey),
+      secretKey: ensureUint8Array(result.secretKey),
+      publicKeyBase58: result.publicKeyBase58 || bs58.encode(result.publicKey)
+    };
+  } catch (error) {
+    console.error('[KeyStorage] Error retrieving keypair:', error);
+    
+    // Try localStorage as fallback if database access fails
+    if (typeof localStorage !== 'undefined') {
+      const localStorageData = localStorage.getItem('aero-keypair');
+      if (localStorageData) {
+        console.log('[KeyStorage] Database error, trying localStorage fallback');
+        try {
+          const parsed = JSON.parse(localStorageData);
+          
+          // Handle stored arrays properly
+          if (Array.isArray(parsed.publicKey)) {
+            parsed.publicKey = new Uint8Array(parsed.publicKey);
+          }
+          
+          if (Array.isArray(parsed.secretKey)) {
+            parsed.secretKey = new Uint8Array(parsed.secretKey);
+          }
+          
+          return parsed;
+        } catch (e) {
+          console.error('[KeyStorage] Error parsing localStorage keypair:', e);
+        }
+      }
+    }
+    
+    // Convert to KeyStorageError if needed
+    if (error instanceof KeyStorageError) {
+      throw error;
+    }
+    
+    throw new KeyStorageError(
+      `Failed to retrieve keypair: ${error instanceof Error ? error.message : String(error)}`,
+      'RETRIEVAL_ERROR',
+      error instanceof Error ? error : undefined
+    );
+  }
+}
+
+
 /**
  * Generates a new Ed25519 keypair and stores it securely
  * @returns Promise resolving to the generated and stored keypair
