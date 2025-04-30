@@ -12,8 +12,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { InviteModal } from '../../components/modals/InviteModal';
 import { EnhancedChatView } from '../../components/chat/EnhancedChatView';
 
-// Remove Solana wallet imports and use the custom ConnectionButton
-// Or create a simplified wallet button component
+// Simple wallet button component
 const WalletButton = () => {
   const { isAuthenticated, user } = useAuth();
   return (
@@ -133,12 +132,9 @@ const ChatPage = () => {
         <WalletButton />
       </Box>
       
-      {/* Enhanced chat view with web3 integrations */}
+      {/* Only pass the chatId prop to EnhancedChatView */}
       <EnhancedChatView 
         chatId={chatId} 
-        isStorageEnabled={isStorageEnabled}
-        onToggleStorage={toggleStorage}
-        onShare={onOpen}
       />
       
       {isClient && (
