@@ -90,11 +90,10 @@ export interface AeroNyxSocketTestingInterface {
 
 /**
  * Internal connection state for state machine pattern
- * Using numeric enum values to avoid type comparison issues
+ * Using string enum values for clarity and type safety
  */
 
 type InternalConnectionStateType = 'disconnected' | 'connecting' | 'authenticating' | 'connected' | 'reconnecting' | 'closing';
-
 
 const InternalConnectionState = {
   DISCONNECTED: 'disconnected' as InternalConnectionStateType,
@@ -105,8 +104,7 @@ const InternalConnectionState = {
   CLOSING: 'closing' as InternalConnectionStateType
 };
 
-
-// Map of numeric states to their string representation for logging/debugging
+// Map of states to their string representation for logging/debugging
 const CONNECTION_STATE_NAMES: Record<string, string> = {
   [InternalConnectionState.DISCONNECTED]: 'disconnected',
   [InternalConnectionState.CONNECTING]: 'connecting',
@@ -126,7 +124,6 @@ export enum MessagePriority {
   LOW = 3,        // Background updates
   BACKGROUND = 4  // Non-essential information
 }
-
 
 /**
  * Pending message interface with TTL, retry count, and priority
@@ -169,8 +166,7 @@ const MAX_BATCH_SIZE = 10;    // Maximum batch size
 const MIN_BATCH_SIZE = 1;     // Minimum batch size
 const BATCH_PROCESS_DELAY_MS = 10; // Delay between processing batches
 
-
-  /**
+/**
  * Data envelope for encapsulating application messages
  * Required by updated server protocol
  */
@@ -415,13 +411,20 @@ export class AeroNyxSocket extends EventEmitter {
 
   // --- Public Methods ---
 
+  /**
+   * Sends a WebRTC signaling message to facilitate peer connection
+   * @param peerId Target peer ID
+   * @param signalType Type of signal (offer, answer, candidate)
+   * @param signalData The actual signal data
+   * @returns Promise resolving to SendResult
+   */
   public async sendWebRTCSignal(
     peerId: string, 
     signalType: 'offer' | 'answer' | 'candidate', 
     signalData: any
   ): Promise<SendResult> {
     const payload = {
-      type: 'webrtc_signal', // Changed from webrtc-signal to match server expectation
+      type: 'webrtc_signal', // Using snake_case to match server expectation
       peerId: peerId,
       signalType: signalType,
       signalData: signalData,
@@ -651,24 +654,28 @@ export class AeroNyxSocket extends EventEmitter {
         return 'disconnected';
     }
   }
+
+  /**
+   * Map message status to string representation
+   * @param status The message status to map
+   * @returns String representation of the status
+   */
   private mapMessageStatus(status: any): string {
-    // Add appropriate status mapping logic here
-    // This is a simple example - adjust based on your actual status values
     if (!status) return 'unknown';
     
     // Check if status is already a string
     if (typeof status === 'string') return status;
     
     // If status is a custom type or object, map it appropriately
-    // Example: if status is a numeric enum or object with a status property
     return String(status); // Basic fallback
   }
+
   /**
- * Sends a chat message. Wraps the message data and calls `send`.
- * @param message The message object conforming to MessageType.
- * @returns Promise resolving to SendResult.
- */
-public async sendMessage(message: MessageType): Promise<SendResult> {
+   * Sends a chat message. Wraps the message data and calls `send`.
+   * @param message The message object conforming to MessageType.
+   * @returns Promise resolving to SendResult.
+   */
+  public async sendMessage(message: MessageType): Promise<SendResult> {
     // Step 1: Validate input parameters
     if (!message || !message.id || typeof message.content !== 'string') {
       console.error('[Socket:SEND] Invalid message format:', message);
@@ -683,8 +690,9 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
       type: 'message',          // Application-level type identifier
       id: message.id,           // Unique message identifier
       content: message.content, // Actual message content
-      senderId: message.senderId || this.localPeerId || '',  // Sender identifier
-      senderName: message.senderName || 'Anonymous',         // Sender display name
+      chatId: this.chatId,      // Added to comply with server spec
+      sender: message.senderId || this.localPeerId || '',  // Using 'sender' as per server spec
+      senderName: message.senderName || 'Anonymous',       // Sender display name
       
       // According to your MessageType interface, timestamp is a string, so we handle it as such
       timestamp: typeof message.timestamp === 'string' 
@@ -692,7 +700,7 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
         : new Date().toISOString(),
         
       isEncrypted: message.isEncrypted ?? true,  // Encryption flag
-      status: message.status || 'sending'  // Use default if not provided
+      status: this.mapMessageStatus(message.status) || 'sending'  // Use default if not provided
     };
     
     // Step 4: Send with high priority to ensure prompt delivery
@@ -712,183 +720,194 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
     }
   }
 
-   /**
+  /**
    * Requests chat information from the server.
    * @returns Promise resolving to SendResult.
    */
-   
-    public async requestChatInfo(): Promise<SendResult> {
-      console.debug('[Socket] Requesting chat info...');
-      return this.send({ type: 'chat_info_request' }, MessagePriority.NORMAL); // Changed from request-chat-info
+  public async requestChatInfo(): Promise<SendResult> {
+    console.debug('[Socket] Requesting chat info...');
+    return this.send({ 
+      type: 'chat_info_request',
+      chatId: this.chatId
+    }, MessagePriority.NORMAL);
+  }
+
+  /**
+   * Requests the current list of participants from the server.
+   * @returns Promise resolving to SendResult.
+   */
+  public async requestParticipants(): Promise<SendResult> {
+    console.debug('[Socket] Requesting participants list...');
+    return this.send({ 
+      type: 'participants_request',
+      chatId: this.chatId 
+    }, MessagePriority.NORMAL);
+  }
+
+  /**
+   * Sends a request to leave the chat room.
+   * @returns Promise resolving when the leave action is initiated.
+   */
+  public async leaveChat(): Promise<void> {
+    console.log('[Socket] Initiating leave chat...');
+    this.autoReconnect = false; // Prevent reconnect after leaving
+    // Send a specific 'leave-chat' message if the protocol requires it
+    await this.send({ 
+      type: 'leave-chat',
+      chatId: this.chatId
+    }, MessagePriority.CRITICAL);
+    // Allow time for the message to potentially be sent before closing
+    await new Promise(resolve => setTimeout(resolve, 200));
+    return this.disconnect(); // Disconnect gracefully
+  }
+
+  /**
+   * Sends a request to delete the chat room (requires appropriate permissions).
+   * @returns Promise resolving to SendResult.
+   */
+  public async deleteChat(): Promise<SendResult> {
+    console.debug('[Socket] Requesting chat deletion...');
+    return this.send({ 
+      type: 'delete-chat',
+      chatId: this.chatId
+    }, MessagePriority.CRITICAL);
+  }
+
+  /**
+   * Sends data through the WebSocket connection.
+   * If not connected, queues the message for later sending.
+   * @param data Data to send
+   * @param priority Priority level for the message
+   * @returns Promise resolving to SendResult
+   */
+  public async send(data: any, priority: MessagePriority = MessagePriority.NORMAL): Promise<SendResult> {
+    if (!this.isConnected()) {
+      console.warn('[Socket:SEND] Not connected. Queuing message.');
+      const queued = this.queueMessage('data', data, priority);
+      setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS * 2);
+      return queued ? SendResult.QUEUED : SendResult.FAILED;
     }
-
-    /**
-     * Requests the current list of participants from the server.
-     * @returns Promise resolving to SendResult.
-     */
-    public async requestParticipants(): Promise<SendResult> {
-      console.debug('[Socket] Requesting participants list...');
-      return this.send({ type: 'participants_request' }, MessagePriority.NORMAL); // Changed from request-participants
+  
+    // Ensure session key exists
+    if (!this.sessionKey) {
+      console.error('[Socket:SEND] CRITICAL: isConnected is true but sessionKey is null!');
+      this.emit('error', this.createSocketError('internal', 'Session key missing despite connected state', 'MISSING_SESSION_KEY', undefined, false));
+      const queued = this.queueMessage('data', data, priority);
+      return queued ? SendResult.QUEUED : SendResult.FAILED;
     }
-
-    /**
-     * Sends a request to leave the chat room.
-     * @returns Promise resolving when the leave action is initiated.
-     */
-    public async leaveChat(): Promise<void> {
-        console.log('[Socket] Initiating leave chat...');
-        this.autoReconnect = false; // Prevent reconnect after leaving
-        // Send a specific 'leave-chat' message if the protocol requires it
-        await this.send({ type: 'leave-chat' }, MessagePriority.CRITICAL);
-        // Allow time for the message to potentially be sent before closing
-        await new Promise(resolve => setTimeout(resolve, 200));
-        return this.disconnect(); // Disconnect gracefully
-    }
-
-    /**
-     * Sends a request to delete the chat room (requires appropriate permissions).
-     * @returns Promise resolving to SendResult.
-     */
-    public async deleteChat(): Promise<SendResult> {
-        console.debug('[Socket] Requesting chat deletion...');
-        return this.send({ type: 'delete-chat' }, MessagePriority.CRITICAL);
-    }
-
-    /**
-     * Sends a WebRTC signaling message to facilitate peer connection
-     * @param peerId Target peer ID
-     * @param signalType Type of signal (offer, answer, candidate)
-     * @param signalData The actual signal data
-     */
-    public async send(data: any, priority: MessagePriority = MessagePriority.NORMAL): Promise<SendResult> {
-        if (!this.isConnected()) {
-          console.warn('[Socket:SEND] Not connected. Queuing message.');
-          const queued = this.queueMessage('data', data, priority);
-          setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS * 2);
-          return queued ? SendResult.QUEUED : SendResult.FAILED;
-        }
-      
-        // Ensure session key exists
-        if (!this.sessionKey) {
-          console.error('[Socket:SEND] CRITICAL: isConnected is true but sessionKey is null!');
-          this.emit('error', this.createSocketError('internal', 'Session key missing despite connected state', 'MISSING_SESSION_KEY', undefined, false));
-          const queued = this.queueMessage('data', data, priority);
-          return queued ? SendResult.QUEUED : SendResult.FAILED;
-        }
-      
-        try {
-          // Wrap the data in a DataEnvelope with the server-expected field name
-          const envelope = {
-            payload_type: 'Json', // Changed from payloadType to payload_type
-            payload: data
-          };
-      
-          // Create the encrypted Data packet
-          const dataPacket = await createEncryptedDataPacket(
-            envelope,
-            this.sessionKey,
-            this.messageCounter
-          );
-      
-          // Increment the counter after successfully creating the packet
-          this.messageCounter++;
-      
-          // Send the JSON stringified packet
-          const packetJson = JSON.stringify(dataPacket);
-          this.socket!.send(packetJson);
-          console.debug('[Socket:SEND] Encrypted Data packet sent. Counter:', dataPacket.counter);
-          this.lastMessageTime = Date.now();
-          return SendResult.SENT;
-        } catch (error) {
-          console.error('[Socket:SEND] Error encrypting or sending data packet:', error);
-          const queued = this.queueMessage('data', data, priority);
-          this.emit('error', this.createSocketError(
-            'data',
-            'Failed to send encrypted data',
-            'DATA_SEND_ERROR',
-            error instanceof Error ? error.message : String(error),
-            true
-          ));
-          return queued ? SendResult.QUEUED : SendResult.FAILED;
-        }
-    }
-
-    /**
-     * Trigger a manual session key rotation
-     * @returns Promise resolving to true if rotation initiated successfully.
-     */
-    public async rotateSessionKey(): Promise<boolean> {
-       if (!this.isConnected()) {
-           console.warn('[Socket] Cannot rotate session key: Not connected.');
-           return false;
-       }
-        if (!this.sessionKey || !this.serverPublicKey) {
-            console.warn('[Socket] Cannot rotate session key: Missing current session or server key.');
-            return false;
-        }
-
-       console.log('[Socket] Initiating manual session key rotation...');
-       try {
-           const rotationRequestPayload = {
-               type: 'request-key-rotation',
-               // Include any necessary data, e.g., current session ID
-               sessionId: this.sessionId,
-               timestamp: Date.now()
-           };
-           // Key rotation is critical
-           const result = await this.send(rotationRequestPayload, MessagePriority.CRITICAL);
-           if (result === SendResult.SENT || result === SendResult.QUEUED) {
-               console.log("[Socket] Key rotation request sent/queued.");
-               // The actual key update happens in handleKeyRotationResponse
-               return true;
-           } else {
-               console.error("[Socket] Failed to send key rotation request.");
-               return false;
-           }
-       } catch (error) {
-           console.error('[Socket] Error initiating key rotation:', error);
-            this.emit('error', this.createSocketError(
-              'security',
-              'Failed to initiate key rotation',
-              'KEY_ROTATION_INIT_ERROR',
-               error instanceof Error ? error.message : String(error),
-              false
-            ));
-           return false;
-       }
-    }
-
-    /**
-     * Returns a testing interface (only in non-production environments)
-     */
-    public getTestingInterface(): AeroNyxSocketTestingInterface | null {
-      // Only provide the interface in development/test environments
-      if (process.env.NODE_ENV === 'production') {
-        return null;
-      }
-      
-      return {
-        getState: () => CONNECTION_STATE_NAMES[this.connectionState],
-        simulateServerMessage: async (message) => {
-          await this.processMessage(message);
-        },
-        getQueueInfo: () => ({ 
-          size: this.pendingMessages.length, 
-          processing: this.processingQueue 
-        }),
-        getNetworkQuality: () => this.networkQuality,
-        getSessionInfo: () => ({
-          hasSessionKey: !!this.sessionKey,
-          sessionId: this.sessionId,
-          lastKeyRotation: this.lastKeyRotation,
-          messageCounter: this.messageCounter
-        }),
-        clearQueue: () => {
-          this.pendingMessages = [];
-          return true;
-        }
+  
+    try {
+      // Wrap the data in a DataEnvelope with the server-expected field name
+      const envelope = {
+        payload_type: 'Json', // Using payload_type (snake_case) as expected by server
+        payload: data
       };
+  
+      // Create the encrypted Data packet
+      const dataPacket = await createEncryptedDataPacket(
+        envelope,
+        this.sessionKey,
+        this.messageCounter
+      );
+  
+      // Increment the counter after successfully creating the packet
+      this.messageCounter++;
+  
+      // Send the JSON stringified packet
+      const packetJson = JSON.stringify(dataPacket);
+      this.socket!.send(packetJson);
+      console.debug('[Socket:SEND] Encrypted Data packet sent. Counter:', dataPacket.counter);
+      this.lastMessageTime = Date.now();
+      return SendResult.SENT;
+    } catch (error) {
+      console.error('[Socket:SEND] Error encrypting or sending data packet:', error);
+      const queued = this.queueMessage('data', data, priority);
+      this.emit('error', this.createSocketError(
+        'data',
+        'Failed to send encrypted data',
+        'DATA_SEND_ERROR',
+        error instanceof Error ? error.message : String(error),
+        true
+      ));
+      return queued ? SendResult.QUEUED : SendResult.FAILED;
     }
+  }
+
+  /**
+   * Trigger a manual session key rotation
+   * @returns Promise resolving to true if rotation initiated successfully.
+   */
+  public async rotateSessionKey(): Promise<boolean> {
+    if (!this.isConnected()) {
+      console.warn('[Socket] Cannot rotate session key: Not connected.');
+      return false;
+    }
+    if (!this.sessionKey || !this.serverPublicKey) {
+      console.warn('[Socket] Cannot rotate session key: Missing current session or server key.');
+      return false;
+    }
+
+    console.log('[Socket] Initiating manual session key rotation...');
+    try {
+      const rotationRequestPayload = {
+        type: 'key_rotation_request', // Changed to snake_case as expected by server
+        sessionId: this.sessionId,
+        timestamp: Date.now()
+      };
+      // Key rotation is critical
+      const result = await this.send(rotationRequestPayload, MessagePriority.CRITICAL);
+      if (result === SendResult.SENT || result === SendResult.QUEUED) {
+        console.log("[Socket] Key rotation request sent/queued.");
+        // The actual key update happens in handleKeyRotationResponse
+        return true;
+      } else {
+        console.error("[Socket] Failed to send key rotation request.");
+        return false;
+      }
+    } catch (error) {
+      console.error('[Socket] Error initiating key rotation:', error);
+      this.emit('error', this.createSocketError(
+        'security',
+        'Failed to initiate key rotation',
+        'KEY_ROTATION_INIT_ERROR',
+        error instanceof Error ? error.message : String(error),
+        false
+      ));
+      return false;
+    }
+  }
+
+  /**
+   * Returns a testing interface (only in non-production environments)
+   */
+  public getTestingInterface(): AeroNyxSocketTestingInterface | null {
+    // Only provide the interface in development/test environments
+    if (process.env.NODE_ENV === 'production') {
+      return null;
+    }
+    
+    return {
+      getState: () => CONNECTION_STATE_NAMES[this.connectionState],
+      simulateServerMessage: async (message) => {
+        await this.processMessage(message);
+      },
+      getQueueInfo: () => ({ 
+        size: this.pendingMessages.length, 
+        processing: this.processingQueue 
+      }),
+      getNetworkQuality: () => this.networkQuality,
+      getSessionInfo: () => ({
+        hasSessionKey: !!this.sessionKey,
+        sessionId: this.sessionId,
+        lastKeyRotation: this.lastKeyRotation,
+        messageCounter: this.messageCounter
+      }),
+      clearQueue: () => {
+        this.pendingMessages = [];
+        return true;
+      }
+    };
+  }
 
   // --- Private Methods ---
 
@@ -969,6 +988,7 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
       this.disconnect().catch(e => console.error("Error during disconnect after auth failure:", e));
     }
   }
+
   /**
    * Handles WebSocket message event. Parses, processes, and updates activity time.
    */
@@ -1123,11 +1143,11 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
           break;
 
         case 'Error':
-          this.handleError(message as ErrorMessage); // Pass reject? No, handleError decides based on state/code
+          this.handleError(message as ErrorMessage);
           break;
 
         case 'Disconnect':
-          this.handleDisconnect(message as DisconnectMessage); // Pass reject? No, handleDisconnect decides
+          this.handleDisconnect(message as DisconnectMessage);
           break;
 
         // Key Rotation handling
@@ -1535,13 +1555,19 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
     }
   }
   
-  // Add this missing method referenced above
+  /**
+   * Records error for network quality assessment
+   */
   private recordError(): void {
     this.consecutiveFailedPings++;
     // Consider implementing more sophisticated error tracking here
   }
       
-  // Extract replay protection to a separate method for clarity
+  /**
+   * Check if message should be prevented due to replay protection
+   * @param decryptedData The decrypted message data
+   * @returns true if message should be prevented (is a replay)
+   */
   private shouldPreventReplay(decryptedData: any): boolean {
     if (decryptedData.id && typeof decryptedData.id === 'string') {
       if (this.processedMessageIds.has(decryptedData.id)) {
@@ -1554,7 +1580,10 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
     return false;
   }
 
-  // Extract message routing to a separate method
+  /**
+   * Routes decrypted messages to appropriate handlers
+   * @param decryptedData The decrypted message data
+   */
   private async routeDecryptedMessage(decryptedData: any): Promise<void> {
     if (isMessageType(decryptedData)) {
       this.emit('message', decryptedData);
@@ -1809,7 +1838,7 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
       
       // Create rotation response
       const rotationResponse = {
-        type: 'KeyRotationResponse',
+        type: 'key_rotation_response', // Changed to snake_case to match server expectation
         rotation_id: message.rotation_id,
         nonce: Array.from(responseNonce), // Convert to array for JSON serialization
         // Include additional fields as required by protocol
@@ -2184,102 +2213,102 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
   // --- Message Queueing & Processing ---
 
   /**
- * Queues a message when it cannot be sent immediately.
- * Implements priority queue with TTL (Time-To-Live) and deduplication.
- * 
- * Mathematical properties:
- * - Queue size: Bounded by maxQueueSize
- * - Message TTL: Enforces maximum message age
- * - Priority ordering: Lower priority values are processed first
- * 
- * @param type The message type identifier (e.g., 'data')
- * @param data The payload object to queue
- * @param priority Priority level for the message (lower values = higher priority)
- * @returns Boolean indicating if the message was successfully queued
- * Time complexity: O(n log n) worst case for priority sort, O(1) for queue insertion
- * Space complexity: O(n) where n is the number of pending messages
- */
-private queueMessage(type: string, data: any, priority: MessagePriority = MessagePriority.NORMAL): boolean {
-  // Step 1: Clean expired messages first to ensure space in the queue
-  this.cleanupMessageQueue();
-
-  // Step 2: Handle queue size limits with priority-aware overflow control
-  if (this.pendingMessages.length >= this.maxQueueSize) {
-    // Second cleanup attempt targeting only expired messages
+   * Queues a message when it cannot be sent immediately.
+   * Implements priority queue with TTL (Time-To-Live) and deduplication.
+   * 
+   * Mathematical properties:
+   * - Queue size: Bounded by maxQueueSize
+   * - Message TTL: Enforces maximum message age
+   * - Priority ordering: Lower priority values are processed first
+   * 
+   * @param type The message type identifier (e.g., 'data')
+   * @param data The payload object to queue
+   * @param priority Priority level for the message (lower values = higher priority)
+   * @returns Boolean indicating if the message was successfully queued
+   * Time complexity: O(n log n) worst case for priority sort, O(1) for queue insertion
+   * Space complexity: O(n) where n is the number of pending messages
+   */
+  private queueMessage(type: string, data: any, priority: MessagePriority = MessagePriority.NORMAL): boolean {
+    // Step 1: Clean expired messages first to ensure space in the queue
     this.cleanupMessageQueue();
-    
-    // If still full, implement priority-based overflow handling
+
+    // Step 2: Handle queue size limits with priority-aware overflow control
     if (this.pendingMessages.length >= this.maxQueueSize) {
-      if (this.usePriorityQueue) {
-        // Sort by priority (lowest number = highest priority)
-        this.pendingMessages.sort((a, b) => b.priority - a.priority);
-        
-        // Get the lowest priority message (last in sorted array)
-        const lowestPriorityMsg = this.pendingMessages[this.pendingMessages.length - 1];
-        
-        // Only remove if the new message has higher priority
-        if (lowestPriorityMsg && priority < lowestPriorityMsg.priority) {
-          this.pendingMessages.pop(); // Remove lowest priority message
-          console.warn(`[Socket] Queue full (${this.maxQueueSize}). Replaced lowest priority message (${lowestPriorityMsg.priority}) with higher priority message (${priority}).`);
+      // Second cleanup attempt targeting only expired messages
+      this.cleanupMessageQueue();
+      
+      // If still full, implement priority-based overflow handling
+      if (this.pendingMessages.length >= this.maxQueueSize) {
+        if (this.usePriorityQueue) {
+          // Sort by priority (lowest number = highest priority)
+          this.pendingMessages.sort((a, b) => b.priority - a.priority);
+          
+          // Get the lowest priority message (last in sorted array)
+          const lowestPriorityMsg = this.pendingMessages[this.pendingMessages.length - 1];
+          
+          // Only remove if the new message has higher priority
+          if (lowestPriorityMsg && priority < lowestPriorityMsg.priority) {
+            this.pendingMessages.pop(); // Remove lowest priority message
+            console.warn(`[Socket] Queue full (${this.maxQueueSize}). Replaced lowest priority message (${lowestPriorityMsg.priority}) with higher priority message (${priority}).`);
+          } else {
+            console.warn(`[Socket] Queue full (${this.maxQueueSize}). Rejected new message with priority ${priority} (lower than existing messages).`);
+            return false; // Cannot queue message with lower priority
+          }
         } else {
-          console.warn(`[Socket] Queue full (${this.maxQueueSize}). Rejected new message with priority ${priority} (lower than existing messages).`);
-          return false; // Cannot queue message with lower priority
+          // FIFO approach - remove oldest message
+          this.pendingMessages.shift();
+          console.warn(`[Socket] Queue full (${this.maxQueueSize}). Removed oldest message to make space.`);
         }
-      } else {
-        // FIFO approach - remove oldest message
-        this.pendingMessages.shift();
-        console.warn(`[Socket] Queue full (${this.maxQueueSize}). Removed oldest message to make space.`);
       }
     }
+
+    // Step 3: Generate a deterministic but unique message identifier
+    // Use existing ID if available or generate a new one with high entropy
+    const messageId = data.id || `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 9)}`;
+    
+    // Step 4: Wrap data with the DataEnvelope expected by the server
+    // The queued data should match what would be sent directly in send()
+    const envelopedData = {
+      payload_type: 'Json', // Using payload_type to match server's expectations
+      payload: data
+    };
+    
+    // Step 5: Create the pending message object with all required metadata
+    const pendingMsg: PendingMessage = {
+      type,
+      data: envelopedData, // Store with envelope to match the send() format
+      timestamp: Date.now(),
+      id: messageId,
+      retryCount: 0,
+      priority
+    };
+    
+    // Step 6: Add to queue
+    this.pendingMessages.push(pendingMsg);
+
+    // Step 7: Apply priority sorting if enabled
+    // Sort the queue so higher priority messages are processed first
+    // Time complexity: O(n log n) where n is queue length
+    if (this.usePriorityQueue && this.pendingMessages.length > 1) {
+      this.pendingMessages.sort((a, b) => {
+        // Primary sort by priority (lower number = higher priority)
+        const priorityDiff = a.priority - b.priority;
+        if (priorityDiff !== 0) return priorityDiff;
+        
+        // Secondary sort by timestamp (older = higher priority)
+        return a.timestamp - b.timestamp;
+      });
+    }
+
+    // Step 8: Log queue status with diagnostic information
+    console.log(`[Socket] Message queued (Type: ${type}, Priority: ${priority}, ID: ${messageId}). Queue size: ${this.pendingMessages.length}/${this.maxQueueSize}`);
+    
+    // Step 9: Schedule queue processing after a short delay
+    // Use setTimeout to avoid blocking the main thread
+    setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS);
+    
+    return true; // Successfully queued
   }
-
-  // Step 3: Generate a deterministic but unique message identifier
-  // Use existing ID if available or generate a new one with high entropy
-  const messageId = data.id || `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 9)}`;
-  
-  // Step 4: Wrap data with the DataEnvelope expected by the server
-  // The queued data should match what would be sent directly in send()
-  const envelopedData = {
-    payload_type: 'Json', // FIXED: Using payload_type to match server's expectations
-    payload: data
-  };
-  
-  // Step 5: Create the pending message object with all required metadata
-  const pendingMsg: PendingMessage = {
-    type,
-    data: envelopedData, // Store with envelope to match the send() format
-    timestamp: Date.now(),
-    id: messageId,
-    retryCount: 0,
-    priority
-  };
-  
-  // Step 6: Add to queue
-  this.pendingMessages.push(pendingMsg);
-
-  // Step 7: Apply priority sorting if enabled
-  // Sort the queue so higher priority messages are processed first
-  // Time complexity: O(n log n) where n is queue length
-  if (this.usePriorityQueue && this.pendingMessages.length > 1) {
-    this.pendingMessages.sort((a, b) => {
-      // Primary sort by priority (lower number = higher priority)
-      const priorityDiff = a.priority - b.priority;
-      if (priorityDiff !== 0) return priorityDiff;
-      
-      // Secondary sort by timestamp (older = higher priority)
-      return a.timestamp - b.timestamp;
-    });
-  }
-
-  // Step 8: Log queue status with diagnostic information
-  console.log(`[Socket] Message queued (Type: ${type}, Priority: ${priority}, ID: ${messageId}). Queue size: ${this.pendingMessages.length}/${this.maxQueueSize}`);
-  
-  // Step 9: Schedule queue processing after a short delay
-  // Use setTimeout to avoid blocking the main thread
-  setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS);
-  
-  return true; // Successfully queued
-}
 
   /** Removes expired messages from the pending queue. */
   private cleanupMessageQueue(): void {
@@ -2336,7 +2365,7 @@ private queueMessage(type: string, data: any, priority: MessagePriority = Messag
 
           console.debug(`[Socket] Sending queued message (Type: ${msg.type}, Prio: ${msg.priority}, ID: ${msg.id}, Retry: ${msg.retryCount})`);
           try {
-              const result = await this.send(msg.data, msg.priority); // Use the public send method
+              const result = await this.send(msg.data.payload, msg.priority); // Access the payload inside the envelope
 
               if (result === SendResult.SENT) {
                   successfulSends++;
@@ -2490,3 +2519,4 @@ private queueMessage(type: string, data: any, priority: MessagePriority = Messag
       }
     }, timeoutMs);
   }
+}
