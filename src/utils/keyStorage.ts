@@ -321,50 +321,6 @@ export async function storeKeypair(keypair: { publicKey: Uint8Array; secretKey: 
   console.log('[KeyStorage] Keypair stored successfully.');
 }
 
-/**
- * Retrieves the stored Ed25519 keypair from IndexedDB
- * @returns Promise resolving to the keypair or null if not found
- */
-export async function getStoredKeypair(): Promise<StoredKeypair | null> {
-  try {
-    // Get keypair from database
-    const result = await executeDbOperation('readwrite', (store) => {
-      return store.get(USER_KEYPAIR_ID);
-    });
-    
-    // If not found, return null
-    if (!result) {
-      console.log('[KeyStorage] No keypair found in storage.');
-      return null;
-    }
-    
-    // Update last used timestamp
-    await executeDbOperation('readwrite', (store) => {
-      const updateData = { ...result, lastUsed: Date.now() };
-      return store.put(updateData);
-    });
-    
-    // Ensure correct types and format for return
-    return {
-      publicKey: ensureUint8Array(result.publicKey),
-      secretKey: ensureUint8Array(result.secretKey),
-      publicKeyBase58: result.publicKeyBase58 || bs58.encode(result.publicKey)
-    };
-  } catch (error) {
-    console.error('[KeyStorage] Error retrieving keypair:', error);
-    
-    // Convert to KeyStorageError if needed
-    if (error instanceof KeyStorageError) {
-      throw error;
-    }
-    
-    throw new KeyStorageError(
-      `Failed to retrieve keypair: ${error instanceof Error ? error.message : String(error)}`,
-      'RETRIEVAL_ERROR',
-      error instanceof Error ? error : undefined
-    );
-  }
-}
 
 
 export async function getStoredKeypair(): Promise<StoredKeypair | null> {
@@ -374,9 +330,9 @@ export async function getStoredKeypair(): Promise<StoredKeypair | null> {
       return store.get(USER_KEYPAIR_ID);
     });
     
-    // If not found, return null
+    // If not found, try localStorage as fallback
     if (!result) {
-      console.log('[KeyStorage] No keypair found in storage.');
+      console.log('[KeyStorage] No keypair found in database.');
       
       // Check for localStorage fallback
       if (typeof localStorage !== 'undefined') {
@@ -403,6 +359,12 @@ export async function getStoredKeypair(): Promise<StoredKeypair | null> {
       }
       return null;
     }
+    
+    // Update last used timestamp
+    await executeDbOperation('readwrite', (store) => {
+      const updateData = { ...result, lastUsed: Date.now() };
+      return store.put(updateData);
+    });
     
     // Ensure correct types and format for return
     return {
