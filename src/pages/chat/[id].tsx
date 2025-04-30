@@ -11,10 +11,17 @@ import { useChat } from '../../hooks/useChat';
 import { useAuth } from '../../contexts/AuthContext';
 import { InviteModal } from '../../components/modals/InviteModal';
 import { EnhancedChatView } from '../../components/chat/EnhancedChatView';
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { useIPFS } from '../../hooks/useIPFS';
-import { useSolanaName } from '../../hooks/useSolanaName';
+
+// Remove Solana wallet imports and use the custom ConnectionButton
+// Or create a simplified wallet button component
+const WalletButton = () => {
+  const { isAuthenticated, user } = useAuth();
+  return (
+    <Button size="sm" leftIcon={<FaWallet />} colorScheme="purple" variant="outline">
+      {isAuthenticated ? `${user?.displayName || 'Connected'}` : 'Connect Wallet'}
+    </Button>
+  );
+};
 
 // Define getStaticProps and getStaticPaths for proper routing
 export async function getStaticProps() {
@@ -38,9 +45,6 @@ const ChatPage = () => {
   const { user, isAuthenticated, isLoading } = useAuth();
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
-  const { connection } = useConnection();
-  const wallet = useWallet();
-  const { storeChatHistory, loadChatHistory } = useIPFS();
   
   // Client-side only states
   const [isClient, setIsClient] = useState(false);
@@ -126,7 +130,7 @@ const ChatPage = () => {
     <Layout>
       {/* Web3 wallet connection status */}
       <Box position="absolute" top={2} right={4} zIndex={10}>
-        <WalletMultiButton />
+        <WalletButton />
       </Box>
       
       {/* Enhanced chat view with web3 integrations */}
@@ -144,7 +148,7 @@ const ChatPage = () => {
           chatId={chatId}
           inviteLink={currentUrl}
           onCopy={copyToClipboard}
-          solanaEnabled={!!wallet?.publicKey}
+          solanaEnabled={!!user?.publicKey}
         />
       )}
     </Layout>
