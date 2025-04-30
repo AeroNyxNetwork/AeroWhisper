@@ -1526,7 +1526,7 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
     } else if (isChatInfoPayload(decryptedData)) {
       this.emit('chatInfo', decryptedData.data);
     } else if (isParticipantsPayload(decryptedData)) {
-      this.emit('participants', decryptedData.data);
+      this.emit('participants', decryptedData.participants);
     } else if (isWebRTCSignalPayload(decryptedData)) {
       this.emit('webrtcSignal', decryptedData);
     } else if (isKeyRotationRequestPayload(decryptedData)) {
@@ -2205,7 +2205,7 @@ private queueMessage(type: string, data: any, priority: MessagePriority = Messag
   // Step 4: Wrap data with the DataEnvelope expected by the server
   // The queued data should match what would be sent directly in send()
   const envelopedData = {
-    payloadType: 'Json',
+    payload_type: 'Json', // FIXED: Using payload_type to match server's expectations
     payload: data
   };
   
