@@ -111,15 +111,20 @@ export const useChat = (chatId: string | null) => {
     /**
      * Creates a new message object with the specified content and status
      */
-    const createMessage = useCallback((content: string, status: MessageStatus = 'sending'): ChatMessageType => ({
+    const createMessage = useCallback((content: string, status: MessageStatus = 'sending'): ChatMessageType => {
+      const senderId = user?.id || user?.publicKey || '';
+      console.debug('[useChat:CREATE] Creating message with senderId:', senderId);
+      
+      return {
         id: `temp-${uuid()}`,
         content,
-        senderId: user?.id || user?.publicKey || '',
-        senderName: user?.displayName || 'Anonymous', // Always provide a default
+        senderId,
+        senderName: user?.displayName || 'Anonymous',
         timestamp: new Date().toISOString(),
         isEncrypted: true,
         status
-    }), [user]);
+      };
+    }, [user]);
 
     /**
      * Handles socket errors based on their type and severity
@@ -269,7 +274,24 @@ export const useChat = (chatId: string | null) => {
         socket.on('connected', handleConnect);
         socket.on('disconnected', handleDisconnect);
         socket.on('connectionStatus', handleStatusChange);
-        socket.on('message', handleMessage);
+        socket.on('message', (message) => {
+          console.debug('[useChat:RECEIVE] Received message:', {
+            id: message.id, 
+            senderId: message.senderId,
+            senderName: message.senderName,
+            currentUserId: user?.id,
+            isCurrentUser: message.senderId === user?.id || message.senderId === user?.publicKey
+          });
+          
+          // Add the received message with a default status if not provided
+          const completeMessage: ChatMessageType = {
+            ...message,
+            status: message.status ?? 'received'
+          };
+          
+          addMessage(completeMessage);
+          console.debug('[useChat:RECEIVE] Total messages after adding:', messages.length);
+        });
         socket.on('participants', handleParticipants);
         socket.on('chatInfo', handleChatInfo);
         socket.on('error', handleSocketError);
