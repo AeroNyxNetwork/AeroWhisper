@@ -1,3 +1,4 @@
+// src/auth/ConnectionButton.tsx
 import React from 'react';
 import { Button, ButtonProps, Flex, Text, Icon } from '@chakra-ui/react';
 import { FaWallet } from 'react-icons/fa';
