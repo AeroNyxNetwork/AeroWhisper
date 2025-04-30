@@ -140,6 +140,15 @@ interface PendingMessage {
   priority: MessagePriority; // Added for priority queue support
 }
 
+interface AuthMessage {
+  type: 'Auth';
+  public_key: string; // Changed from publicKey
+  version: string;
+  features: string[];
+  encryption_algorithm: string; // Changed from encryptionAlgorithm
+  nonce: string;
+}
+
 /**
  * Default reconnection configuration with exponential backoff
  */
@@ -175,7 +184,7 @@ const BATCH_PROCESS_DELAY_MS = 10; // Delay between processing batches
  * Required by updated server protocol
  */
 interface DataEnvelope {
-  payloadType: 'json';
+  payload_type: 'Json';
   payload: any;
 }
 
@@ -699,18 +708,19 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
    * Requests chat information from the server.
    * @returns Promise resolving to SendResult.
    */
-   public async requestChatInfo(): Promise<SendResult> {
-        console.debug('[Socket] Requesting chat info...');
-    return this.send({ type: 'chat_info_request' }, MessagePriority.NORMAL); // Changed from request-chat-info
-  }
+   
+    public async requestChatInfo(): Promise<SendResult> {
+      console.debug('[Socket] Requesting chat info...');
+      return this.send({ type: 'chat_info_request' }, MessagePriority.NORMAL); // Changed from request-chat-info
+    }
 
     /**
      * Requests the current list of participants from the server.
      * @returns Promise resolving to SendResult.
      */
     public async requestParticipants(): Promise<SendResult> {
-        console.debug('[Socket] Requesting participants list...');
-        return this.send({ type: 'participants_request' }, MessagePriority.NORMAL); // Changed from request-participants
+      console.debug('[Socket] Requesting participants list...');
+      return this.send({ type: 'participants_request' }, MessagePriority.NORMAL); // Changed from request-participants
     }
 
     /**
@@ -923,7 +933,7 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
           encryption_algorithm: 'aes256gcm',
           nonce: nonceString   // String nonce as now required by the interface
         };
-        console.log('[Socket] Auth message to be sent:', JSON.stringify(authMessage));
+        
         // Log the message for debugging
         console.log('[Socket] Sending Auth message:', JSON.stringify(authMessage));
     
