@@ -1,25 +1,20 @@
 // src/pages/chat/[id].tsx
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import {
-  Box, Flex, IconButton, Input, Heading,
-  useColorMode, Button, Menu, MenuButton, MenuList,
-  MenuItem, VStack, HStack, Tooltip, Divider,
-  useToast, Center, Spinner
+  Box, Flex, Heading, useColorMode, Button,
+  useToast, Center, Spinner, useDisclosure
 } from '@chakra-ui/react';
-import { 
-  FaPaperPlane, FaEllipsisV, FaUserPlus, FaClipboard, 
-  FaTrash, FaSignOutAlt, FaShieldAlt
-} from 'react-icons/fa';
+import { FaWallet } from 'react-icons/fa';
 import { Layout } from '../../components/layout/Layout';
-import { Message } from '../../components/chat/Message';
 import { useChat } from '../../hooks/useChat';
 import { useAuth } from '../../contexts/AuthContext';
-import { ChatEncryptionIndicator } from '../../components/chat/ChatEncryptionIndicator';
-import { ChatHeader } from '../../components/chat/ChatHeader';
 import { InviteModal } from '../../components/modals/InviteModal';
-import { ConnectionIndicator } from '../../components/ui/ConnectionIndicator';
 import { EnhancedChatView } from '../../components/chat/EnhancedChatView';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { useIPFS } from '../../hooks/useIPFS';
+import { useSolanaName } from '../../hooks/useSolanaName';
 
 // Define getStaticProps and getStaticPaths for proper routing
 export async function getStaticProps() {
@@ -42,17 +37,23 @@ const ChatPage = () => {
   const { colorMode } = useColorMode();
   const { user, isAuthenticated, isLoading } = useAuth();
   const toast = useToast();
+  const { isOpen, onOpen, onClose } = useDisclosure();
+  const { connection } = useConnection();
+  const wallet = useWallet();
+  const { storeChatHistory, loadChatHistory } = useIPFS();
   
   // Client-side only states
   const [isClient, setIsClient] = useState(false);
   const [currentUrl, setCurrentUrl] = useState('');
-  const [showInviteModal, setShowInviteModal] = useState(false);
-
+  const [isStorageEnabled, setIsStorageEnabled] = useState(false);
+  
   // Initialize client-side functionality
   useEffect(() => {
     setIsClient(true);
     if (typeof window !== 'undefined') {
       setCurrentUrl(window.location.href);
+      // Check if decentralized storage is enabled
+      setIsStorageEnabled(localStorage.getItem('enable-decentralized-storage') === 'true');
     }
     
     // Redirect to login if not authenticated
@@ -60,9 +61,9 @@ const ChatPage = () => {
       router.push('/auth/connect-wallet');
     }
   }, [isAuthenticated, isLoading, router]);
-
+  
   // Function to copy to clipboard with browser API
-  const copyToClipboard = () => {
+  const copyToClipboard = useCallback(() => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(currentUrl);
       toast({
@@ -71,8 +72,23 @@ const ChatPage = () => {
         duration: 2000,
       });
     }
-  };
-
+  }, [currentUrl, toast]);
+  
+  // Function to toggle decentralized storage
+  const toggleStorage = useCallback(() => {
+    const newValue = !isStorageEnabled;
+    setIsStorageEnabled(newValue);
+    localStorage.setItem('enable-decentralized-storage', String(newValue));
+    toast({
+      title: newValue ? "Decentralized Storage Enabled" : "Decentralized Storage Disabled",
+      description: newValue ? 
+        "Your messages will be encrypted and stored on IPFS" : 
+        "Your messages will only be stored locally",
+      status: newValue ? "success" : "info",
+      duration: 3000,
+    });
+  }, [isStorageEnabled, toast]);
+  
   // Loading state when router is not ready or in SSR
   if (!isClient || isLoading || !isAuthenticated) {
     return (
@@ -86,7 +102,7 @@ const ChatPage = () => {
       </Layout>
     );
   }
-
+  
   if (!chatId) {
     return (
       <Layout>
@@ -105,18 +121,30 @@ const ChatPage = () => {
       </Layout>
     );
   }
-
+  
   return (
     <Layout>
-      {/* Use the enhanced chat view component which includes all the necessary UI improvements */}
-      <EnhancedChatView chatId={chatId} />
+      {/* Web3 wallet connection status */}
+      <Box position="absolute" top={2} right={4} zIndex={10}>
+        <WalletMultiButton />
+      </Box>
+      
+      {/* Enhanced chat view with web3 integrations */}
+      <EnhancedChatView 
+        chatId={chatId} 
+        isStorageEnabled={isStorageEnabled}
+        onToggleStorage={toggleStorage}
+        onShare={onOpen}
+      />
       
       {isClient && (
         <InviteModal 
-          isOpen={showInviteModal} 
-          onClose={() => setShowInviteModal(false)}
+          isOpen={isOpen} 
+          onClose={onClose}
           chatId={chatId}
           inviteLink={currentUrl}
+          onCopy={copyToClipboard}
+          solanaEnabled={!!wallet?.publicKey}
         />
       )}
     </Layout>
