@@ -184,7 +184,8 @@ export interface MessagePayload extends BasePacket {
   type: 'message';
   id: string;
   content: string;
-  senderId: string;
+  chatId: string;              // Added to comply with server spec
+  sender: string;              // Using 'sender' as per server spec instead of senderId
   senderName: string;
   timestamp: string;
   // isEncrypted, status are typically handled client-side, not part of the core payload sent/received
@@ -211,7 +212,7 @@ export interface ChatInfoPayload extends BasePacket {
  */
 export interface ParticipantsRequestPayload extends BasePacket {
   type: 'participants_request';  // Changed to match server expectation
-  roomId?: string;              // Optional, server might use current session
+  chatId?: string;              // Changed from roomId to chatId for consistency
 }
 
 /**
@@ -226,7 +227,7 @@ export interface ParticipantsPayload extends BasePacket {
  * Structure for WebRTC signaling payloads
  */
 export interface WebRTCSignalPayload extends BasePacket {
-  type: 'webrtc_signal';     // Already changed to match server expectation
+  type: 'webrtc_signal';     // Changed to match server expectation
   peerId: string;            // Target peer ID for the signal
   signalType: 'offer' | 'answer' | 'candidate'; // Signal type
   signalData: any;           // SDP or ICE candidate data
@@ -247,7 +248,7 @@ export function isParticipantsResponse(payload: any): boolean {
  * Structure for Key Rotation Request (Client -> Server)
  */
 export interface KeyRotationRequestPayload extends BasePacket {
-  type: 'request-key-rotation';
+  type: 'key_rotation_request';  // Changed to match server expectation
   sessionId?: string;           // Current session ID (optional, server might know)
   timestamp: number;            // Request timestamp
   // Add client's ephemeral public key if needed by protocol
@@ -257,7 +258,7 @@ export interface KeyRotationRequestPayload extends BasePacket {
  * Structure for Key Rotation Response (Server -> Client)
  */
 export interface KeyRotationResponsePayload extends BasePacket {
-  type: 'key-rotation-response'; // Server responds with this type
+  type: 'key_rotation_response'; // Changed to match server expectation
   rotation_id?: string;         // ID to correlate request/response (optional)
   encrypted_key?: number[];     // New encrypted session key (if applicable)
   key_nonce?: number[];         // Nonce for encrypted key
@@ -312,9 +313,10 @@ export function isMessageType(payload: any): payload is MessagePayload {
     payload.type === 'message' &&
     isString(payload.id) &&
     isString(payload.content, true) && // Allow empty content
-    isString(payload.senderId) &&
+    isString(payload.sender) && // Changed from senderId to sender per server spec
     isString(payload.senderName, true) && // Allow potentially empty senderName
-    isString(payload.timestamp)
+    isString(payload.timestamp) &&
+    isString(payload.chatId) // Added chatId check
   );
 }
 
@@ -375,7 +377,7 @@ export function isWebRTCSignalPayload(payload: any): payload is WebRTCSignalPayl
 
 /** Type guard for KeyRotationRequestPayload objects (Client -> Server) */
 export function isKeyRotationRequestPayload(payload: any): payload is KeyRotationRequestPayload {
-  if (!isObject(payload) || payload.type !== 'request-key-rotation') return false;
+  if (!isObject(payload) || payload.type !== 'key_rotation_request') return false; // Changed to match server expectation
   return (
     (payload.sessionId === undefined || isString(payload.sessionId)) && // Optional sessionId
     isNumber(payload.timestamp)
@@ -385,7 +387,7 @@ export function isKeyRotationRequestPayload(payload: any): payload is KeyRotatio
 
 /** Type guard for KeyRotationResponsePayload objects (Server -> Client) */
 export function isKeyRotationResponsePayload(payload: any): payload is KeyRotationResponsePayload {
-   if (!isObject(payload) || payload.type !== 'key-rotation-response') return false;
+   if (!isObject(payload) || payload.type !== 'key_rotation_response') return false; // Changed to match server expectation
    return (
     (payload.rotation_id === undefined || isString(payload.rotation_id)) && // Optional rotation_id?
     isString(payload.status) &&
