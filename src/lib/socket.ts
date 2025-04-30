@@ -764,6 +764,7 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
           payload_type: 'Json', // Changed from payloadType to payload_type
           payload: data
         };
+        console.debug('[Socket:SEND] Sending with envelope:', JSON.stringify(envelope).substring(0, 100) + '...');
     
         // Create the encrypted Data packet
         const dataPacket = await createEncryptedDataPacket(
@@ -923,7 +924,7 @@ public async sendMessage(message: MessageType): Promise<SendResult> {
           encryption_algorithm: 'aes256gcm',
           nonce: nonceString   // String nonce as now required by the interface
         };
-    
+        console.log('[Socket] Auth message to be sent:', JSON.stringify(authMessage));
         // Log the message for debugging
         console.log('[Socket] Sending Auth message:', JSON.stringify(authMessage));
     
@@ -2209,6 +2210,7 @@ private queueMessage(type: string, data: any, priority: MessagePriority = Messag
     payloadType: 'Json',
     payload: data
   };
+  console.debug('[Socket:SEND] Sending with envelope:', JSON.stringify(envelope).substring(0, 100) + '...');
   
   // Step 5: Create the pending message object with all required metadata
   const pendingMsg: PendingMessage = {
