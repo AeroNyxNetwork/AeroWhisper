@@ -1,4 +1,4 @@
-// src/hooks/useChat.ts
+// src/hooks/useChat.ts 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { v4 as uuid } from 'uuid';
@@ -15,7 +15,7 @@ import {
     SendResult,
     SocketError
 } from '../lib/socket';
-import { MessageType as SocketMessageType } from '../lib/socket/types';
+import { MessagePayload } from '../lib/socket/types';
 import { useToast } from '@chakra-ui/react';
 
 /**
@@ -40,41 +40,51 @@ const mapSocketStatus = (socketStatus: SocketConnectionStatus): HookConnectionSt
 };
 
 /**
- * Maps ChatMessageType status to SocketMessageType status
+ * Maps ChatMessageType status to MessagePayload status
  * @param status The status from ChatMessageType
- * @returns Status compatible with SocketMessageType
+ * @returns Status compatible with MessagePayload
  */
-const mapMessageStatus = (status: MessageStatus | undefined): "sending" | "sent" | "delivered" | "failed" | "received" | undefined => {
-    if (!status) return undefined;
-    
-    // If status is "read", map it to "delivered" as that's the closest match
-    if (status === "read") return "delivered";
-    
-    // For other values that are common between both types, return as is
-    if (status === "sending" || status === "sent" || status === "delivered" || 
-        status === "failed" || status === "received") {
-        return status;
-    }
-    
-    // Default fallback if none of the above match
-    return "sent";
+const mapMessageStatus = (status: MessageStatus | undefined): "sending" | "sent" | "delivered" | "failed" | "received" | "read" | undefined => {
+    // Direct mapping since both types support the same status values
+    return status;
 };
 
 /**
- * Converts a ChatMessageType to a SocketMessageType
+ * Converts a frontend ChatMessageType to a Socket's MessagePayload
  * This ensures all required fields are present when sending to the socket
  */
-const toSocketMessage = (message: ChatMessageType): SocketMessageType => ({
+const toSocketMessage = (message: ChatMessageType): MessagePayload => ({
+    type: 'message',
     id: message.id,
+    // Map to both field formats for compatibility
     content: message.content,
+    text: message.content,
+    // Map to both field formats for compatibility
     senderId: message.senderId,
+    sender: message.senderId,
     senderName: message.senderName || 'Anonymous', // Ensure senderName is never undefined
     timestamp: typeof message.timestamp === 'string' 
         ? message.timestamp 
         : message.timestamp.toISOString(), // Convert Date to ISO string if it's a Date object
+    chatId: '', // Will be added by the sending function
     isEncrypted: message.isEncrypted ?? true,
     status: mapMessageStatus(message.status) // Map to compatible status type
-    // chatId is added by the socket implementation
+});
+
+/**
+ * Converts a Socket's MessagePayload to frontend ChatMessageType
+ * This ensures consistent data structure in the UI
+ */
+const fromSocketMessage = (message: MessagePayload): ChatMessageType => ({
+    id: message.id,
+    // Use content field with fallback to text
+    content: message.content || message.text || '',
+    // Use senderId field with fallback to sender
+    senderId: message.senderId || message.sender || '',
+    senderName: message.senderName,
+    timestamp: message.timestamp,
+    isEncrypted: message.isEncrypted,
+    status: message.status || 'received'
 });
 
 /**
@@ -98,6 +108,7 @@ export const useChat = (chatId: string | null) => {
 
     // --- Refs ---
     const socketRef = useRef<AeroNyxSocket | null>(null);
+    const messagesMapRef = useRef<Map<string, ChatMessageType>>(new Map());
     
     // --- Derived State ---
     const isCreator = useMemo(() => 
@@ -162,24 +173,32 @@ export const useChat = (chatId: string | null) => {
     }, []);
 
     /**
-     * Safely adds a message to the messages state
+     * Safely adds a message to the messages state with performance optimizations
      */
     const addMessage = useCallback((message: ChatMessageType) => {
+        // Skip if already in the Map
+        if (messagesMapRef.current.has(message.id)) {
+            return;
+        }
+        
+        // Add to the Map for O(1) lookups
+        messagesMapRef.current.set(message.id, message);
+        
+        // Efficiently update the messages array
         setMessages(prev => {
-            // Skip if duplicate
-            if (prev.some(m => m.id === message.id)) {
-                return prev;
-            }
-            
             // Create a new array with the message
             const newMessages = [...prev, message];
             
-            // Sort by timestamp
-            return newMessages.sort((a, b) => {
-                const timeA = new Date(a.timestamp).getTime();
-                const timeB = new Date(b.timestamp).getTime();
-                return timeA - timeB;
-            });
+            // Only sort if we have many messages (otherwise insertion at end is good enough)
+            if (newMessages.length > 50) {
+                return newMessages.sort((a, b) => {
+                    const timeA = new Date(a.timestamp).getTime();
+                    const timeB = new Date(b.timestamp).getTime();
+                    return timeA - timeB;
+                });
+            }
+            
+            return newMessages;
         });
     }, []);
 
@@ -187,6 +206,14 @@ export const useChat = (chatId: string | null) => {
      * Updates message status
      */
     const updateMessageStatus = useCallback((messageId: string, status: MessageStatus) => {
+        // Update in the map first (O(1) lookup)
+        const message = messagesMapRef.current.get(messageId);
+        if (message) {
+            const updatedMessage = { ...message, status };
+            messagesMapRef.current.set(messageId, updatedMessage);
+        }
+        
+        // Then update in the state array
         setMessages(prev => 
             prev.map(m => m.id === messageId ? { ...m, status } : m)
         );
@@ -207,6 +234,8 @@ export const useChat = (chatId: string | null) => {
             setParticipants([]);
             setChatInfo(null);
             setError(null);
+            // Clear the messages map reference
+            messagesMapRef.current.clear();
             return;
         }
 
@@ -221,6 +250,8 @@ export const useChat = (chatId: string | null) => {
             console.log('[useChat] Creating new AeroNyxSocket instance.');
             socketRef.current = new AeroNyxSocket();
             setCurrentSocketChatId(chatId);
+            // Clear the messages map when switching chats
+            messagesMapRef.current.clear();
         }
 
         const socket = socketRef.current;
@@ -247,16 +278,20 @@ export const useChat = (chatId: string | null) => {
             setConnectionStatus(mapSocketStatus(status));
         };
 
-        const handleMessage = (message: ChatMessageType) => {
-            console.debug('[useChat] Received message:', message.id);
+        const handleMessage = (messagePayload: MessagePayload) => {
+            console.debug('[useChat:RECEIVE] Received message:', messagePayload.id);
             
-            // Add the received message with a default status if not provided
-            const completeMessage: ChatMessageType = {
-                ...message,
-                status: message.status ?? 'received'
-            };
+            // Convert socket message to frontend message format
+            const frontendMessage = fromSocketMessage(messagePayload);
             
-            addMessage(completeMessage);
+            // Only process messages from other users (our own messages are added when sent)
+            const isCurrentUser = frontendMessage.senderId === user?.id || 
+                                  frontendMessage.senderId === user?.publicKey;
+                                  
+            if (!isCurrentUser || frontendMessage.status === 'received') {
+                addMessage(frontendMessage);
+                console.debug('[useChat:RECEIVE] Added message to state, current messages length:', messages.length);
+            }
         };
 
         const handleParticipants = (participantsList: Participant[]) => {
@@ -268,32 +303,48 @@ export const useChat = (chatId: string | null) => {
             console.debug('[useChat] Received chat info:', info);
             setChatInfo(info);
         };
+        
+        const handleHistoryResponse = (historyData: any) => {
+            if (Array.isArray(historyData.messages)) {
+                console.debug('[useChat] Received history with', historyData.messages.length, 'messages');
+                
+                // Convert all history messages to frontend format
+                const frontendMessages = historyData.messages.map(fromSocketMessage);
+                
+                // Add all messages to state efficiently
+                const newMessagesMap = new Map(messagesMapRef.current);
+                
+                for (const message of frontendMessages) {
+                    // Skip duplicates
+                    if (!newMessagesMap.has(message.id)) {
+                        newMessagesMap.set(message.id, message);
+                    }
+                }
+                
+                // Update the reference
+                messagesMapRef.current = newMessagesMap;
+                
+                // Convert map to array and sort once
+                const allMessages = Array.from(newMessagesMap.values()).sort((a, b) => {
+                    const timeA = new Date(a.timestamp).getTime();
+                    const timeB = new Date(b.timestamp).getTime();
+                    return timeA - timeB;
+                });
+                
+                // Set all messages at once
+                setMessages(allMessages);
+            }
+        };
 
         // --- Register Event Listeners ---
         socket.on('connected', handleConnect);
         socket.on('disconnected', handleDisconnect);
         socket.on('connectionStatus', handleStatusChange);
-        socket.on('message', (message) => {
-          console.debug('[useChat:RECEIVE] Received message:', {
-            id: message.id, 
-            senderId: message.senderId,
-            senderName: message.senderName,
-            currentUserId: user?.id,
-            isCurrentUser: message.senderId === user?.id || message.senderId === user?.publicKey
-          });
-          
-          // Add the received message with a default status if not provided
-          const completeMessage: ChatMessageType = {
-            ...message,
-            status: message.status ?? 'received'
-          };
-          
-          addMessage(completeMessage);
-          console.debug('[useChat:RECEIVE] Total messages after adding:', messages.length);
-        });
+        socket.on('message', handleMessage);
         socket.on('participants', handleParticipants);
         socket.on('chatInfo', handleChatInfo);
         socket.on('error', handleSocketError);
+        socket.on('historyResponse', handleHistoryResponse);
 
         // --- Initiate Connection ---
         if (socket.getConnectionStatus() === 'disconnected') {
@@ -304,7 +355,18 @@ export const useChat = (chatId: string | null) => {
               .then(() => {
                 console.log('[useChat] socket.connect() promise resolved successfully');
                 console.log('[useChat] Connection status after connect:', socket.getConnectionStatus());
-                // Maybe add additional connection validation here
+                
+                // Request chat history if available
+                if (socket.isConnected()) {
+                    console.log('[useChat] Requesting history from connected peers...');
+                    // Send history request
+                    socket.send({
+                        type: 'history_request',
+                        chatId: chatId,
+                        requesterId: user.id || user.publicKey
+                    })
+                    .catch(err => console.error('[useChat] Failed to request history:', err));
+                }
               })
               .catch(connectError => {
                 console.error('[useChat] socket.connect() promise rejected:', connectError);
@@ -330,7 +392,13 @@ export const useChat = (chatId: string | null) => {
             if (socket.isConnected()) {
                 Promise.all([
                     socket.requestChatInfo().catch(err => console.error("Failed to request chat info:", err)),
-                    socket.requestParticipants().catch(err => console.error("Failed to request participants:", err))
+                    socket.requestParticipants().catch(err => console.error("Failed to request participants:", err)),
+                    // Request history
+                    socket.send({
+                        type: 'history_request',
+                        chatId: chatId,
+                        requesterId: user.id || user.publicKey
+                    }).catch(err => console.error('[useChat] Failed to request history:', err))
                 ]);
             }
         }
@@ -349,10 +417,12 @@ export const useChat = (chatId: string | null) => {
             socket.off('participants', handleParticipants);
             socket.off('chatInfo', handleChatInfo);
             socket.off('error', handleSocketError);
+            socket.off('historyResponse', handleHistoryResponse);
         };
     }, [
         chatId, 
-        user?.publicKey, 
+        user?.publicKey,
+        user?.id,
         handleSocketError,
         currentSocketChatId,
         createSocketError,
@@ -384,13 +454,17 @@ export const useChat = (chatId: string | null) => {
         const messageToSend = createMessage(content, 'sending');
         const tempId = messageToSend.id;
 
-        // Optimistic UI update
+        // Optimistic UI update - add to state immediately
         addMessage(messageToSend);
         setIsSendingMessage(true);
 
         try {
             // Convert to socket message type before sending
             const socketMessage = toSocketMessage(messageToSend);
+            // Add the chatId - this field is required by the server
+            socketMessage.chatId = chatId;
+            
+            // Send the message
             const result = await socketRef.current.sendMessage(socketMessage);
 
             // Update message status based on result
@@ -466,6 +540,7 @@ export const useChat = (chatId: string | null) => {
             setMessages([]);
             setParticipants([]);
             setChatInfo(null);
+            messagesMapRef.current.clear();
             
             return true;
         } catch (error) {
