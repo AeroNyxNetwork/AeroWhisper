@@ -1585,28 +1585,121 @@ export class AeroNyxSocket extends EventEmitter {
    * @param decryptedData The decrypted message data
    */
   private async routeDecryptedMessage(decryptedData: any): Promise<void> {
-    if (isMessageType(decryptedData)) {
-      this.emit('message', decryptedData);
-    } else if (isChatInfoPayload(decryptedData)) {
-      this.emit('chatInfo', decryptedData.data);
-    } else if (isParticipantsPayload(decryptedData)) {
-      this.emit('participants', decryptedData.participants);
-    } else if (isWebRTCSignalPayload(decryptedData)) {
-      this.emit('webrtcSignal', decryptedData);
-    } else if (isKeyRotationRequestPayload(decryptedData)) {
-      await this.handleKeyRotationRequest(decryptedData);
-    } else if (isKeyRotationResponsePayload(decryptedData)) {
-      await this.handleKeyRotationResponse(decryptedData);
-    } else if (decryptedData && decryptedData.type === 'chat_info_response') {
-      // Handle chat info response from server
-      this.emit('chatInfo', decryptedData.data || decryptedData);
-    } else if (decryptedData && decryptedData.type === 'participants_response') {
-      // Handle participants response from server
-      this.emit('participants', decryptedData.participants || decryptedData.data || []);
-    } else {
-      // If structure is fundamentally valid
-      console.warn('[Socket] Received unrecognized message type:', decryptedData?.type);
-      this.emit('data', decryptedData); // Still emit for application layer
+    if (!decryptedData || typeof decryptedData !== 'object') {
+      console.warn('[Socket] Received invalid decrypted data structure');
+      return;
+    }
+  
+    try {
+      // Log the message type for debugging
+      console.debug(`[Socket] Routing decrypted message of type: ${decryptedData.type}`);
+  
+      // Use the type guards to properly identify and emit specific events
+      if (isMessageType(decryptedData)) {
+        // Normalize the message structure for consistent field names
+        const normalizedMessage: MessagePayload = {
+          ...decryptedData,
+          // Ensure content is available in expected field
+          content: decryptedData.content || decryptedData.text,
+          // Ensure senderId is available in expected field
+          senderId: decryptedData.senderId || decryptedData.sender,
+        };
+        
+        console.debug('[Socket] Emitting chat message event:', normalizedMessage.id);
+        this.emit('message', normalizedMessage);
+      }
+      else if (isChatInfoPayload(decryptedData)) {
+        // Normalize the chat info to a consistent structure
+        let chatInfo: any;
+        
+        if (decryptedData.data) {
+          // If the data is in a nested 'data' object, use that directly
+          chatInfo = decryptedData.data;
+        } else {
+          // Otherwise normalize from direct fields
+          chatInfo = {
+            id: decryptedData.id,
+            name: decryptedData.name,
+            createdAt: decryptedData.createdAt || decryptedData.created_at,
+            participantCount: decryptedData.participantCount || decryptedData.participant_count,
+            isEncrypted: decryptedData.isEncrypted || decryptedData.encryption || false,
+            useP2P: decryptedData.useP2P || false,
+            createdBy: decryptedData.createdBy || '',
+          };
+        }
+        
+        console.debug('[Socket] Emitting chat info event for:', chatInfo.id);
+        this.emit('chatInfo', chatInfo);
+      }
+      else if (isParticipantsPayload(decryptedData)) {
+        // Extract participants array from whichever field it's in
+        const participants = decryptedData.participants || decryptedData.data || [];
+        
+        console.debug('[Socket] Emitting participants event with', participants.length, 'participants');
+        this.emit('participants', participants);
+      }
+      else if (isWebRTCSignalPayload(decryptedData)) {
+        console.debug('[Socket] Emitting WebRTC signal of type:', decryptedData.signalType);
+        this.emit('webrtcSignal', decryptedData);
+      }
+      else if (isHistoryRequestPayload(decryptedData)) {
+        console.debug('[Socket] Emitting history request event');
+        this.emit('historyRequest', decryptedData);
+      }
+      else if (isHistoryResponsePayload(decryptedData)) {
+        console.debug('[Socket] Emitting history response event with', decryptedData.messages.length, 'messages');
+        
+        // Normalize all messages in the history
+        const normalizedMessages = decryptedData.messages.map(msg => ({
+          ...msg,
+          content: msg.content || msg.text,
+          senderId: msg.senderId || msg.sender
+        }));
+        
+        this.emit('historyResponse', {
+          ...decryptedData,
+          messages: normalizedMessages
+        });
+      }
+      else if (isKeyRotationRequestPayload(decryptedData)) {
+        console.debug('[Socket] Emitting key rotation request event');
+        this.emit('keyRotationRequest', decryptedData);
+        await this.handleKeyRotationRequest(decryptedData);
+      }
+      else if (isKeyRotationResponsePayload(decryptedData)) {
+        console.debug('[Socket] Emitting key rotation response event');
+        this.emit('keyRotationResponse', decryptedData);
+        await this.handleKeyRotationResponse(decryptedData);
+      }
+      else {
+        // For messages with known types but custom structure
+        if (decryptedData.type === 'leave-chat') {
+          console.debug('[Socket] Emitting leave chat event');
+          this.emit('leaveChat', decryptedData);
+        }
+        else if (decryptedData.type === 'delete-chat') {
+          console.debug('[Socket] Emitting delete chat event');
+          this.emit('deleteChat', decryptedData);
+        }
+        else if (decryptedData.type === 'typing' || decryptedData.type === 'typing_indicator') {
+          console.debug('[Socket] Emitting typing indicator event');
+          this.emit('typingIndicator', decryptedData);
+        }
+        else {
+          // Fall back for unrecognized message types
+          console.warn('[Socket] Received unknown message type:', decryptedData.type);
+          this.emit('data', decryptedData); // Generic event for unrecognized messages
+        }
+      }
+    } catch (error) {
+      console.error('[Socket] Error routing decrypted message:', error);
+      this.emit('error', this.createSocketError(
+        'data',
+        'Failed to route decrypted message',
+        'ROUTING_ERROR',
+        error instanceof Error ? error.message : String(error),
+        false
+      ));
     }
   }
   
