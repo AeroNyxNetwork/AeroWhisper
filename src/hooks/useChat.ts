@@ -68,13 +68,13 @@ const toSocketMessage = (message: ChatMessageType): SocketMessageType => ({
     id: message.id,
     content: message.content,
     senderId: message.senderId,
-    senderName: message.senderName || 'Anonymous',
+    senderName: message.senderName || 'Anonymous', // Ensure senderName is never undefined
     timestamp: typeof message.timestamp === 'string' 
         ? message.timestamp 
-        : message.timestamp.toISOString(),
+        : message.timestamp.toISOString(), // Convert Date to ISO string if it's a Date object
     isEncrypted: message.isEncrypted ?? true,
-    status: mapMessageStatus(message.status)
-    // chatId is handled by the socket internally
+    status: mapMessageStatus(message.status) // Map to compatible status type
+    // chatId is added by the socket implementation
 });
 
 /**
