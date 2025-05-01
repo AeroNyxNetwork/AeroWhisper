@@ -65,12 +65,11 @@ const mapMessageStatus = (status: MessageStatus | undefined): "sending" | "sent"
  * This ensures all required fields are present when sending to the socket
  */
 const toSocketMessage = (message: ChatMessageType): SocketMessageType => ({
-    ...message,
-    senderName: message.senderName || 'Anonymous', // Ensure senderName is never undefined
-    // Add any other required fields with defaults
     id: message.id,
     content: message.content,
-    senderId: message.senderId,
+    sender: message.senderId, // Use 'sender' instead of 'senderId' as expected by server
+    senderName: message.senderName || 'Anonymous', // Ensure senderName is never undefined
+    chatId: chatId, // Include chatId as required by server
     timestamp: typeof message.timestamp === 'string' 
         ? message.timestamp 
         : message.timestamp.toISOString(), // Convert Date to ISO string if it's a Date object
