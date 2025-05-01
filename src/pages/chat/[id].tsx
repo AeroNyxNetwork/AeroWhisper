@@ -11,8 +11,14 @@ import {
 import { FaPaperPlane, FaUsers, FaSignOutAlt, FaTrash, FaBell, FaInfoCircle, FaBars } from 'react-icons/fa';
 import { Layout } from '../../components/layout/Layout';
 import { useChat } from '../../hooks/useChat';
+import { Message } from '../../components/chat/Message';
+import { ParticipantsList } from '../../components/chat/ParticipantsList';
+import { EncryptionBadge } from '../../components/chat/EncryptionBadge';
+import { ChatInfoSection } from '../../components/chat/ChatInfoSection';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNotifications } from '../../contexts/NotificationContext';
+import { LeaveConfirmModal } from '../../components/modals/LeaveConfirmModal';
+import { DeleteConfirmModal } from '../../components/modals/DeleteConfirmModal';
 
 const ChatRoom = () => {
   const router = useRouter();
@@ -64,47 +70,17 @@ const ChatRoom = () => {
     }
   }, [isAuthenticated, router]);
   
-  // Debug WebSocket connections - 修复TypeScript编译错误
+  // Debug WebSocket connections
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      // Capture WebSocket errors with proper type casting
+      // Capture WebSocket errors
       const originalWebSocket = window.WebSocket;
       
-      // Create a constructor function that maintains the WebSocket interface
-      const customWebSocketConstructor = function(
-        this: WebSocket | any, // Use 'any' to avoid 'this' context issues
-        url: string | URL, 
-        protocols?: string | string[]
-      ) {
+      // Type-safe replacement
+      window.WebSocket = function(url, protocols) {
         console.log(`[Debug] Creating WebSocket connection to: ${url}`);
-        // We need to handle 'this' differently since we're using it as a constructor
-        if (!(this instanceof customWebSocketConstructor)) {
-          return new (customWebSocketConstructor as any)(url, protocols);
-        }
-        
-        const ws = new originalWebSocket(url, protocols);
-        
-        // Copy all properties from the real WebSocket instance to this
-        Object.assign(this, ws);
-        
-        // Add custom error handling
-        const originalOnError = ws.onerror;
-        ws.onerror = function(event) {
-          console.error('[WebSocket Error]', event);
-          if (originalOnError) originalOnError.call(ws, event);
-        };
-        
-        return ws;
-      };
-      
-      // Copy static properties
-      customWebSocketConstructor.CONNECTING = originalWebSocket.CONNECTING;
-      customWebSocketConstructor.OPEN = originalWebSocket.OPEN;
-      customWebSocketConstructor.CLOSING = originalWebSocket.CLOSING;
-      customWebSocketConstructor.CLOSED = originalWebSocket.CLOSED;
-      
-      // Use type assertion to replace the WebSocket constructor
-      window.WebSocket = customWebSocketConstructor as unknown as typeof WebSocket;
+        return new originalWebSocket(url, protocols);
+      } as unknown as typeof WebSocket;
       
       // Clean up on component unmount
       return () => {
@@ -214,7 +190,6 @@ const ChatRoom = () => {
     );
   }
   
-  // 简化JSX，移除对不存在组件的引用
   return (
     <Layout>
       <Flex 
@@ -239,8 +214,7 @@ const ChatRoom = () => {
             <Heading size="md" noOfLines={1}>
               {chatInfo?.name || `Chat #${chatId.toString().substring(0, 8)}`}
             </Heading>
-            {/* 添加加密徽章 */}
-            <Badge colorScheme="green">Encrypted</Badge>
+            <EncryptionBadge isEncrypted={true} />
             {connectionStatus !== 'connected' && (
               <Badge colorScheme={connectionStatus === 'connecting' ? 'yellow' : 'red'}>
                 {connectionStatus}
@@ -318,25 +292,12 @@ const ChatRoom = () => {
           ) : (
             <VStack spacing={4} align="stretch">
               {messages.map((message, index) => (
-                // 简单呈现消息，而不是使用Message组件
-                <Box 
+                <Message 
                   key={message.id || index}
-                  bg={message.senderId === user?.id ? "blue.100" : "gray.100"}
-                  color="gray.800"
-                  p={3}
-                  borderRadius="lg"
-                  maxW="80%"
-                  alignSelf={message.senderId === user?.id ? "flex-end" : "flex-start"}
-                >
-                  <Text fontWeight="bold">{message.senderName}</Text>
-                  <Text>{message.content}</Text>
-                  <Text fontSize="xs" textAlign="right" mt={1}>
-                    {typeof message.timestamp === 'string' 
-                      ? new Date(message.timestamp).toLocaleTimeString() 
-                      : message.timestamp.toLocaleTimeString()}
-                    {message.status && ` · ${message.status}`}
-                  </Text>
-                </Box>
+                  message={message}
+                  isOwnMessage={message.senderId === user?.id || message.senderId === user?.publicKey}
+                  status={message.status}
+                />
               ))}
               <div ref={messagesEndRef} />
             </VStack>
@@ -383,7 +344,7 @@ const ChatRoom = () => {
         </Box>
       </Flex>
       
-      {/* 简化抽屉组件，移除对不存在组件的引用 */}
+      {/* Participants Drawer */}
       <Drawer
         isOpen={isParticipantsOpen}
         placement="right"
@@ -397,28 +358,16 @@ const ChatRoom = () => {
             Participants ({participants.length})
           </DrawerHeader>
           <DrawerBody>
-            {/* 简单显示参与者列表 */}
-            <VStack align="stretch">
-              {participants.map(participant => (
-                <Flex key={participant.id} p={2} borderBottomWidth="1px">
-                  <Avatar size="sm" mr={3} />
-                  <Box>
-                    <Text fontWeight="bold">
-                      {participant.name}
-                      {participant.id === user?.id && " (You)"}
-                    </Text>
-                    <Text fontSize="sm" color="gray.500">
-                      {participant.status}
-                    </Text>
-                  </Box>
-                </Flex>
-              ))}
-            </VStack>
+            <ParticipantsList 
+              participants={participants} 
+              currentUserId={user?.id || ''} 
+              onRefresh={refreshParticipants}
+            />
           </DrawerBody>
         </DrawerContent>
       </Drawer>
       
-      {/* 简化聊天信息抽屉 */}
+      {/* Chat Info Drawer */}
       <Drawer
         isOpen={isInfoOpen}
         placement="right"
@@ -432,98 +381,31 @@ const ChatRoom = () => {
             Chat Information
           </DrawerHeader>
           <DrawerBody>
-            <VStack align="stretch" spacing={4}>
-              <Box>
-                <Text fontWeight="bold">Chat ID</Text>
-                <Text>{chatId}</Text>
-              </Box>
-              
-              <Box>
-                <Text fontWeight="bold">Name</Text>
-                <Text>{chatInfo?.name || 'Unnamed Chat'}</Text>
-              </Box>
-              
-              <Box>
-                <Text fontWeight="bold">Participants</Text>
-                <Text>{participants.length}</Text>
-              </Box>
-              
-              <Box>
-                <Text fontWeight="bold">Connection Status</Text>
-                <Badge colorScheme={connectionStatus === 'connected' ? 'green' : 'red'}>
-                  {connectionStatus}
-                </Badge>
-              </Box>
-              
-              <Box>
-                <Button 
-                  colorScheme="red" 
-                  leftIcon={<FaSignOutAlt />} 
-                  onClick={onLeaveModalOpen}
-                  mt={4}
-                  width="100%"
-                >
-                  Leave Chat
-                </Button>
-                
-                {isCreator && (
-                  <Button 
-                    colorScheme="red" 
-                    variant="outline"
-                    leftIcon={<FaTrash />} 
-                    onClick={onDeleteModalOpen}
-                    mt={2}
-                    width="100%"
-                  >
-                    Delete Chat
-                  </Button>
-                )}
-              </Box>
-            </VStack>
+            <ChatInfoSection 
+              chatInfo={chatInfo} 
+              participants={participants}
+              connectionStatus={connectionStatus}
+              isCreator={isCreator}
+              onLeaveClick={onLeaveModalOpen}
+              onDeleteClick={isCreator ? onDeleteModalOpen : undefined}
+            />
           </DrawerBody>
         </DrawerContent>
       </Drawer>
       
-      {/* 使用简单的确认对话框而不是自定义组件 */}
-      {/* 离开聊天确认 */}
-      <Modal isOpen={isLeaveModalOpen} onClose={onLeaveModalClose}>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Leave Chat?</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            Are you sure you want to leave this chat? You can always rejoin later.
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={onLeaveModalClose}>
-              Cancel
-            </Button>
-            <Button colorScheme="red" onClick={handleLeaveChatConfirm}>
-              Leave Chat
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      {/* Leave Chat Confirmation Modal */}
+      <LeaveConfirmModal
+        isOpen={isLeaveModalOpen}
+        onClose={onLeaveModalClose}
+        onConfirm={handleLeaveChatConfirm}
+      />
       
-      {/* 删除聊天确认 */}
-      <Modal isOpen={isDeleteModalOpen} onClose={onDeleteModalClose}>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Delete Chat?</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            Are you sure you want to delete this chat? This action cannot be undone.
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={onDeleteModalClose}>
-              Cancel
-            </Button>
-            <Button colorScheme="red" onClick={handleDeleteChatConfirm}>
-              Delete Chat
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      {/* Delete Chat Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={isDeleteModalOpen}
+        onClose={onDeleteModalClose}
+        onConfirm={handleDeleteChatConfirm}
+      />
     </Layout>
   );
 };
