@@ -30,7 +30,6 @@ import {
   PongMessage,
   ErrorMessage,
   DisconnectMessage,
-  MessagePayload,
   ChatInfo,
   Participant,
   WebRTCSignalPayload,
