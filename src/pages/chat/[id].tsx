@@ -1,413 +1,155 @@
-import React, { useState, useEffect, useRef } from 'react';
+// src/pages/chat/[id].tsx
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import {
-  Box, Flex, VStack, Text, Input, Button, IconButton, Heading, useToast,
-  useColorModeValue, Avatar, Divider, Badge, Tooltip, Drawer, DrawerOverlay,
-  DrawerContent, DrawerHeader, DrawerBody, DrawerCloseButton, useDisclosure,
-  SimpleGrid, HStack, Menu, MenuButton, MenuList, MenuItem, MenuDivider,
-  Modal, ModalOverlay, ModalContent, ModalHeader, ModalFooter, ModalBody,
-  ModalCloseButton
+  Box, Flex, Heading, useColorMode, Button,
+  useToast, Center, Spinner, useDisclosure
 } from '@chakra-ui/react';
-import { FaPaperPlane, FaUsers, FaSignOutAlt, FaTrash, FaBell, FaInfoCircle, FaBars } from 'react-icons/fa';
+import { FaWallet } from 'react-icons/fa';
 import { Layout } from '../../components/layout/Layout';
 import { useChat } from '../../hooks/useChat';
-import { Message } from '../../components/chat/Message';
-import { ParticipantsList } from '../../components/chat/ParticipantsList';
-import { EncryptionBadge } from '../../components/chat/EncryptionBadge';
-import { ChatInfoSection } from '../../components/chat/ChatInfoSection';
 import { useAuth } from '../../contexts/AuthContext';
-import { useNotifications } from '../../contexts/NotificationContext';
-import { LeaveConfirmModal } from '../../components/modals/LeaveConfirmModal';
-import { DeleteConfirmModal } from '../../components/modals/DeleteConfirmModal';
+import { InviteModal } from '../../components/modals/InviteModal';
+import { EnhancedChatView } from '../../components/chat/EnhancedChatView';
 
-const ChatRoom = () => {
+// Simple wallet button component
+const WalletButton = () => {
+  const { isAuthenticated, user } = useAuth();
+  return (
+    <Button size="sm" leftIcon={<FaWallet />} colorScheme="purple" variant="outline">
+      {isAuthenticated ? `${user?.displayName || 'Connected'}` : 'Connect Wallet'}
+    </Button>
+  );
+};
+
+// Define getStaticProps and getStaticPaths for proper routing
+export async function getStaticProps() {
+  return {
+    props: {}
+  };
+}
+
+export async function getStaticPaths() {
+  return {
+    paths: [],
+    fallback: 'blocking'
+  };
+}
+
+const ChatPage = () => {
   const router = useRouter();
-  const { id: chatId } = router.query;
+  const { id } = router.query;
+  const chatId = typeof id === 'string' ? id : '';
+  const { colorMode } = useColorMode();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const toast = useToast();
-  const { user, isAuthenticated } = useAuth();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [newMessage, setNewMessage] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const { isOpen: isParticipantsOpen, onOpen: onParticipantsOpen, onClose: onParticipantsClose } = useDisclosure();
-  const { isOpen: isInfoOpen, onOpen: onInfoOpen, onClose: onInfoClose } = useDisclosure();
-  const { isOpen: isLeaveModalOpen, onOpen: onLeaveModalOpen, onClose: onLeaveModalClose } = useDisclosure();
-  const { isOpen: isDeleteModalOpen, onOpen: onDeleteModalOpen, onClose: onDeleteModalClose } = useDisclosure();
-  const { markChatAsRead } = useNotifications();
+  const { isOpen, onOpen, onClose } = useDisclosure();
   
-  const {
-    messages,
-    sendMessage,
-    participants,
-    connectionStatus,
-    chatInfo,
-    leaveChat,
-    deleteChat,
-    refreshParticipants,
-    isSendingMessage,
-    error,
-    isCreator
-  } = useChat(typeof chatId === 'string' ? chatId : null);
+  // Client-side only states
+  const [isClient, setIsClient] = useState(false);
+  const [currentUrl, setCurrentUrl] = useState('');
   
-  // Auto-scroll when new messages come in
+  // Initialize client-side functionality
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    setIsClient(true);
+    if (typeof window !== 'undefined') {
+      setCurrentUrl(window.location.href);
     }
-  }, [messages]);
-  
-  // Mark chat as read when viewing
-  useEffect(() => {
-    if (chatId && connectionStatus === 'connected') {
-      markChatAsRead(chatId as string);
-    }
-  }, [chatId, connectionStatus, markChatAsRead]);
-  
-  // Redirect if not authenticated
-  useEffect(() => {
-    if (!isAuthenticated && router.isReady) {
+    
+    // Redirect to login if not authenticated
+    if (!isLoading && !isAuthenticated) {
       router.push('/auth/connect-wallet');
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, isLoading, router]);
   
-  // Debug WebSocket connections
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      // Capture WebSocket errors
-      const originalWebSocket = window.WebSocket;
-      
-      // Type-safe replacement
-      window.WebSocket = function(url, protocols) {
-        console.log(`[Debug] Creating WebSocket connection to: ${url}`);
-        return new originalWebSocket(url, protocols);
-      } as unknown as typeof WebSocket;
-      
-      // Clean up on component unmount
-      return () => {
-        window.WebSocket = originalWebSocket;
-      };
-    }
-  }, []);
-  
-  // Handle chat actions
-  const handleLeaveChatConfirm = async () => {
-    try {
-      const success = await leaveChat();
-      if (success) {
-        router.push('/dashboard');
-      }
-    } catch (error) {
+  // Function to copy to clipboard with browser API - we'll keep this for internal use
+  const copyToClipboard = useCallback(() => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(currentUrl);
       toast({
-        title: "Error leaving chat",
-        description: error instanceof Error ? error.message : "Unknown error occurred",
-        status: "error",
-        duration: 5000,
-      });
-    } finally {
-      onLeaveModalClose();
-    }
-  };
-  
-  const handleDeleteChatConfirm = async () => {
-    try {
-      const success = await deleteChat();
-      if (success) {
-        router.push('/dashboard');
-      }
-    } catch (error) {
-      toast({
-        title: "Error deleting chat",
-        description: error instanceof Error ? error.message : "Unknown error occurred",
-        status: "error",
-        duration: 5000,
-      });
-    } finally {
-      onDeleteModalClose();
-    }
-  };
-  
-  const handleSendMessage = async () => {
-    if (newMessage.trim() === '') return;
-    
-    try {
-      await sendMessage(newMessage);
-      setNewMessage('');
-      setIsTyping(false);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-    } catch (error) {
-      toast({
-        title: "Error sending message",
-        description: error instanceof Error ? error.message : "Unknown error occurred",
-        status: "error",
-        duration: 5000,
+        title: "Invitation link copied",
+        status: "success",
+        duration: 2000,
       });
     }
-  };
+  }, [currentUrl, toast]);
   
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setNewMessage(e.target.value);
-    
-    if (!isTyping) {
-      setIsTyping(true);
-      // Code to notify others that user is typing would go here
-    }
-    
-    // Reset typing indicator after 3 seconds of inactivity
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-    
-    typingTimeoutRef.current = setTimeout(() => {
-      setIsTyping(false);
-      // Code to notify others that user stopped typing would go here
-    }, 3000);
-  };
-  
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && !isSendingMessage) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
-  
-  // UI Colors
-  const bgColor = useColorModeValue('gray.50', 'gray.900');
-  const borderColor = useColorModeValue('gray.200', 'gray.700');
-  const cardBg = useColorModeValue('white', 'gray.800');
-  const headerBg = useColorModeValue('white', 'gray.800');
-  const inputBg = useColorModeValue('white', 'gray.700');
-  
-  // Loading & Error States
-  if (!chatId) {
+  // Loading state when router is not ready or in SSR
+  if (!isClient || isLoading || !isAuthenticated) {
     return (
       <Layout>
-        <Flex justify="center" align="center" h="80vh">
-          <Text>Loading chat...</Text>
-        </Flex>
+        <Center h="calc(100vh - 80px)">
+          <Flex direction="column" align="center">
+            <Spinner size="xl" color="purple.500" thickness="4px" speed="0.65s" />
+            <Heading mt={4} fontSize="lg">Loading chat...</Heading>
+          </Flex>
+        </Center>
       </Layout>
     );
   }
   
-  return (
-    <Layout>
-      <Flex 
-        direction="column" 
-        h="calc(100vh - 80px)" 
-        maxH="calc(100vh - 80px)" 
-        bg={bgColor}
-        position="relative"
-      >
-        {/* Header */}
-        <Flex 
-          py={2} 
-          px={4} 
-          bg={headerBg} 
-          borderBottomWidth="1px" 
-          borderColor={borderColor}
-          justify="space-between"
-          align="center"
-          boxShadow="sm"
-        >
-          <HStack spacing={4}>
-            <Heading size="md" noOfLines={1}>
-              {chatInfo?.name || `Chat #${chatId.toString().substring(0, 8)}`}
-            </Heading>
-            <EncryptionBadge isEncrypted={true} />
-            {connectionStatus !== 'connected' && (
-              <Badge colorScheme={connectionStatus === 'connecting' ? 'yellow' : 'red'}>
-                {connectionStatus}
-              </Badge>
-            )}
-          </HStack>
-          
-          <HStack spacing={2}>
-            <Tooltip label="Chat Info">
-              <IconButton
-                aria-label="Chat Info"
-                icon={<FaInfoCircle />}
-                onClick={onInfoOpen}
-                variant="ghost"
-                size="md"
-              />
-            </Tooltip>
-            
-            <Tooltip label="Participants">
-              <IconButton
-                aria-label="Participants"
-                icon={<FaUsers />}
-                onClick={onParticipantsOpen}
-                variant="ghost"
-                size="md"
-              />
-            </Tooltip>
-            
-            <Menu>
-              <MenuButton
-                as={IconButton}
-                aria-label="Chat Options"
-                icon={<FaBars />}
-                variant="ghost"
-                size="md"
-              />
-              <MenuList>
-                <MenuItem icon={<FaUsers />} onClick={onParticipantsOpen}>
-                  Participants ({participants.length})
-                </MenuItem>
-                <MenuItem icon={<FaInfoCircle />} onClick={onInfoOpen}>
-                  Chat Info
-                </MenuItem>
-                <MenuDivider />
-                <MenuItem icon={<FaSignOutAlt />} onClick={onLeaveModalOpen}>
-                  Leave Chat
-                </MenuItem>
-                {isCreator && (
-                  <MenuItem icon={<FaTrash />} onClick={onDeleteModalOpen} color="red.500">
-                    Delete Chat
-                  </MenuItem>
-                )}
-              </MenuList>
-            </Menu>
-          </HStack>
-        </Flex>
-        
-        {/* Messages Area */}
-        <Flex 
-          direction="column" 
-          flex="1" 
-          p={4} 
-          overflowY="auto" 
-          bg={bgColor}
-        >
-          {messages.length === 0 ? (
-            <Flex justify="center" align="center" h="100%">
-              <Box textAlign="center" p={6} borderRadius="md" bg={cardBg} boxShadow="sm">
-                <Text>No messages yet. Start the conversation!</Text>
-                <Text fontSize="sm" mt={2} color="gray.500">
-                  Messages are end-to-end encrypted and not stored on any server.
-                </Text>
-              </Box>
-            </Flex>
-          ) : (
-            <VStack spacing={4} align="stretch">
-              {messages.map((message, index) => (
-                <Message 
-                  key={message.id || index}
-                  message={message}
-                  isOwnMessage={message.senderId === user?.id || message.senderId === user?.publicKey}
-                  status={message.status}
-                />
-              ))}
-              <div ref={messagesEndRef} />
-            </VStack>
-          )}
-        </Flex>
-        
-        {/* Message Input Area */}
-        <Box 
-          p={4} 
-          borderTopWidth="1px" 
-          borderColor={borderColor}
-          bg={headerBg}
-        >
-          <Flex>
-            <Input
-              placeholder="Type your message..."
-              value={newMessage}
-              onChange={handleInputChange}
-              onKeyPress={handleKeyPress}
-              bg={inputBg}
-              mr={2}
-              isDisabled={connectionStatus !== 'connected'}
-            />
-            <Button
-              colorScheme="purple"
-              onClick={handleSendMessage}
-              isDisabled={!newMessage.trim() || connectionStatus !== 'connected' || isSendingMessage}
-              isLoading={isSendingMessage}
-              leftIcon={<FaPaperPlane />}
+  if (!chatId) {
+    return (
+      <Layout>
+        <Center h="calc(100vh - 80px)">
+          <Flex direction="column" align="center">
+            <Heading fontSize="lg">Invalid chat ID</Heading>
+            <Button 
+              mt={4} 
+              colorScheme="purple" 
+              onClick={() => router.push('/dashboard')}
             >
-              Send
+              Return to Dashboard
             </Button>
           </Flex>
-          {isTyping && (
-            <Text fontSize="xs" color="gray.500" mt={1}>
-              You are typing...
-            </Text>
-          )}
-          {connectionStatus !== 'connected' && (
-            <Text fontSize="xs" color="red.500" mt={1}>
-              {connectionStatus === 'connecting' ? 'Connecting to chat...' : 'Not connected'}
-            </Text>
-          )}
-        </Box>
-      </Flex>
+        </Center>
+      </Layout>
+    );
+  }
+  
+  // Handle manual copy action when user clicks the copy button inside the modal
+  const handleCopyAction = () => {
+    copyToClipboard();
+    // If InviteModal has onClosed, we would call it here
+  };
+  
+  return (
+    <Layout>
+      {/* Web3 wallet connection status */}
+      <Box position="absolute" top={2} right={4} zIndex={10}>
+        <WalletButton />
+      </Box>
       
-      {/* Participants Drawer */}
-      <Drawer
-        isOpen={isParticipantsOpen}
-        placement="right"
-        onClose={onParticipantsClose}
-        size="md"
-      >
-        <DrawerOverlay />
-        <DrawerContent>
-          <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px">
-            Participants ({participants.length})
-          </DrawerHeader>
-          <DrawerBody>
-            <ParticipantsList 
-              participants={participants} 
-              currentUserId={user?.id || ''} 
-              onRefresh={refreshParticipants}
-            />
-          </DrawerBody>
-        </DrawerContent>
-      </Drawer>
-      
-      {/* Chat Info Drawer */}
-      <Drawer
-        isOpen={isInfoOpen}
-        placement="right"
-        onClose={onInfoClose}
-        size="md"
-      >
-        <DrawerOverlay />
-        <DrawerContent>
-          <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px">
-            Chat Information
-          </DrawerHeader>
-          <DrawerBody>
-            <ChatInfoSection 
-              chatInfo={chatInfo} 
-              participants={participants}
-              connectionStatus={connectionStatus}
-              isCreator={isCreator}
-              onLeaveClick={onLeaveModalOpen}
-              onDeleteClick={isCreator ? onDeleteModalOpen : undefined}
-            />
-          </DrawerBody>
-        </DrawerContent>
-      </Drawer>
-      
-      {/* Leave Chat Confirmation Modal */}
-      <LeaveConfirmModal
-        isOpen={isLeaveModalOpen}
-        onClose={onLeaveModalClose}
-        onConfirm={handleLeaveChatConfirm}
+      {/* Only pass the chatId prop to EnhancedChatView */}
+      <EnhancedChatView 
+        chatId={chatId} 
       />
       
-      {/* Delete Chat Confirmation Modal */}
-      <DeleteConfirmModal
-        isOpen={isDeleteModalOpen}
-        onClose={onDeleteModalClose}
-        onConfirm={handleDeleteChatConfirm}
-      />
+      {isClient && (
+        <InviteModal 
+          isOpen={isOpen} 
+          onClose={onClose}
+          chatId={chatId}
+          inviteLink={currentUrl}
+          // Remove onCopy prop - it's not defined in InviteModalProps
+          // Remove solanaEnabled prop - it's likely also not defined or needs to be adapted
+        />
+      )}
+      
+      {/* Add a global event listener to handle copy actions */}
+      <Box id="copy-event-handler" hidden>
+        <script dangerouslySetInnerHTML={{
+          __html: `
+            document.addEventListener('click', function(e) {
+              if (e.target && e.target.id === 'copy-link-button') {
+                document.dispatchEvent(new CustomEvent('copy-invite-link'));
+              }
+            });
+          `
+        }} />
+      </Box>
     </Layout>
   );
 };
 
-export default ChatRoom;
+export default ChatPage;
