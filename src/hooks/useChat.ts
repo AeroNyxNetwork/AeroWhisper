@@ -67,14 +67,14 @@ const mapMessageStatus = (status: MessageStatus | undefined): "sending" | "sent"
 const toSocketMessage = (message: ChatMessageType): SocketMessageType => ({
     id: message.id,
     content: message.content,
-    senderId: message.senderId, // Keep using senderId to match SocketMessageType
-    senderName: message.senderName || 'Anonymous', // Ensure senderName is never undefined
-    chatId: chatId, // Include chatId as required by server
+    senderId: message.senderId,
+    senderName: message.senderName || 'Anonymous',
     timestamp: typeof message.timestamp === 'string' 
         ? message.timestamp 
-        : message.timestamp.toISOString(), // Convert Date to ISO string if it's a Date object
+        : message.timestamp.toISOString(),
     isEncrypted: message.isEncrypted ?? true,
-    status: mapMessageStatus(message.status) // Map to compatible status type
+    status: mapMessageStatus(message.status)
+    // chatId is handled by the socket internally
 });
 
 /**
