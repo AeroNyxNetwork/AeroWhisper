@@ -67,7 +67,7 @@ const mapMessageStatus = (status: MessageStatus | undefined): "sending" | "sent"
 const toSocketMessage = (message: ChatMessageType): SocketMessageType => ({
     id: message.id,
     content: message.content,
-    sender: message.senderId, // Use 'sender' instead of 'senderId' as expected by server
+    senderId: message.senderId, // Keep using senderId to match SocketMessageType
     senderName: message.senderName || 'Anonymous', // Ensure senderName is never undefined
     chatId: chatId, // Include chatId as required by server
     timestamp: typeof message.timestamp === 'string' 
