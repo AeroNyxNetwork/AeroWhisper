@@ -47,7 +47,9 @@ import {
   isParticipantsPayload,
   isWebRTCSignalPayload,
   isKeyRotationRequestPayload,
-  isKeyRotationResponsePayload
+  isKeyRotationResponsePayload,
+  isHistoryRequestPayload,
+  isHistoryResponsePayload
 } from './socket/types';
 
 // Import network and reconnection utilities
@@ -91,7 +93,6 @@ export interface AeroNyxSocketTestingInterface {
  * Internal connection state for state machine pattern
  * Using string enum values for clarity and type safety
  */
-
 type InternalConnectionStateType = 'disconnected' | 'connecting' | 'authenticating' | 'connected' | 'reconnecting' | 'closing';
 
 const InternalConnectionState = {
@@ -521,9 +522,10 @@ export class AeroNyxSocket extends EventEmitter {
    */
   public async disconnect(): Promise<void> {
     // Prevent disconnect loops or disconnecting if already disconnected/closing
-    if (this.connectionState === InternalConnectionState.DISCONNECTED || this.connectionState === InternalConnectionState.CLOSING) {
-        console.debug(`[Socket] Disconnect called but already in state: ${CONNECTION_STATE_NAMES[this.connectionState]}`);
-        return Promise.resolve();
+    if (this.connectionState === InternalConnectionState.DISCONNECTED || 
+        this.connectionState === InternalConnectionState.CLOSING) {
+      console.debug(`[Socket] Disconnect called but already in state: ${CONNECTION_STATE_NAMES[this.connectionState]}`);
+      return Promise.resolve();
     }
 
     console.log('[Socket] Disconnecting...');
@@ -542,7 +544,6 @@ export class AeroNyxSocket extends EventEmitter {
 
         // Wait briefly for the close event to be processed by the browser
         await new Promise(resolve => setTimeout(resolve, 100));
-
       } catch (e) {
         console.warn('[Socket] Error sending disconnect message or closing socket:', e);
       }
@@ -611,7 +612,8 @@ export class AeroNyxSocket extends EventEmitter {
     this.processingQueue = false;
   
     // 4. Reset connection promise state if connection failed/closed prematurely
-    if (this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) {
+    if (this.connectionState === InternalConnectionState.CONNECTING || 
+        this.connectionState === InternalConnectionState.AUTHENTICATING) {
       this.rejectConnection(new Error("Connection closed during setup"));
     } else {
       // Clear promise handlers if disconnected after successful connection or during closing
@@ -674,7 +676,7 @@ export class AeroNyxSocket extends EventEmitter {
    * @param message The message object conforming to MessageType.
    * @returns Promise resolving to SendResult.
    */
-  public async sendMessage(message: MessageType): Promise<SendResult> {
+  public async sendMessage(message: any): Promise<SendResult> {
     // Step 1: Validate input parameters
     if (!message || !message.id || typeof message.content !== 'string') {
       console.error('[Socket:SEND] Invalid message format:', message);
@@ -957,22 +959,15 @@ export class AeroNyxSocket extends EventEmitter {
         type: 'Auth',
         public_key: this.publicKey,
         version: '1.0.0',
-        features: ['aes256gcm', 'webrtc', 'key-rotation'],
+        features: ['aes256gcm'], // Modified to match spec exactly
         encryption_algorithm: 'aes256gcm',
         nonce: nonceString
       };
       
-      // Log the exact message we're sending for debugging
-      console.log('[Socket] Auth message to be sent:', JSON.stringify(authMessage));
-      
-      // Wrap in try-catch to ensure we catch any serialization errors
-      try {
-        const messageString = JSON.stringify(authMessage);
-        this.socket.send(messageString);
-        console.log('[Socket] Auth message sent successfully');
-      } catch (sendError) {
-        throw new Error(`Failed to serialize or send Auth message: ${sendError instanceof Error ? sendError.message : String(sendError)}`);
-      }
+      // Serialize and send the message
+      const messageString = JSON.stringify(authMessage);
+      this.socket.send(messageString);
+      console.debug('[Socket] Auth message sent successfully');
     } catch (error) {
       console.error('[Socket] Error sending Auth message:', error);
       this.emit('error', this.createSocketError(
@@ -1023,7 +1018,8 @@ export class AeroNyxSocket extends EventEmitter {
     this.cleanupConnection(false); // Clean up resources without emitting extra events yet
 
     // Reject connection promise if closed during connection/auth phase
-    if (previousState === InternalConnectionState.CONNECTING || previousState === InternalConnectionState.AUTHENTICATING) {
+    if (previousState === InternalConnectionState.CONNECTING || 
+        previousState === InternalConnectionState.AUTHENTICATING) {
       console.error('[Socket] Connection closed during handshake.');
       this.emit('error', this.createSocketError(
         'connection',
@@ -1043,15 +1039,23 @@ export class AeroNyxSocket extends EventEmitter {
     this.safeChangeState(InternalConnectionState.DISCONNECTED);
 
     // Handle reconnection logic
-    if (this.autoReconnect && shouldAttemptReconnect(event.code) && canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
+    if (this.autoReconnect && shouldAttemptReconnect(event.code) && 
+        canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
       this.scheduleReconnect();
-    } else if (this.autoReconnect && !canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
+    } else if (this.autoReconnect && 
+               !canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
       console.log("[Socket] Max reconnection attempts reached.");
-      this.emit('error', this.createSocketError('connection', 'Max reconnection attempts reached', 'MAX_RECONNECT', undefined, false));
+      this.emit('error', this.createSocketError(
+        'connection', 
+        'Max reconnection attempts reached', 
+        'MAX_RECONNECT', 
+        undefined, 
+        false
+      ));
       this.autoReconnect = false; // Stop trying
     } else if (!shouldAttemptReconnect(event.code)) {
-        console.log(`[Socket] WebSocket closed with code ${event.code}. Reconnection not appropriate.`);
-        this.autoReconnect = false; // Stop trying for non-retryable close codes
+      console.log(`[Socket] WebSocket closed with code ${event.code}. Reconnection not appropriate.`);
+      this.autoReconnect = false; // Stop trying for non-retryable close codes
     }
   }
 
@@ -1059,34 +1063,29 @@ export class AeroNyxSocket extends EventEmitter {
    * Handles WebSocket error event. Emits error and relies on onclose for cleanup.
    */
   private handleSocketError(event: Event): void {
-    this.clearConnectionTimeout(); // Ensure timeout is cleared
-    console.error('[Socket] WebSocket error:', event);
+    this.clearConnectionTimeout();
     
-    // Enhanced debugging
-    console.debug('[Socket] Connection state when error occurred:', 
-      CONNECTION_STATE_NAMES[this.connectionState]);
-    console.debug('[Socket] Auto-reconnect enabled:', this.autoReconnect);
-    
-    const errorMsg = 'WebSocket connection error occurred.';
-  
-    // Emit a generic connection error
-    this.emit('error', this.createSocketError(
+    // Create a standardized error
+    const error = this.createSocketError(
       'connection',
-      errorMsg,
+      'WebSocket connection error occurred',
       'WS_ERROR',
-       undefined,
-      true, // Assume potentially retryable unless onclose gives a specific code
+      undefined,
+      true, // Assume retryable until onclose specifies
       event
-    ));
-  
-    // If the error occurred during connection/auth, reject the promise
-    if (this.connectionState === InternalConnectionState.CONNECTING || 
+    );
+    
+    // Emit the error event
+    this.emit('error', error);
+    
+    // Handle based on connection state
+    if (this.connectionState === InternalConnectionState.CONNECTING ||
         this.connectionState === InternalConnectionState.AUTHENTICATING) {
-      console.error('[Socket] Error during connection/authentication phase');
-      this.rejectConnection(new Error(errorMsg));
-      // Note: cleanupConnection and state change will be handled by the subsequent 'onclose' event
-    } else {
-      // If error on established connection, trigger health check which might lead to reconnect
+      // Reject the connection promise if we're still in setup phase
+      this.rejectConnection(new Error(error.message));
+      // The onclose handler will handle cleanup and state transition
+    } else if (this.connectionState === InternalConnectionState.CONNECTED) {
+      // For established connections, check health which may trigger reconnect
       this.checkConnectionHealth();
     }
   }
@@ -1109,27 +1108,27 @@ export class AeroNyxSocket extends EventEmitter {
         case 'Challenge':
           // Ensure we are in the right state to process a challenge
           if (this.connectionState !== InternalConnectionState.AUTHENTICATING) {
-              console.warn(`[Socket] Received Challenge in unexpected state: ${CONNECTION_STATE_NAMES[this.connectionState]}`);
-              return;
+            console.warn(`[Socket] Received Challenge in unexpected state: ${CONNECTION_STATE_NAMES[this.connectionState]}`);
+            return;
           }
           await this.handleChallenge(message as ChallengeMessage);
           break;
 
         case 'IpAssign':
-           // Ensure we are in the right state
-           if (this.connectionState !== InternalConnectionState.AUTHENTICATING) {
-              console.warn(`[Socket] Received IpAssign in unexpected state: ${CONNECTION_STATE_NAMES[this.connectionState]}`);
-              return;
+          // Ensure we are in the right state
+          if (this.connectionState !== InternalConnectionState.AUTHENTICATING) {
+            console.warn(`[Socket] Received IpAssign in unexpected state: ${CONNECTION_STATE_NAMES[this.connectionState]}`);
+            return;
           }
           await this.handleIpAssign(message as IpAssignMessage);
           break;
 
         case 'Data':
-           // Should only process Data if fully connected
-           if (this.connectionState !== InternalConnectionState.CONNECTED) {
-               console.warn(`[Socket] Received Data packet in non-connected state: ${CONNECTION_STATE_NAMES[this.connectionState]}`);
-               return;
-           }
+          // Should only process Data if fully connected
+          if (this.connectionState !== InternalConnectionState.CONNECTED) {
+            console.warn(`[Socket] Received Data packet in non-connected state: ${CONNECTION_STATE_NAMES[this.connectionState]}`);
+            return;
+          }
           await this.handleDataPacket(message);
           break;
 
@@ -1151,13 +1150,13 @@ export class AeroNyxSocket extends EventEmitter {
 
         // Key Rotation handling
         case 'KeyRotationRequest':
-             if (this.connectionState !== InternalConnectionState.CONNECTED) return;
-             await this.handleKeyRotationRequest(message);
-             break;
+          if (this.connectionState !== InternalConnectionState.CONNECTED) return;
+          await this.handleKeyRotationRequest(message);
+          break;
         case 'KeyRotationResponse':
-             if (this.connectionState !== InternalConnectionState.CONNECTED) return;
-             await this.handleKeyRotationResponse(message);
-             break;
+          if (this.connectionState !== InternalConnectionState.CONNECTED) return;
+          await this.handleKeyRotationResponse(message);
+          break;
 
         default:
           console.warn(`[Socket] Received unknown message type: ${message.type}`, message);
@@ -1166,19 +1165,20 @@ export class AeroNyxSocket extends EventEmitter {
     } catch (error) {
       // Catch errors from handlers themselves (should ideally be handled within)
       console.error(`[Socket] Uncaught error processing message type ${message.type}:`, error);
-       this.emit('error', this.createSocketError(
-           'message',
-           `Error processing ${message.type}`,
-           'PROCESS_MSG_ERROR',
-            error instanceof Error ? error.message : String(error),
-           false, // Uncaught errors are usually not retryable
-           error
-       ));
-       // If an error occurs during connection/auth phase, reject the main promise
-       if (this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) {
-           this.rejectConnection(error);
-           await this.disconnect(); // Ensure cleanup on critical processing error during setup
-       }
+      this.emit('error', this.createSocketError(
+        'message',
+        `Error processing ${message.type}`,
+        'PROCESS_MSG_ERROR',
+        error instanceof Error ? error.message : String(error),
+        false, // Uncaught errors are usually not retryable
+        error
+      ));
+      // If an error occurs during connection/auth phase, reject the main promise
+      if (this.connectionState === InternalConnectionState.CONNECTING || 
+          this.connectionState === InternalConnectionState.AUTHENTICATING) {
+        this.rejectConnection(error);
+        await this.disconnect(); // Ensure cleanup on critical processing error during setup
+      }
     }
   }
 
@@ -1190,25 +1190,37 @@ export class AeroNyxSocket extends EventEmitter {
     console.log('[Socket] Received Challenge, ID:', message.id);
     try {
       // 1. Validate state and message
-      if (this.connectionState !== InternalConnectionState.AUTHENTICATING) throw new Error("Not in authenticating state.");
-      if (!message.server_key) throw new Error('Server public key missing in Challenge');
+      if (this.connectionState !== InternalConnectionState.AUTHENTICATING) {
+        throw new Error("Not in authenticating state.");
+      }
+      if (!message.server_key) {
+        throw new Error('Server public key missing in Challenge');
+      }
       this.serverPublicKey = message.server_key;
       console.log('[Socket] Stored server Ed25519 public key (Base58):', this.serverPublicKey.substring(0, 10) + '...');
 
-      if (!this.publicKey) throw new Error('Client public key not set');
+      if (!this.publicKey) {
+        throw new Error('Client public key not set');
+      }
 
       // 2. Parse challenge data
       const challengeBytes: Uint8Array = parseChallengeData(message.data);
-      if (challengeBytes.length === 0) throw new Error('Empty challenge data');
+      if (challengeBytes.length === 0) {
+        throw new Error('Empty challenge data');
+      }
       console.log('[Socket] Challenge data parsed, length:', challengeBytes.length);
 
       // 3. Get client secret key securely
       const keypair = await getStoredKeypair(); // Assumes secure retrieval
-      if (!keypair) throw new Error('Client keypair not found');
+      if (!keypair) {
+        throw new Error('Client keypair not found');
+      }
       const clientSecretKeyBytes = typeof keypair.secretKey === 'string' 
         ? bs58.decode(keypair.secretKey) 
         : keypair.secretKey;
-      if (clientSecretKeyBytes.length !== 64) throw new Error('Invalid client secret key length');
+      if (clientSecretKeyBytes.length !== 64) {
+        throw new Error('Invalid client secret key length');
+      }
 
       // 4. Sign challenge
       console.log('[Socket] Signing challenge...');
@@ -1230,7 +1242,13 @@ export class AeroNyxSocket extends EventEmitter {
       }
     } catch (error) {
       console.error('[Socket] Error handling challenge:', error);
-      this.emit('error', this.createSocketError('auth','Failed to process challenge','CHALLENGE_PROCESS_ERROR', error instanceof Error ? error.message : String(error),true));
+      this.emit('error', this.createSocketError(
+        'auth',
+        'Failed to process challenge',
+        'CHALLENGE_PROCESS_ERROR', 
+        error instanceof Error ? error.message : String(error),
+        true
+      ));
       this.rejectConnection(error); // Reject connect promise on challenge failure
       await this.disconnect(); // Disconnect fully
     }
@@ -1383,6 +1401,7 @@ export class AeroNyxSocket extends EventEmitter {
       let decryptedSessionKey: Uint8Array | null = null;
       
       try {
+        // Use a direct, efficient decryption process
         const result = await decryptWithAesGcm(
           encryptedSessionKeyBytes,
           keyNonceBytes,
@@ -1390,32 +1409,28 @@ export class AeroNyxSocket extends EventEmitter {
           'binary'
         );
         
-        // Ensure we have a Uint8Array result
         if (!(result instanceof Uint8Array)) {
           throw new Error('Decryption returned non-binary result');
         }
         
         decryptedSessionKey = result;
-        console.debug('[IpAssign] Session key decrypted successfully.');
       } catch (decryptError) {
-        console.error('[IpAssign] Session key decryption failed:', decryptError);
         throw new Error(`Session key decryption failed: ${decryptError instanceof Error ? decryptError.message : String(decryptError)}`);
       }
-  
-      // 9. Validate and Store the DECRYPTED Session Key
+    
+      // Validate the session key
       if (!decryptedSessionKey) {
         throw new Error('Decryption returned null');
       }
-      
+    
       if (decryptedSessionKey.length !== 32) {
         throw new Error(`Decrypted session key has invalid length: ${decryptedSessionKey.length}, expected 32 bytes`);
       }
-      
       this.sessionKey = decryptedSessionKey;
       this.sessionId = message.session_id;
-      this.messageCounter = 0; // Reset counter for new session
-      this.processedMessageIds.clear(); // Clear replay cache for new session
-      this.lastKeyRotation = Date.now(); // Mark initial key time
+      this.messageCounter = 0;
+      this.processedMessageIds.clear();
+      this.lastKeyRotation = Date.now();
       
       console.log('[Socket] Session key decrypted and stored successfully.');
       
@@ -1857,10 +1872,18 @@ export class AeroNyxSocket extends EventEmitter {
     console.error(`[Socket] Received server error: Code=${message.code}, Message=${message.message}`);
     const isFatalAuthError = message.code !== undefined && message.code >= 4000 && message.code < 5000;
 
-    this.emit('error', this.createSocketError('server',message.message,`SERVER_${message.code || 'UNKNOWN'}`,undefined,!isFatalAuthError,message));
+    this.emit('error', this.createSocketError(
+      'server',
+      message.message,
+      `SERVER_${message.code || 'UNKNOWN'}`,
+      undefined,
+      !isFatalAuthError,
+      message
+    ));
 
     // If error occurs during connection and is fatal, reject the promise
-    if ((this.connectionState === InternalConnectionState.CONNECTING || this.connectionState === InternalConnectionState.AUTHENTICATING) && isFatalAuthError) {
+    if ((this.connectionState === InternalConnectionState.CONNECTING || 
+         this.connectionState === InternalConnectionState.AUTHENTICATING) && isFatalAuthError) {
       console.error("[Socket] Fatal server error during connection phase. Aborting.");
       this.rejectConnection(new Error(`Server error ${message.code}: ${message.message}`));
       this.cleanupConnection(true);
@@ -1881,7 +1904,8 @@ export class AeroNyxSocket extends EventEmitter {
     this.cleanupConnection(false); // Clean resources first
 
     // Reject connect promise if disconnected during setup
-    if (previousState === InternalConnectionState.CONNECTING || previousState === InternalConnectionState.AUTHENTICATING) {
+    if (previousState === InternalConnectionState.CONNECTING || 
+        previousState === InternalConnectionState.AUTHENTICATING) {
       this.safeChangeState(InternalConnectionState.DISCONNECTED);
       this.rejectConnection(new Error(`Server disconnected during setup: ${message.reason} ${message.message}`));
     } else if (previousState === InternalConnectionState.CONNECTED) {
@@ -1893,7 +1917,8 @@ export class AeroNyxSocket extends EventEmitter {
 
     // Decide on reconnection
     const canReconnect = message.reason < 4000; // Example logic
-    if (this.autoReconnect && canReconnect && canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
+    if (this.autoReconnect && canReconnect && 
+        canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
       this.scheduleReconnect();
     } else {
       console.log("[Socket] Disconnect reason indicates no reconnection attempt or max attempts reached.");
@@ -2071,7 +2096,8 @@ export class AeroNyxSocket extends EventEmitter {
       }
 
       // Check if connected but unresponsive
-      if (this.connectionState === InternalConnectionState.CONNECTED && timeSinceLastMessage > KEEP_ALIVE_THRESHOLD_MS) {
+      if (this.connectionState === InternalConnectionState.CONNECTED && 
+          timeSinceLastMessage > KEEP_ALIVE_THRESHOLD_MS) {
         console.warn(`[Socket] No messages received for ${Math.round(timeSinceLastMessage/1000)}s. Checking connection health.`);
         this.checkConnectionHealth();
       }
@@ -2090,7 +2116,9 @@ export class AeroNyxSocket extends EventEmitter {
     this.stopHeartbeat();
     console.debug('[Socket] Starting heartbeat');
     this.heartbeatInterval = setInterval(() => {
-      if (this.connectionState !== InternalConnectionState.CONNECTED || !this.socket || !isSocketOpen(this.socket)) {
+      if (this.connectionState !== InternalConnectionState.CONNECTED || 
+          !this.socket || 
+          !isSocketOpen(this.socket)) {
         return; // Only send heartbeat when fully connected
       }
       const timeSinceLast = Date.now() - this.lastMessageTime;
@@ -2116,10 +2144,10 @@ export class AeroNyxSocket extends EventEmitter {
     console.debug(`[Socket] Starting session key rotation timer (Interval: ${KEY_ROTATION_INTERVAL_MS}ms)`);
     this.keyRotationTimer = setInterval(() => {
       if (this.connectionState === InternalConnectionState.CONNECTED) {
-          console.log('[Socket] Triggering scheduled session key rotation.');
-          this.rotateSessionKey().catch(err => {
-              console.error('[Socket] Scheduled key rotation failed:', err);
-          });
+        console.log('[Socket] Triggering scheduled session key rotation.');
+        this.rotateSessionKey().catch(err => {
+          console.error('[Socket] Scheduled key rotation failed:', err);
+        });
       }
     }, KEY_ROTATION_INTERVAL_MS);
   }
@@ -2196,10 +2224,10 @@ export class AeroNyxSocket extends EventEmitter {
     // or if last message time is very old despite attempts to ping.
     const timeSinceLast = Date.now() - this.lastMessageTime;
     if (timeSinceLast > KEEP_ALIVE_THRESHOLD_MS / 2) { // Check more aggressively if pings might be failing
-         console.warn("[Socket Health Check] Connection appears unresponsive. Triggering failure handling.");
-         this.handleConnectionFailure();
+      console.warn("[Socket Health Check] Connection appears unresponsive. Triggering failure handling.");
+      this.handleConnectionFailure();
     } else {
-        console.debug("[Socket Health Check] Connection appears healthy.");
+      console.debug("[Socket Health Check] Connection appears healthy.");
     }
   }
 
@@ -2239,7 +2267,7 @@ export class AeroNyxSocket extends EventEmitter {
     // Clear any existing reconnect timer
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
-       console.debug("[Socket] Cleared existing reconnect timeout.");
+      console.debug("[Socket] Cleared existing reconnect timeout.");
     }
     // Don't schedule if already connecting/authenticating or closing
     if (this.connectionState === InternalConnectionState.CONNECTING ||
@@ -2248,14 +2276,19 @@ export class AeroNyxSocket extends EventEmitter {
       console.debug(`[Socket] Skipping reconnect schedule: State is ${CONNECTION_STATE_NAMES[this.connectionState]}.`);
       return;
     }
-     // Ensure we are marked as reconnecting
-     this.safeChangeState(InternalConnectionState.RECONNECTING);
-
+    // Ensure we are marked as reconnecting
+    this.safeChangeState(InternalConnectionState.RECONNECTING);
 
     // Check max attempts
     if (!canRetry(this.reconnectAttempts, this.reconnectionConfig.maxAttempts)) {
       console.log(`[Socket] Max reconnection attempts (${this.reconnectionConfig.maxAttempts}) reached. Stopping.`);
-      this.emit('error', this.createSocketError('connection',`Failed to reconnect after ${this.reconnectionConfig.maxAttempts} attempts`,'MAX_RECONNECT',undefined,false));
+      this.emit('error', this.createSocketError(
+        'connection',
+        `Failed to reconnect after ${this.reconnectionConfig.maxAttempts} attempts`,
+        'MAX_RECONNECT',
+        undefined,
+        false
+      ));
       this.autoReconnect = false; // Give up
       this.safeChangeState(InternalConnectionState.DISCONNECTED); // Ensure final state is disconnected
       return;
@@ -2268,14 +2301,18 @@ export class AeroNyxSocket extends EventEmitter {
 
     // Emit 'reconnecting' status for UI feedback
     this.emit('connectionStatus', 'reconnecting');
-    this.emit('reconnecting', { attempt: attemptNumber, maxAttempts: this.reconnectionConfig.maxAttempts, delay });
+    this.emit('reconnecting', { 
+      attempt: attemptNumber, 
+      maxAttempts: this.reconnectionConfig.maxAttempts, 
+      delay 
+    });
 
     this.reconnectTimeout = setTimeout(async () => {
       this.reconnectTimeout = null; // Clear the timer ID
       // Double-check state before attempting connection
       if (this.connectionState !== InternalConnectionState.RECONNECTING || !this.autoReconnect) {
-          console.log(`[Socket] Skipping scheduled reconnect: State changed to ${CONNECTION_STATE_NAMES[this.connectionState]} or autoReconnect disabled.`);
-          return;
+        console.log(`[Socket] Skipping scheduled reconnect: State changed to ${CONNECTION_STATE_NAMES[this.connectionState]} or autoReconnect disabled.`);
+        return;
       }
 
       if (this.chatId && this.publicKey) {
@@ -2289,15 +2326,15 @@ export class AeroNyxSocket extends EventEmitter {
           console.error(`[Socket] Reconnection attempt ${this.reconnectAttempts} failed:`, error);
           // If connect() fails, its error handling (via onclose/onerror) should trigger scheduleReconnect again if appropriate.
           // We might need to explicitly call scheduleReconnect here if connect promise rejection doesn't guarantee onclose.
-           if (this.connectionState !== InternalConnectionState.CONNECTED) {
+          if (this.connectionState !== InternalConnectionState.CONNECTED) {
             this.safeChangeState(InternalConnectionState.DISCONNECTED); // Ensure state reflects failure
             this.scheduleReconnect(); // Schedule the next attempt
           }
         }
       } else {
-           console.error("[Socket] Cannot schedule reconnect: Missing chatId or publicKey.");
-           this.autoReconnect = false; // Stop trying if essential info is missing
-           this.safeChangeState(InternalConnectionState.DISCONNECTED);
+        console.error("[Socket] Cannot schedule reconnect: Missing chatId or publicKey.");
+        this.autoReconnect = false; // Stop trying if essential info is missing
+        this.safeChangeState(InternalConnectionState.DISCONNECTED);
       }
     }, delay);
   }
@@ -2321,85 +2358,73 @@ export class AeroNyxSocket extends EventEmitter {
    * Space complexity: O(n) where n is the number of pending messages
    */
   private queueMessage(type: string, data: any, priority: MessagePriority = MessagePriority.NORMAL): boolean {
-    // Step 1: Clean expired messages first to ensure space in the queue
+    // Clean expired messages first to ensure space in the queue
     this.cleanupMessageQueue();
-
-    // Step 2: Handle queue size limits with priority-aware overflow control
+  
+    // Handle queue size limits
     if (this.pendingMessages.length >= this.maxQueueSize) {
-      // Second cleanup attempt targeting only expired messages
       this.cleanupMessageQueue();
       
-      // If still full, implement priority-based overflow handling
+      // If still full after cleanup, handle based on priority
       if (this.pendingMessages.length >= this.maxQueueSize) {
         if (this.usePriorityQueue) {
           // Sort by priority (lowest number = highest priority)
           this.pendingMessages.sort((a, b) => b.priority - a.priority);
           
-          // Get the lowest priority message (last in sorted array)
-          const lowestPriorityMsg = this.pendingMessages[this.pendingMessages.length - 1];
-          
-          // Only remove if the new message has higher priority
+          // Only replace if the new message has higher priority
+          const lowestPriorityMsg = this.pendingMessages[this.pendingMessages.length - a1];
           if (lowestPriorityMsg && priority < lowestPriorityMsg.priority) {
-            this.pendingMessages.pop(); // Remove lowest priority message
-            console.warn(`[Socket] Queue full (${this.maxQueueSize}). Replaced lowest priority message (${lowestPriorityMsg.priority}) with higher priority message (${priority}).`);
+            this.pendingMessages.pop();
           } else {
-            console.warn(`[Socket] Queue full (${this.maxQueueSize}). Rejected new message with priority ${priority} (lower than existing messages).`);
-            return false; // Cannot queue message with lower priority
+            return false; // Cannot queue - lower priority than existing messages
           }
         } else {
           // FIFO approach - remove oldest message
           this.pendingMessages.shift();
-          console.warn(`[Socket] Queue full (${this.maxQueueSize}). Removed oldest message to make space.`);
         }
       }
     }
-
-    // Step 3: Generate a deterministic but unique message identifier
-    // Use existing ID if available or generate a new one with high entropy
+  
+    // Generate ID for message
     const messageId = data.id || `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 9)}`;
     
-    // Step 4: Wrap data with the DataEnvelope expected by the server
-    // The queued data should match what would be sent directly in send()
-    const envelopedData = {
-      payload_type: 'Json', // Using payload_type to match server's expectations
-      payload: data
-    };
+    // Always wrap in DataEnvelope for consistency with direct send
+    let dataToQueue: any;
+    if (data && data.payload_type === 'Json' && data.payload) {
+      dataToQueue = data; // Already in correct format
+    } else {
+      dataToQueue = {
+        payload_type: 'Json',
+        payload: data
+      };
+    }
     
-    // Step 5: Create the pending message object with all required metadata
+    // Create pending message entry
     const pendingMsg: PendingMessage = {
       type,
-      data: envelopedData, // Store with envelope to match the send() format
+      data: dataToQueue,
       timestamp: Date.now(),
       id: messageId,
       retryCount: 0,
       priority
     };
     
-    // Step 6: Add to queue
+    // Add to queue
     this.pendingMessages.push(pendingMsg);
-
-    // Step 7: Apply priority sorting if enabled
-    // Sort the queue so higher priority messages are processed first
-    // Time complexity: O(n log n) where n is queue length
+  
+    // Apply priority sorting if enabled
     if (this.usePriorityQueue && this.pendingMessages.length > 1) {
       this.pendingMessages.sort((a, b) => {
-        // Primary sort by priority (lower number = higher priority)
         const priorityDiff = a.priority - b.priority;
         if (priorityDiff !== 0) return priorityDiff;
-        
-        // Secondary sort by timestamp (older = higher priority)
         return a.timestamp - b.timestamp;
       });
     }
-
-    // Step 8: Log queue status with diagnostic information
-    console.log(`[Socket] Message queued (Type: ${type}, Priority: ${priority}, ID: ${messageId}). Queue size: ${this.pendingMessages.length}/${this.maxQueueSize}`);
-    
-    // Step 9: Schedule queue processing after a short delay
-    // Use setTimeout to avoid blocking the main thread
+  
+    // Schedule queue processing
     setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS);
     
-    return true; // Successfully queued
+    return true;
   }
 
   /** Removes expired messages from the pending queue. */
@@ -2409,101 +2434,104 @@ export class AeroNyxSocket extends EventEmitter {
     this.pendingMessages = this.pendingMessages.filter(msg => (now - msg.timestamp) <= MESSAGE_QUEUE_TTL_MS);
     const removedCount = initialLength - this.pendingMessages.length;
     if (removedCount > 0) {
-        console.debug(`[Socket] Cleaned up ${removedCount} expired messages from queue.`);
+      console.debug(`[Socket] Cleaned up ${removedCount} expired messages from queue.`);
     }
   }
 
   /** Processes and sends messages from the pending queue in batches. */
   private async processPendingMessages(): Promise<void> {
-      // Prevent concurrent processing
-      if (this.processingQueue) {
-          console.debug("[Socket] Queue processing already in progress.");
-          return;
+    // Prevent concurrent processing
+    if (this.processingQueue) {
+      console.debug("[Socket] Queue processing already in progress.");
+      return;
+    }
+    // Ensure we are ready to send
+    if (this.pendingMessages.length === 0 || !this.isConnected()) {
+      return;
+    }
+
+    this.processingQueue = true;
+    console.log(`[Socket] Starting processing of ${this.pendingMessages.length} pending messages...`);
+
+    // Adapt batch size based on recent latency
+    const avgLatency = this.calculateAverageLatency();
+    if (avgLatency > 500) {
+      this.currentBatchSize = Math.max(MIN_BATCH_SIZE, Math.floor(this.currentBatchSize * (1 - this.adaptationFactor)));
+    } else if (avgLatency < 100) {
+      this.currentBatchSize = Math.min(MAX_BATCH_SIZE, Math.ceil(this.currentBatchSize * (1 + this.adaptationFactor)));
+    }
+    console.debug(`[Socket] Adapted batch size to: ${this.currentBatchSize} (Avg Latency: ${avgLatency.toFixed(0)}ms)`);
+
+    // Use a microtask to avoid blocking the main thread
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    // Sort queue by priority if enabled
+    if (this.usePriorityQueue) {
+      this.pendingMessages.sort((a, b) => a.priority - b.priority); // Lower number = higher priority
+    }
+
+    // Take a batch of messages from the queue
+    const batchToProcess = this.pendingMessages.splice(0, this.currentBatchSize);
+    const failedMessages: PendingMessage[] = []; // To re-queue messages that fail but can be retried
+    let successfulSends = 0;
+
+    for (const msg of batchToProcess) {
+      // Double-check TTL before sending
+      if (Date.now() - msg.timestamp > MESSAGE_QUEUE_TTL_MS) {
+        console.debug(`[Socket] Skipping expired queued message (Type: ${msg.type}, ID: ${msg.id})`);
+        this.emit('messageFailed', { id: msg.id, type: msg.type, reason: 'TTL_EXPIRED' });
+        continue;
       }
-      // Ensure we are ready to send
-      if (this.pendingMessages.length === 0 || !this.isConnected()) {
-          return;
+
+      console.debug(`[Socket] Sending queued message (Type: ${msg.type}, Prio: ${msg.priority}, ID: ${msg.id}, Retry: ${msg.retryCount})`);
+      try {
+        const result = await this.send(msg.data.payload, msg.priority); // Access the payload inside the envelope
+
+        if (result === SendResult.SENT) {
+          successfulSends++;
+        } else if (result === SendResult.QUEUED || result === SendResult.FAILED) {
+          // If send returns QUEUED/FAILED even when isConnected() was true, it means an error occurred during send/encryption
+          // Re-queue for retry if possible
+          if (msg.retryCount < MAX_MESSAGE_RETRY_ATTEMPTS) {
+            msg.retryCount++;
+            failedMessages.push(msg);
+            console.warn(`[Socket] Send failed/requeued during batch processing. Re-queuing for retry (${msg.retryCount}/${MAX_MESSAGE_RETRY_ATTEMPTS})`);
+          } else {
+            console.error(`[Socket] Queued message failed after ${MAX_MESSAGE_RETRY_ATTEMPTS} attempts. Discarding:`, msg.type, msg.id);
+            this.emit('messageFailed', { id: msg.id, type: msg.type, reason: 'MAX_RETRIES_EXCEEDED' });
+          }
+        }
+      } catch (error) { // Catch unexpected errors from send
+        console.error(`[Socket] Error sending queued message type ${msg.type} (ID: ${msg.id}):`, error);
+        if (msg.retryCount < MAX_MESSAGE_RETRY_ATTEMPTS) {
+          msg.retryCount++;
+          failedMessages.push(msg);
+          console.warn(`[Socket] Send error for queued message. Re-queuing for retry (${msg.retryCount}/${MAX_MESSAGE_RETRY_ATTEMPTS})`);
+        } else {
+          console.error(`[Socket] Queued message failed after ${MAX_MESSAGE_RETRY_ATTEMPTS} attempts due to send error. Discarding:`, msg.type, msg.id);
+          this.emit('messageFailed', { id: msg.id, type: msg.type, reason: 'SEND_ERROR' });
+        }
       }
+    }
 
-      this.processingQueue = true;
-      console.log(`[Socket] Starting processing of ${this.pendingMessages.length} pending messages...`);
-
-      // Adapt batch size based on recent latency
-      const avgLatency = this.calculateAverageLatency();
-      if (avgLatency > 500) this.currentBatchSize = Math.max(MIN_BATCH_SIZE, Math.floor(this.currentBatchSize * (1 - this.adaptationFactor)));
-      else if (avgLatency < 100) this.currentBatchSize = Math.min(MAX_BATCH_SIZE, Math.ceil(this.currentBatchSize * (1 + this.adaptationFactor)));
-      console.debug(`[Socket] Adapted batch size to: ${this.currentBatchSize} (Avg Latency: ${avgLatency.toFixed(0)}ms)`);
-
-      // Use a microtask to avoid blocking the main thread
-      await new Promise(resolve => setTimeout(resolve, 0));
-
-      // Sort queue by priority if enabled
+    // Add any messages that need retrying back to the main queue
+    if (failedMessages.length > 0) {
+      console.log(`[Socket] Re-queuing ${failedMessages.length} failed messages for later retry.`);
+      // Add back to the start of the queue to prioritize retries? Or end? Let's add to end.
+      this.pendingMessages.push(...failedMessages);
+      // Re-sort if using priority queue
       if (this.usePriorityQueue) {
-          this.pendingMessages.sort((a, b) => a.priority - b.priority); // Lower number = higher priority
+        this.pendingMessages.sort((a, b) => a.priority - b.priority);
       }
+    }
 
-      // Take a batch of messages from the queue
-      const batchToProcess = this.pendingMessages.splice(0, this.currentBatchSize);
-      const failedMessages: PendingMessage[] = []; // To re-queue messages that fail but can be retried
-      let successfulSends = 0;
+    console.log(`[Socket] Finished processing batch (${successfulSends} sent, ${failedMessages.length} failed/retried). ${this.pendingMessages.length} messages remaining.`);
+    this.processingQueue = false;
 
-      for (const msg of batchToProcess) {
-          // Double-check TTL before sending
-          if (Date.now() - msg.timestamp > MESSAGE_QUEUE_TTL_MS) {
-              console.debug(`[Socket] Skipping expired queued message (Type: ${msg.type}, ID: ${msg.id})`);
-              this.emit('messageFailed', { id: msg.id, type: msg.type, reason: 'TTL_EXPIRED' });
-              continue;
-          }
-
-          console.debug(`[Socket] Sending queued message (Type: ${msg.type}, Prio: ${msg.priority}, ID: ${msg.id}, Retry: ${msg.retryCount})`);
-          try {
-              const result = await this.send(msg.data.payload, msg.priority); // Access the payload inside the envelope
-
-              if (result === SendResult.SENT) {
-                  successfulSends++;
-              } else if (result === SendResult.QUEUED || result === SendResult.FAILED) {
-                  // If send returns QUEUED/FAILED even when isConnected() was true, it means an error occurred during send/encryption
-                  // Re-queue for retry if possible
-                  if (msg.retryCount < MAX_MESSAGE_RETRY_ATTEMPTS) {
-                      msg.retryCount++;
-                      failedMessages.push(msg);
-                      console.warn(`[Socket] Send failed/requeued during batch processing. Re-queuing for retry (${msg.retryCount}/${MAX_MESSAGE_RETRY_ATTEMPTS})`);
-                  } else {
-                      console.error(`[Socket] Queued message failed after ${MAX_MESSAGE_RETRY_ATTEMPTS} attempts. Discarding:`, msg.type, msg.id);
-                      this.emit('messageFailed', { id: msg.id, type: msg.type, reason: 'MAX_RETRIES_EXCEEDED' });
-                  }
-              }
-          } catch (error) { // Catch unexpected errors from send
-              console.error(`[Socket] Error sending queued message type ${msg.type} (ID: ${msg.id}):`, error);
-              if (msg.retryCount < MAX_MESSAGE_RETRY_ATTEMPTS) {
-                  msg.retryCount++;
-                  failedMessages.push(msg);
-                  console.warn(`[Socket] Send error for queued message. Re-queuing for retry (${msg.retryCount}/${MAX_MESSAGE_RETRY_ATTEMPTS})`);
-              } else {
-                  console.error(`[Socket] Queued message failed after ${MAX_MESSAGE_RETRY_ATTEMPTS} attempts due to send error. Discarding:`, msg.type, msg.id);
-                  this.emit('messageFailed', { id: msg.id, type: msg.type, reason: 'SEND_ERROR' });
-              }
-          }
-      }
-
-      // Add any messages that need retrying back to the main queue
-      if (failedMessages.length > 0) {
-          console.log(`[Socket] Re-queuing ${failedMessages.length} failed messages for later retry.`);
-          // Add back to the start of the queue to prioritize retries? Or end? Let's add to end.
-          this.pendingMessages.push(...failedMessages);
-           // Re-sort if using priority queue
-          if (this.usePriorityQueue) {
-                this.pendingMessages.sort((a, b) => a.priority - b.priority);
-          }
-      }
-
-      console.log(`[Socket] Finished processing batch (${successfulSends} sent, ${failedMessages.length} failed/retried). ${this.pendingMessages.length} messages remaining.`);
-      this.processingQueue = false;
-
-      // If there are still messages, schedule the next batch processing cycle
-      if (this.pendingMessages.length > 0) {
-          setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS); // Process next batch shortly after
-      }
+    // If there are still messages, schedule the next batch processing cycle
+    if (this.pendingMessages.length > 0) {
+      setTimeout(() => this.processPendingMessages(), BATCH_PROCESS_DELAY_MS); // Process next batch shortly after
+    }
   }
 
   // --- Connection Promise Management ---
@@ -2520,7 +2548,7 @@ export class AeroNyxSocket extends EventEmitter {
 
   private rejectConnection(reason?: any): void {
     if (this.connectionReject) {
-       console.debug("[Socket] Rejecting connection promise.", reason);
+      console.debug("[Socket] Rejecting connection promise.", reason);
       this.connectionReject(reason);
     }
     this.connectionPromise = null; // Clear promise refs
