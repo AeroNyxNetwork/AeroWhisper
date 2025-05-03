@@ -24,8 +24,15 @@ export const Header: React.FC = () => {
   };
   
   const handleLogout = async () => {
-    await logout();
-    router.push('/');
+    try {
+      await logout();
+      // Add delay before redirect to allow logout to complete
+      setTimeout(() => {
+        router.push('/auth/connect-wallet');
+      }, 300);
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
   };
   
   const handleProfileClick = () => {
