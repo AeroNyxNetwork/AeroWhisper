@@ -2375,7 +2375,7 @@ export class AeroNyxSocket extends EventEmitter {
           this.pendingMessages.sort((a, b) => b.priority - a.priority);
           
           // Only replace if the new message has higher priority
-          const lowestPriorityMsg = this.pendingMessages[this.pendingMessages.length - a1];
+          const lowestPriorityMsg = this.pendingMessages[this.pendingMessages.length - 1];
           if (lowestPriorityMsg && priority < lowestPriorityMsg.priority) {
             this.pendingMessages.pop();
           } else {
