@@ -398,18 +398,17 @@ export async function deriveKeyWithHKDF(
     const derivedBits = await window.crypto.subtle.deriveBits(
       {
         name: 'HKDF',
-        hash: 'SHA-256', // Use SHA-256 as the hash function
-        salt: salt,
-        info: info
+        hash: 'SHA-256',
+        salt,
+        info
       },
       baseKey,
-      length * 8 // Convert bytes to bits
+      length * 8
     );
     
     return new Uint8Array(derivedBits);
   } catch (error) {
-    console.error('[Crypto] Error deriving key with HKDF:', error);
-    throw new Error(`HKDF failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`HKDF key derivation failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -425,14 +424,28 @@ export async function createEncryptedDataPacket(
   sessionKey: Uint8Array,
   counter: number
 ): Promise<any> {
-  // Ensure data is properly serialized as an envelope
-  const messageString = JSON.stringify(data);
+  // Ensure data is properly wrapped in a DataEnvelope if not already
+  let dataToEncrypt: any;
+  
+  // Check if the data is already a proper envelope
+  if (data && data.payload_type === 'Json' && data.payload) {
+    dataToEncrypt = data;
+  } else {
+    // Wrap in DataEnvelope as required by spec
+    dataToEncrypt = {
+      payload_type: 'Json',
+      payload: data
+    };
+  }
+  
+  // Serialize the envelope to JSON
+  const messageString = JSON.stringify(dataToEncrypt);
   
   // Generate nonce and encrypt
   const nonce = generateNonce();
   const { ciphertext } = await encryptWithAesGcm(messageString, sessionKey, nonce);
   
-  // Create the data packet
+  // Create the data packet according to spec
   return {
     type: 'Data',
     encrypted: Array.from(ciphertext),
