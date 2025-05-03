@@ -8,9 +8,11 @@ import {
     WebRTCSignalPayload,
     KeyRotationRequestPayload,
     KeyRotationResponsePayload,
-    ChatInfo, // Import nested types if needed for deeper validation
-    Participant // Import nested types if needed for deeper validation
-} from '../lib/socket/types'; // Adjust path if your types are elsewhere
+    Participant
+} from '../lib/socket/types'; 
+
+// Import ChatInfo from the correct location
+import { ChatInfo } from './chat';
 
 // --- Helper Type Guards ---
 
