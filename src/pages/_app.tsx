@@ -4,8 +4,10 @@ import { AppProps } from 'next/app';
 import { ChakraProvider, ColorModeScript } from '@chakra-ui/react';
 import { Inter } from 'next/font/google';
 import Head from 'next/head';
+import { useRouter } from 'next/router';
 import theme from '../theme';
 import { AuthProvider } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import { NotificationProvider } from '../contexts/NotificationContext';
 import { ThemeProvider } from '../contexts/ThemeContext';
 import { ErrorBoundary } from '../components/ui/ErrorBoundary';
@@ -18,13 +20,36 @@ const inter = Inter({
   variable: '--font-inter',
 });
 
-export default function App({ Component, pageProps }: AppProps) {
+function MyApp({ Component, pageProps }: AppProps) {
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
+
   useEffect(() => {
     // Polyfill Buffer for client-side
     if (typeof window !== 'undefined') {
       (window as any).Buffer = require('buffer/').Buffer;
     }
   }, []);
+
+  useEffect(() => {
+    // Global navigation guard
+    const handleRouteChange = (url: string) => {
+      const protectedRoutes = ['/dashboard', '/settings', '/chat'];
+      const isProtectedRoute = protectedRoutes.some(route => url.startsWith(route));
+      
+      if (isProtectedRoute && !isAuthenticated && !isLoading) {
+        router.push('/auth/connect-wallet');
+      }
+    };
+    
+    // Listen for route changes
+    router.events.on('routeChangeStart', handleRouteChange);
+    
+    // Clean up listener
+    return () => {
+      router.events.off('routeChangeStart', handleRouteChange);
+    };
+  }, [isAuthenticated, isLoading, router]);
 
   return (
     <>
@@ -42,16 +67,22 @@ export default function App({ Component, pageProps }: AppProps) {
       `}</style>
       <ChakraProvider theme={theme}>
         <ColorModeScript initialColorMode={theme.config.initialColorMode} />
-        <AuthProvider>
-          <NotificationProvider>
-            <ThemeProvider>
-              <ErrorBoundary>
-                <Component {...pageProps} />
-              </ErrorBoundary>
-            </ThemeProvider>
-          </NotificationProvider>
-        </AuthProvider>
+        <Component {...pageProps} />
       </ChakraProvider>
     </>
+  );
+}
+
+export default function App(props: AppProps) {
+  return (
+    <AuthProvider>
+      <NotificationProvider>
+        <ThemeProvider>
+          <ErrorBoundary>
+            <MyApp {...props} />
+          </ErrorBoundary>
+        </ThemeProvider>
+      </NotificationProvider>
+    </AuthProvider>
   );
 }
