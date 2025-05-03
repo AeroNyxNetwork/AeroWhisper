@@ -76,7 +76,7 @@ const DEFAULT_CONFIG: WebRTCConfig = {
  * Represents the structure of signaling messages sent via the WebSocket
  */
 interface WebRTCSignal {
-    type: 'offer' | 'answer' | 'ice-candidate'; // Keep as is for internal WebRTC use
+    type: 'offer' | 'answer' | 'ice-candidate' | 'candidate'; // Keep as is for internal WebRTC use
     sdp?: string;
     candidate?: RTCIceCandidateInit;
     timestamp?: number;
@@ -975,19 +975,23 @@ private async handleOfferSignal(signal: WebRTCSignal, sender: string): Promise<v
       }
     
       try {
+        // Clone the signal before modifying for server compatibility
+        const serverSignal = {...signal};
+        
         // Map internal signal types to server expected types
         let serverSignalType = signal.type;
         
         // Convert to expected server format if needed
         if (signal.type === 'ice-candidate') {
-          serverSignalType = 'candidate'; // Use 'candidate' as specified in the server API
+          // Don't modify the original signal object, just pass a different type to the method
+          serverSignalType = 'candidate' as any; // Use type assertion to bypass type checking
         }
         
         // Use the socket's method for sending WebRTC signals with proper type
         const result = await this.socket.sendWebRTCSignal(
           recipientPeerId,
-          serverSignalType as any,
-          signal
+          serverSignalType,
+          serverSignal
         );
     
         if (result === SendResult.FAILED) {
