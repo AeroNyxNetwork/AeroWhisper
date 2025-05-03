@@ -21,6 +21,7 @@ import {
 import { getStoredKeypair } from '../utils/keyStorage';
 
 // Import ALL message types from ONE place (types.ts)
+// Keep all the original socket/types imports, excluding ChatInfo
 import {
   AuthMessage,
   ChallengeMessage,
@@ -30,8 +31,6 @@ import {
   PongMessage,
   ErrorMessage,
   DisconnectMessage,
-  ChatInfo,
-  Participant,
   WebRTCSignalPayload,
   KeyRotationRequestPayload,
   KeyRotationResponsePayload,
@@ -49,8 +48,12 @@ import {
   isKeyRotationRequestPayload,
   isKeyRotationResponsePayload,
   isHistoryRequestPayload,
-  isHistoryResponsePayload
+  isHistoryResponsePayload,
+  Participant
 } from './socket/types';
+
+// Add this import
+import { ChatInfo } from '../types/chat';
 
 // Import network and reconnection utilities
 import { ReconnectionConfig } from './socket/reconnection';
