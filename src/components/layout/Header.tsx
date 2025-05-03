@@ -26,12 +26,27 @@ export const Header: React.FC = () => {
   const handleLogout = async () => {
     try {
       await logout();
-      // Add delay before redirect to allow logout to complete
+      // Clear any local storage data related to authentication
+      localStorage.removeItem('aero-keypair');
+      
+      toast({
+        title: "Logged out successfully",
+        status: "success",
+        duration: 3000,
+      });
+      
+      // Add delay before redirect to ensure state is updated
       setTimeout(() => {
         router.push('/auth/connect-wallet');
       }, 300);
     } catch (error) {
       console.error("Logout failed:", error);
+      toast({
+        title: "Logout failed",
+        description: "Please try again",
+        status: "error",
+        duration: 3000,
+      });
     }
   };
   
