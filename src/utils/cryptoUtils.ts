@@ -445,13 +445,13 @@ export async function createEncryptedDataPacket(
   const nonce = generateNonce();
   const { ciphertext } = await encryptWithAesGcm(messageString, sessionKey, nonce);
   
-  // Create the data packet according to spec
+  // Create the data packet according to spec - IMPORTANT: Use snake_case for field names
   return {
     type: 'Data',
     encrypted: Array.from(ciphertext),
     nonce: Array.from(nonce),
     counter: counter,
-    encryption_algorithm: 'aes256gcm'
+    encryption_algorithm: 'aes256gcm'  // Use snake_case as expected by server
   };
 }
 
@@ -476,7 +476,12 @@ export async function processEncryptedDataPacket(
     const nonce = new Uint8Array(packet.nonce);
     
     // Support both field names for backward compatibility
+    // IMPORTANT: Add more verbose logging here
     const algorithm = packet.encryption_algorithm || packet.encryption;
+    console.log('[Crypto:DEBUG] Processing packet with algorithm:', algorithm, 
+                'encryption_algorithm present:', !!packet.encryption_algorithm,
+                'encryption present:', !!packet.encryption);
+    
     if (algorithm && algorithm !== 'aes256gcm') {
       console.warn(`[Crypto] Unsupported encryption algorithm: ${algorithm}`);
       return null;
@@ -484,10 +489,15 @@ export async function processEncryptedDataPacket(
     
     // Decrypt the data
     const decryptedText = await decryptWithAesGcm(encrypted, nonce, sessionKey, 'string') as string;
+    console.log('[Crypto:DEBUG] Decryption successful, text length:', decryptedText.length);
     
     // Parse JSON
     try {
-      return JSON.parse(decryptedText);
+      const parsed = JSON.parse(decryptedText);
+      console.log('[Crypto:DEBUG] JSON parse successful, structure:', 
+                  parsed.payload_type ? 'has payload_type' : 'no payload_type',
+                  parsed.payload ? 'has payload' : 'no payload');
+      return parsed;
     } catch (parseError) {
       console.error('[Crypto] Failed to parse decrypted data as JSON:', parseError);
       return null;
@@ -540,6 +550,8 @@ export function generateSessionId(): string {
  */
 export async function testEncryptionCompat(key: Uint8Array): Promise<boolean> {
   try {
+    console.log('[Crypto:DEBUG] Starting encryption compatibility test...');
+    
     // Create test message
     const testMessage = {
       type: 'test',
@@ -547,17 +559,58 @@ export async function testEncryptionCompat(key: Uint8Array): Promise<boolean> {
       timestamp: Date.now()
     };
     
-    // Encrypt with our utilities
-    const encryptedPacket = await createEncryptedDataPacket(testMessage, key, 0);
+    // Create proper envelope format
+    const envelope = {
+      payload_type: 'Json',
+      payload: testMessage
+    };
+    
+    // Serialize to JSON string
+    const messageString = JSON.stringify(envelope);
+    
+    // Generate nonce
+    const nonce = generateNonce();
+    
+    // Encrypt directly
+    const { ciphertext } = await encryptWithAesGcm(messageString, key, nonce);
+    
+    // Create packet with the EXACT format expected by server
+    const packet = {
+      type: 'Data',
+      encrypted: Array.from(ciphertext),
+      nonce: Array.from(nonce),
+      counter: 0,
+      encryption_algorithm: 'aes256gcm'  // Use snake_case as expected by server
+    };
+    
+    console.log('[Crypto:DEBUG] Test packet created, attempting decryption...');
     
     // Decrypt with our utilities
-    const decryptedMessage = await processEncryptedDataPacket(encryptedPacket, key);
+    const decryptedData = await processEncryptedDataPacket(packet, key);
+    
+    console.log('[Crypto:DEBUG] Decryption result:', decryptedData ? 'success' : 'failure');
+    
+    if (!decryptedData) {
+      console.error('[Crypto] Encryption test failed: decryption returned null');
+      return false;
+    }
+    
+    // Check envelope structure
+    if (!decryptedData.payload_type || decryptedData.payload_type !== 'Json' || !decryptedData.payload) {
+      console.error('[Crypto] Encryption test failed: incorrect envelope structure', decryptedData);
+      return false;
+    }
+    
+    // Extract the actual message
+    const extractedMessage = decryptedData.payload;
     
     // Verify result
-    if (!decryptedMessage || 
-        decryptedMessage.type !== testMessage.type || 
-        decryptedMessage.value !== testMessage.value) {
-      console.error('[Crypto] Encryption test failed: mismatch between original and decrypted data');
+    if (extractedMessage.type !== testMessage.type || 
+        extractedMessage.value !== testMessage.value) {
+      console.error('[Crypto] Encryption test failed: mismatch between original and decrypted data', {
+        original: testMessage,
+        decrypted: extractedMessage
+      });
       return false;
     }
     
