@@ -719,18 +719,19 @@ export class WebRTCManager extends EventEmitter {
       }
 
       switch (signal.type) {
-        case 'offer':
-          await this.handleOfferSignal(signal, sender);
-          break;
-        case 'answer':
-          await this.handleAnswerSignal(signal);
-          break;
-        case 'ice-candidate':
-          await this.handleIceCandidateSignal(signal);
-          break;
-        default:
-          console.warn(`[WebRTC] Received unknown signal type: ${signal.type}`);
-      }
+          case 'offer':
+            await this.handleOfferSignal(signal, sender);
+            break;
+          case 'answer':
+            await this.handleAnswerSignal(signal);
+            break;
+          case 'ice-candidate':
+          case 'candidate': // Added support for both formats
+            await this.handleIceCandidateSignal(signal);
+            break;
+          default:
+            console.warn(`[WebRTC] Received unknown signal type: ${signal.type}`);
+        }
     } catch (error) {
       console.error(`[WebRTC] Error handling signal type ${signal.type}:`, error);
       
@@ -969,42 +970,40 @@ private async handleOfferSignal(signal: WebRTCSignal, sender: string): Promise<v
    * @param signal The WebRTCSignal payload (offer, answer, candidate).
    */
   private async sendSignal(recipientPeerId: string, signal: WebRTCSignal): Promise<void> {
-    if (!this.socket || !this.localPeerId) {
-      console.error('[WebRTC] Cannot send signal: Socket or localPeerId missing.');
-      throw new Error('Socket or localPeerId missing');
-    }
-
-    console.debug(`[WebRTC] Sending signal type '${signal.type}' to peer ${recipientPeerId}`);
-    
-    try {
-      // Map internal signal types to server expected types
-      const serverSignalType = signal.type === 'ice-candidate' ? 'candidate' : signal.type;
-      
-      // Use the socket's method for sending WebRTC signals with updated type
-      const result = await this.socket.sendWebRTCSignal(
-        recipientPeerId,
-        serverSignalType as any,
-        signal
-      );
-
-      if (result === SendResult.FAILED) {
-        throw new Error(`Failed to send signal type '${signal.type}' via socket.`);
-      } else if (result === SendResult.QUEUED) {
-        console.warn(`[WebRTC] Signal type '${signal.type}' was queued by the socket.`);
+      if (!this.socket || !this.localPeerId) {
+        throw new Error('Socket or localPeerId missing');
       }
-    } catch (error) {
-      console.error(`[WebRTC] Error sending signal type '${signal.type}':`, error);
-      
-      this.emitError({
-        type: 'signaling',
-        message: 'Failed to send signal',
-        details: error,
-        recoverable: true
-      });
-      
-      throw error;
+    
+      try {
+        // Map internal signal types to server expected types
+        let serverSignalType = signal.type;
+        
+        // Convert to expected server format if needed
+        if (signal.type === 'ice-candidate') {
+          serverSignalType = 'candidate'; // Use 'candidate' as specified in the server API
+        }
+        
+        // Use the socket's method for sending WebRTC signals with proper type
+        const result = await this.socket.sendWebRTCSignal(
+          recipientPeerId,
+          serverSignalType as any,
+          signal
+        );
+    
+        if (result === SendResult.FAILED) {
+          throw new Error(`Failed to send signal type '${signal.type}'`);
+        }
+      } catch (error) {
+        this.emitError({
+          type: 'signaling',
+          message: 'Failed to send signal',
+          details: error,
+          recoverable: true
+        });
+        
+        throw error;
+      }
     }
-}
     
 
   /**
