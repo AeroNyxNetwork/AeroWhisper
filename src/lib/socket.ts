@@ -1453,11 +1453,13 @@ export class AeroNyxSocket extends EventEmitter {
       this.resolveConnection(); // Resolve the main connect() promise
   
       // 11. Compatibility Test (Run async, don't block connection)
-      console.debug('[IpAssign] Starting encryption compatibility test...');
+      console.debug('[IpAssign] Encryption test starting...');
       testEncryptionCompat(this.sessionKey)
         .then(compatTestPassed => {
           if (!compatTestPassed) {
             console.error("[Socket] CRITICAL: Local encryption compatibility test FAILED!");
+            console.error("[Socket] This will prevent message synchronization between clients.");
+            // Don't disconnect immediately - let's try to use it anyway
             this.emit('error', this.createSocketError(
               'auth',
               'Encryption test failed',
@@ -1465,13 +1467,13 @@ export class AeroNyxSocket extends EventEmitter {
               undefined,
               false
             ));
-            this.disconnect().catch(e => console.error("Error during disconnect after encryption test failure:", e));
           } else {
             console.log("[Socket] Local encryption compatibility test PASSED.");
           }
         })
         .catch(testError => {
           console.error("[Socket] Encryption compatibility test threw an error:", testError);
+          // Don't disconnect immediately
           this.emit('error', this.createSocketError(
             'auth',
             'Encryption test error',
@@ -1479,7 +1481,6 @@ export class AeroNyxSocket extends EventEmitter {
             testError instanceof Error ? testError.message : String(testError), 
             false
           ));
-          this.disconnect().catch(e => console.error("Error during disconnect after encryption test error:", e));
         });
   
     } catch (error) {
