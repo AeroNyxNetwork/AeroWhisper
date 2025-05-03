@@ -221,25 +221,28 @@ export const useChat = (chatId: string | null) => {
 
     // --- Socket Connection Effect ---
     useEffect(() => {
-        // Skip if no chatId or user
-        if (!chatId || !user?.publicKey) {
-            if (socketRef.current) {
-                console.log('[useChat] Chat ID or User missing, disconnecting existing socket.');
-                socketRef.current.disconnect();
-                socketRef.current = null;
-                setCurrentSocketChatId(null);
-            }
-            setConnectionStatus('disconnected');
-            setMessages([]);
-            setParticipants([]);
-            setChatInfo(null);
-            setError(null);
-            // Clear the messages map reference
-            messagesMapRef.current.clear();
-            return;
+      // Skip if no chatId or user
+      if (!chatId || !user?.publicKey) {
+        if (socketRef.current) {
+          console.log('[useChat:DEBUG] Chat ID or User missing, disconnecting existing socket.', {
+            chatId,
+            userPublicKey: user?.publicKey,
+          });
+          socketRef.current.disconnect();
+          socketRef.current = null;
+          setCurrentSocketChatId(null);
         }
-
-        console.log(`[useChat] Effect triggered for chatId: ${chatId}`);
+        setConnectionStatus('disconnected');
+        setMessages([]);
+        setParticipants([]);
+        setChatInfo(null);
+        setError(null);
+        // Clear the messages map reference
+        messagesMapRef.current.clear();
+        return;
+      }
+    
+      console.log(`[useChat:DEBUG] Effect triggered for chatId: ${chatId}, user: ${user?.publicKey.substring(0, 10)}...`);
 
         // Initialize socket instance if needed
         if (!socketRef.current || currentSocketChatId !== chatId) {
@@ -378,15 +381,16 @@ export const useChat = (chatId: string | null) => {
                 
                 // Request chat history if available
                 if (socket.isConnected()) {
-                    console.log('[useChat] Requesting history from connected peers...');
+                    console.log('[useChat:DEBUG] Requesting chat history from connected peers...');
                     // Send history request
                     socket.send({
-                        type: 'history_request',
-                        chatId: chatId,
-                        requesterId: user.id || user.publicKey
+                      type: 'history_request',
+                      chatId: chatId,
+                      requesterId: user.id || user.publicKey
                     })
-                    .catch(err => console.error('[useChat] Failed to request history:', err));
-                }
+                    .then(() => console.log('[useChat:DEBUG] History request sent successfully'))
+                    .catch(err => console.error('[useChat:DEBUG] Failed to request history:', err));
+                  }
               })
               .catch(connectError => {
                 console.error('[useChat] socket.connect() promise rejected:', connectError);
@@ -457,15 +461,24 @@ export const useChat = (chatId: string | null) => {
      * @returns Promise resolving to success status
      */
     const sendMessage = useCallback(async (content: string): Promise<boolean> => {
-        console.debug('[useChat:SEND] Attempting to send message...');
-        
+        console.log('[useChat:SEND] Attempting to send message...', {
+            chatId,
+            userInfo: { id: user?.id, publicKey: user?.publicKey?.substring(0, 10) + '...' },
+            connectionState: socketRef.current?.getConnectionStatus(),
+        });
+                
         // Validate requirements
         if (!user || !socketRef.current || !chatId || content.trim() === '') {
-            console.error('[useChat:SEND] Cannot send message: missing required data or connection.');
+            console.error('[useChat:SEND] Cannot send message: missing required data or connection.', {
+              hasUser: !!user,
+              hasSocket: !!socketRef.current,
+              chatId,
+              contentEmpty: content.trim() === '',
+            });
             toast({ 
-                title: "Cannot send message", 
-                description: "Connection not ready or content empty.", 
-                status: "warning" 
+              title: "Cannot send message", 
+              description: "Connection not ready or content empty.", 
+              status: "warning" 
             });
             return false;
         }
@@ -473,6 +486,13 @@ export const useChat = (chatId: string | null) => {
         // Create message with optimistic ID
         const messageToSend = createMessage(content, 'sending');
         const tempId = messageToSend.id;
+
+        console.log('[useChat:SEND] Created message:', {
+            id: tempId,
+            senderId: messageToSend.senderId,
+            senderName: messageToSend.senderName,
+            content: content.substring(0, 20) + '...',
+        });
 
         // Optimistic UI update - add to state immediately
         addMessage(messageToSend);
@@ -483,7 +503,13 @@ export const useChat = (chatId: string | null) => {
             const socketMessage = toSocketMessage(messageToSend);
             // Add the chatId - this field is required by the server
             socketMessage.chatId = chatId;
-            
+            console.log('[useChat:SEND] Prepared socket message:', {
+              id: socketMessage.id,
+              type: socketMessage.type,
+              chatId: socketMessage.chatId,
+              senderId: socketMessage.senderId || socketMessage.sender,
+              hasContent: !!socketMessage.content || !!socketMessage.text,
+            });
             // Send the message
             const result = await socketRef.current.sendMessage(socketMessage);
 
