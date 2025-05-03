@@ -279,19 +279,39 @@ export const useChat = (chatId: string | null) => {
         };
 
         const handleMessage = (messagePayload: MessagePayload) => {
-            console.debug('[useChat:RECEIVE] Received message:', messagePayload.id);
-            
-            // Convert socket message to frontend message format
-            const frontendMessage = fromSocketMessage(messagePayload);
-            
-            // Only process messages from other users (our own messages are added when sent)
-            const isCurrentUser = frontendMessage.senderId === user?.id || 
-                                  frontendMessage.senderId === user?.publicKey;
-                                  
-            if (!isCurrentUser || frontendMessage.status === 'received') {
-                addMessage(frontendMessage);
-                console.debug('[useChat:RECEIVE] Added message to state, current messages length:', messages.length);
-            }
+          console.log('[useChat:RECEIVE] Full message payload:', JSON.stringify(messagePayload));
+          console.log('[useChat:RECEIVE] Sender ID comparison:', {
+            messageSenderId: messagePayload.senderId || messagePayload.sender,
+            userId: user?.id,
+            userPublicKey: user?.publicKey,
+            isCurrentUser: (messagePayload.senderId === user?.id || 
+                            messagePayload.senderId === user?.publicKey ||
+                            messagePayload.sender === user?.id ||
+                            messagePayload.sender === user?.publicKey)
+          });
+          
+          // Convert socket message to frontend message format
+          const frontendMessage = fromSocketMessage(messagePayload);
+          
+          // Only process messages from other users (our own messages are added when sent)
+          const isCurrentUser = frontendMessage.senderId === user?.id || 
+                                 frontendMessage.senderId === user?.publicKey;
+                                 
+          if (!isCurrentUser || frontendMessage.status === 'received') {
+            addMessage(frontendMessage);
+            console.log('[useChat:RECEIVE] Added message to state, message details:', {
+              id: frontendMessage.id,
+              senderId: frontendMessage.senderId,
+              content: frontendMessage.content,
+              timestamp: frontendMessage.timestamp,
+            });
+          } else {
+            console.log('[useChat:RECEIVE] Skipping message from current user:', {
+              id: frontendMessage.id,
+              senderId: frontendMessage.senderId,
+              content: frontendMessage.content,
+            });
+          }
         };
 
         const handleParticipants = (participantsList: Participant[]) => {
