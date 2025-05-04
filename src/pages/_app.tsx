@@ -5,6 +5,7 @@ import { ChakraProvider, ColorModeScript } from '@chakra-ui/react';
 import { Inter } from 'next/font/google';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
+import dynamic from 'next/dynamic';
 import theme from '../theme';
 import { AuthProvider } from '../contexts/AuthContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -19,6 +20,11 @@ const inter = Inter({
   display: 'swap',
   variable: '--font-inter',
 });
+
+const AuthProviderWithWallet = dynamic(() => 
+  import('../contexts/AuthContext').then(mod => mod.AuthProvider), 
+  { ssr: false }
+);
 
 function MyApp({ Component, pageProps }: AppProps) {
   const router = useRouter();
