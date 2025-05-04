@@ -213,7 +213,7 @@ const BlockchainInspiredHeader = ({ chatName, participants, connectionStatus, on
               <MenuItem icon={<FaUser />}>View Participants</MenuItem>
               <MenuItem icon={<FaWallet />}>Connect Wallet</MenuItem>
             </MenuList>
-          </MenuButton>
+          </Menu>
         </HStack>
       </Flex>
       
