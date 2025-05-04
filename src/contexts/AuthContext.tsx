@@ -438,39 +438,67 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
     
     try {
-    await Promise.race([
-      (async () => {
-        try {
-          // If using wallet auth, disconnect wallet
-          if (authMethod === 'wallet') {
-            if (solanaWallet.isConnected) {
-              await solanaWallet.disconnect();
+      await Promise.race([
+        (async () => {
+          try {
+            // If using wallet auth, disconnect wallet
+            if (authMethod === 'wallet') {
+              if (solanaWallet.isConnected) {
+                await solanaWallet.disconnect();
+              }
+            } else {
+              // Delete the keypair
+              await deleteStoredKeypair();
             }
-          } else {
-            // Delete the keypair
-            await deleteStoredKeypair();
-          }
-          
-          // IMPORTANT: Add this new code to properly cleanup any active connections
-          // Close any open WebSocket connections
-          if (typeof window !== 'undefined' && window.aeronyxSockets) {
-            const sockets = window.aeronyxSockets || [];
-            for (const socket of sockets) {
+            
+            // IMPORTANT: Add this code to clean up any active chat connections
+            // We need to clear any active chat IDs in session storage to prevent reconnection attempts
+            if (typeof window !== 'undefined') {
               try {
-                socket.disconnect();
+                // Clear all chat-related storage items that might cause reconnection
+                sessionStorage.removeItem('aero-current-chat-id');
+                localStorage.removeItem('aero-current-chat-id');
+                
+                // Clear any auth state that might be persisted and causing reconnection
+                sessionStorage.removeItem(AUTH_STATE_KEY);
+                localStorage.removeItem('aero-auth-state-backup');
+                
+                // Clear chat rooms data
+                localStorage.removeItem('aero-chat-rooms');
+                
+                // Force all windows to disconnect WebSockets
+                window.dispatchEvent(new CustomEvent('aeronyx-logout', { detail: { timestamp: Date.now() } }));
               } catch (e) {
-                console.warn('[AuthContext] Error disconnecting socket during logout:', e);
+                console.warn('[AuthContext] Error cleaning up storage during logout:', e);
               }
             }
-            window.aeronyxSockets = [];
+            
+            // Clear auth state
+            updateAuthState({
+              status: 'unauthenticated',
+              user: null,
+              lastValidated: Date.now()
+            });
+            
+            // Set auth method
+            setAuthMethod('none');
+          } catch (error) {
+            console.error('[AuthContext] Error in logout process:', error);
+            throw error;
           }
-          
-          // Clear auth state
-          updateAuthState({
-            status: 'unauthenticated',
-            user: null,
-            lastValidated: Date.now()
-          });
+        })(),
+        createTimeout(AUTH_TIMEOUT, 'Auth logout timeout')
+      ]);
+    } catch (error) {
+      console.error('[AuthContext] Logout failed:', error);
+      
+      // Even on error, reset the auth state
+      updateAuthState({
+        status: 'unauthenticated',
+        user: null,
+        error: error instanceof Error ? error : new Error('Unknown logout error'),
+        lastValidated: Date.now()
+      });
       
       setAuthMethod('none');
     }
