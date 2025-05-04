@@ -36,6 +36,14 @@ import {
   FaLink
 } from 'react-icons/fa';
 
+interface ActiveNode {
+  id: number;
+  x: number;
+  y: number;
+  size: number;
+  pulseSpeed: number;
+  color: string;
+}
 // Network Statistics Dashboard with blockchain aesthetics
 const NetworkStatsDashboard = () => {
   const { colorMode } = useColorMode();
@@ -56,7 +64,7 @@ const NetworkStatsDashboard = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   
   // List of changing nodes to animate
-  const [activeNodeIds, setActiveNodeIds] = useState([]);
+  const [activeNodeIds, setActiveNodeIds] = useState<ActiveNode[]>([]);
   
   // Update stats every 5 seconds to simulate real-time data
   useEffect(() => {
