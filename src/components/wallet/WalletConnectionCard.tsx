@@ -72,7 +72,7 @@ export const WalletConnectionCard: React.FC<WalletConnectionCardProps> = ({
 }) => {
   const { colorMode } = useColorMode();
   const toast = useToast();
-  const { isAuthenticated, user, connect, logout } = useAuth();
+  const { isAuthenticated, user, login, logout } = useAuth();
   
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectionStep, setConnectionStep] = useState(0);
@@ -107,8 +107,8 @@ export const WalletConnectionCard: React.FC<WalletConnectionCardProps> = ({
       setConnectionStep(4); // Generating keys
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Connect wallet
-      await connect();
+      // Connect wallet - using login instead of connect
+      await login();
       
       setConnectionStep(5); // Complete
       
