@@ -275,6 +275,12 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
   );
 };
 
+interface Participant {
+  id: string;
+  displayName: string;
+  isActive: boolean;
+  wallet?: string;
+}
 
 interface ParticipantsListProps {
   participants: Participant[]; // Assuming Participant is imported from types/chat
