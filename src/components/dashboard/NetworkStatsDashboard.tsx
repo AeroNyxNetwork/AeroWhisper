@@ -138,7 +138,7 @@ const NetworkStatsDashboard = () => {
   };
   
   // Get color based on value comparison to thresholds
-  const getHealthColor = (value, lowThreshold, mediumThreshold) => {
+  const getHealthColor = (value: number, lowThreshold: number, mediumThreshold: number) => {
     if (value >= mediumThreshold) return 'green';
     if (value >= lowThreshold) return 'yellow';
     return 'red';
