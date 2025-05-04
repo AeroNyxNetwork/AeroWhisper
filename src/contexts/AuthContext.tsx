@@ -438,54 +438,39 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
     
     try {
-      await Promise.race([
-        (async () => {
-          try {
-            // If using wallet auth, disconnect wallet
-            if (authMethod === 'wallet') {
-              if (solanaWallet.isConnected) {
-                await solanaWallet.disconnect();
-              }
-            } else {
-              // Delete the keypair
-              await deleteStoredKeypair();
+    await Promise.race([
+      (async () => {
+        try {
+          // If using wallet auth, disconnect wallet
+          if (authMethod === 'wallet') {
+            if (solanaWallet.isConnected) {
+              await solanaWallet.disconnect();
             }
-            
-            // Clear auth state
-            updateAuthState({
-              status: 'unauthenticated',
-              user: null,
-              lastValidated: Date.now()
-            });
-            
-            // Clear any local storage items
-            try {
-              localStorage.removeItem(DISPLAY_NAME_KEY);
-              sessionStorage.removeItem(AUTH_STATE_KEY);
-              localStorage.removeItem('aero-auth-state-backup');
-            } catch (e) {
-              console.warn('[AuthContext] Error clearing storage during logout:', e);
-            }
-            
-            // Reset auth method
-            setAuthMethod('none');
-          } catch (error) {
-            console.error('[AuthContext] Error in logout process:', error);
-            throw error;
+          } else {
+            // Delete the keypair
+            await deleteStoredKeypair();
           }
-        })(),
-        createTimeout(AUTH_TIMEOUT, 'Auth logout timeout')
-      ]);
-    } catch (error) {
-      console.error('[AuthContext] Logout failed:', error);
-      
-      // Even on error, reset the auth state
-      updateAuthState({
-        status: 'unauthenticated',
-        user: null,
-        error: error instanceof Error ? error : new Error('Unknown logout error'),
-        lastValidated: Date.now()
-      });
+          
+          // IMPORTANT: Add this new code to properly cleanup any active connections
+          // Close any open WebSocket connections
+          if (typeof window !== 'undefined' && window.aeronyxSockets) {
+            const sockets = window.aeronyxSockets || [];
+            for (const socket of sockets) {
+              try {
+                socket.disconnect();
+              } catch (e) {
+                console.warn('[AuthContext] Error disconnecting socket during logout:', e);
+              }
+            }
+            window.aeronyxSockets = [];
+          }
+          
+          // Clear auth state
+          updateAuthState({
+            status: 'unauthenticated',
+            user: null,
+            lastValidated: Date.now()
+          });
       
       setAuthMethod('none');
     }
