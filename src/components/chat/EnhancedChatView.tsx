@@ -275,8 +275,19 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
   );
 };
 
+
+interface ParticipantsListProps {
+  participants: Participant[]; // Assuming Participant is imported from types/chat
+  isOpen: boolean;
+  onClose: () => void;
+}
+
 // New component: ParticipantsList
-const ParticipantsList = ({ participants, isOpen, onClose }) => {
+const ParticipantsList: React.FC<ParticipantsListProps> = ({ 
+  participants, 
+  isOpen, 
+  onClose 
+}) => {
   const { colorMode } = useColorMode();
   
   return (
