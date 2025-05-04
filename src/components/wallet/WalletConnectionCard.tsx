@@ -24,6 +24,7 @@ import {
   MenuList,
   MenuItem,
   MenuDivider,
+  Grid
 } from '@chakra-ui/react';
 import {
   FaWallet,
