@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { v4 as uuid } from 'uuid';
 import { useAuth } from '../contexts/AuthContext';
+import { LOGOUT_EVENT } from '../utils/authUtils';
 import {
     MessageType as ChatMessageType,
     Participant,
@@ -117,7 +118,8 @@ export const useChat = (chatId: string | null) => {
     );
 
     useEffect(() => {
-      const handleLogout = () => {
+        
+    const handleLogout = () => {
         // Disconnect the socket on logout
         if (socketRef.current) {
           console.log('[useChat] Detected logout, disconnecting socket');
@@ -145,7 +147,7 @@ export const useChat = (chatId: string | null) => {
         // Clear the messages map
         messagesMapRef.current.clear();
       };
-
+    
       // Handle both custom event and auth context changes
       const checkAndHandleLogout = () => {
         // Check if user is logged out or invalid
@@ -156,21 +158,21 @@ export const useChat = (chatId: string | null) => {
         }
         return false;
       };
-
+    
       // Initial check on mount
       checkAndHandleLogout();
-
+    
       // Set up event listeners
       if (typeof window !== 'undefined') {
-        // Listen for custom logout event
-        window.addEventListener('aeronyx-logout', handleLogout);
+        // Listen for custom logout event - use constant for event name
+        window.addEventListener(LOGOUT_EVENT, handleLogout);
         
-        // Check session status periodically
-        const interval = setInterval(checkAndHandleLogout, 5000);
+        // Check session status periodically, but with a more reasonable interval (10s instead of 5s)
+        const interval = setInterval(checkAndHandleLogout, 10000);
         
         // Clean up all listeners and timers on unmount
         return () => {
-          window.removeEventListener('aeronyx-logout', handleLogout);
+          window.removeEventListener(LOGOUT_EVENT, handleLogout);
           clearInterval(interval);
         };
       }
