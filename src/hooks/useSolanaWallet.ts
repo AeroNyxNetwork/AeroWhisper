@@ -1,3 +1,4 @@
+// src/hooks/useSolanaWallet.ts
 import { useState, useEffect, useCallback } from 'react';
 import { SolanaWalletType } from '../utils/solanaWalletDetector';
 
@@ -92,8 +93,19 @@ async function detectSolanaWallet(): Promise<{
       return result;
     }
 
-    // Detect which Solana wallet is available
+    // Verify solana is defined before accessing properties
     const solana = window.solana;
+    if (!solana) {
+      const result = {
+        hasWallet: false,
+        walletType: 'none' as SolanaWalletType,
+        walletName: 'None',
+        isConnected: false
+      };
+      cacheWalletDetection(result);
+      return result;
+    }
+
     let result;
     
     // Phantom wallet detection
@@ -216,16 +228,22 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
       return null;
     }
 
+    const solana = window.solana;
+    if (!solana) {
+      setError(new Error('Solana wallet is not available'));
+      return null;
+    }
+
     setIsConnecting(true);
     setError(null);
 
     try {
-      await window.solana.connect();
+      await solana.connect();
       
       // Wait a brief moment for the connection to establish
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      const key = window.solana.publicKey?.toString() || null;
+      const key = solana.publicKey?.toString() || null;
       
       if (!key) {
         throw new Error('Failed to get public key after connection');
@@ -261,8 +279,13 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
       return;
     }
 
+    const solana = window.solana;
+    if (!solana) {
+      return;
+    }
+
     try {
-      await window.solana.disconnect();
+      await solana.disconnect();
       
       // Update state
       setPublicKey(null);
