@@ -15,8 +15,50 @@ interface UseSolanaWalletResult {
   refresh: () => Promise<void>;
 }
 
+// Helper function to safely check if solana is available
+const isSolanaAvailable = (): boolean => {
+  return typeof window !== 'undefined' && !!window.solana;
+};
+
+// Cache wallet detection result to improve subsequent loads
+const WALLET_CACHE_KEY = 'aero-wallet-detection';
+const MAX_CACHE_AGE = 30 * 60 * 1000; // 30 minutes
+
+// Save detection result to localStorage
+const cacheWalletDetection = (result: any) => {
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(WALLET_CACHE_KEY, JSON.stringify({
+        ...result,
+        timestamp: Date.now()
+      }));
+    }
+  } catch (e) {
+    console.warn('Failed to cache wallet detection:', e);
+  }
+};
+
+// Load cached detection result if available and recent
+const loadCachedWalletDetection = () => {
+  try {
+    if (typeof window !== 'undefined') {
+      const cached = localStorage.getItem(WALLET_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Date.now() - parsed.timestamp < MAX_CACHE_AGE) {
+          return parsed;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load cached wallet detection:', e);
+  }
+  return null;
+};
+
 /**
  * Detects available Solana wallets in the user's browser
+ * Optimized for performance with caching
  */
 async function detectSolanaWallet(): Promise<{
   hasWallet: boolean;
@@ -25,89 +67,121 @@ async function detectSolanaWallet(): Promise<{
   isConnected: boolean;
   publicKey?: string;
 }> {
+  // Try to use cached result first
+  const cached = loadCachedWalletDetection();
+  if (cached) {
+    return {
+      hasWallet: cached.hasWallet,
+      walletType: cached.walletType,
+      walletName: cached.walletName,
+      isConnected: cached.isConnected,
+      publicKey: cached.publicKey
+    };
+  }
+
   try {
-    // Check if any Solana wallet adapter is available
-    if (typeof window === 'undefined' || !window.solana) {
-      return {
+    // Early return if no wallet is available
+    if (!isSolanaAvailable()) {
+      const result = {
         hasWallet: false,
-        walletType: 'none',
+        walletType: 'none' as SolanaWalletType,
         walletName: 'None',
         isConnected: false
       };
+      cacheWalletDetection(result);
+      return result;
     }
 
     // Detect which Solana wallet is available
     const solana = window.solana;
+    let result;
     
     // Phantom wallet detection
     if (solana.isPhantom) {
-      return {
+      result = {
         hasWallet: true,
-        walletType: 'phantom',
+        walletType: 'phantom' as SolanaWalletType,
         walletName: 'Phantom',
         isConnected: solana.isConnected,
         publicKey: solana.publicKey?.toString()
       };
     }
-    
     // Solflare wallet detection
-    if (solana.isSolflare) {
-      return {
+    else if (solana.isSolflare) {
+      result = {
         hasWallet: true,
-        walletType: 'solflare',
+        walletType: 'solflare' as SolanaWalletType,
         walletName: 'Solflare',
         isConnected: solana.isConnected,
         publicKey: solana.publicKey?.toString()
       };
     }
-
     // OKX wallet detection
-    if (solana.isOKX) {
-      return {
+    else if (solana.isOKX) {
+      result = {
         hasWallet: true,
-        walletType: 'okx',
+        walletType: 'okx' as SolanaWalletType,
         walletName: 'OKX Wallet',
         isConnected: solana.isConnected,
         publicKey: solana.publicKey?.toString()
       };
     }
-    
     // Other Solana wallet
-    return {
-      hasWallet: true,
-      walletType: 'other',
-      walletName: 'Solana Wallet',
-      isConnected: solana.isConnected,
-      publicKey: solana.publicKey?.toString()
-    };
+    else {
+      result = {
+        hasWallet: true,
+        walletType: 'other' as SolanaWalletType,
+        walletName: 'Solana Wallet',
+        isConnected: solana.isConnected,
+        publicKey: solana.publicKey?.toString()
+      };
+    }
+    
+    // Cache the result
+    cacheWalletDetection(result);
+    return result;
   } catch (error) {
     console.error('Error detecting Solana wallet:', error);
     
-    return {
+    const result = {
       hasWallet: false,
-      walletType: 'none',
+      walletType: 'none' as SolanaWalletType,
       walletName: 'None',
       isConnected: false
     };
+    
+    // Cache the result even on error
+    cacheWalletDetection(result);
+    return result;
   }
 }
 
 export const useSolanaWallet = (): UseSolanaWalletResult => {
-  const [hasWallet, setHasWallet] = useState(false);
-  const [walletType, setWalletType] = useState<SolanaWalletType>('none');
-  const [walletName, setWalletName] = useState('None');
-  const [isConnected, setIsConnected] = useState(false);
+  // Try to get initial state from cache for faster rendering
+  const initialCache = loadCachedWalletDetection();
+  
+  const [hasWallet, setHasWallet] = useState(initialCache?.hasWallet || false);
+  const [walletType, setWalletType] = useState<SolanaWalletType>(initialCache?.walletType || 'none');
+  const [walletName, setWalletName] = useState(initialCache?.walletName || 'None');
+  const [isConnected, setIsConnected] = useState(initialCache?.isConnected || false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [publicKey, setPublicKey] = useState<string | null>(null);
-  const [isDetecting, setIsDetecting] = useState(true);
+  const [publicKey, setPublicKey] = useState<string | null>(initialCache?.publicKey || null);
+  const [isDetecting, setIsDetecting] = useState(!initialCache);
   const [error, setError] = useState<Error | null>(null);
 
-  // Initialize wallet detection on mount
+  // Initialize wallet detection in a non-blocking way
   useEffect(() => {
-    const detectWallet = async () => {
+    // Skip detection if we already have cached data
+    if (initialCache && !isDetecting) return;
+    
+    let mounted = true;
+    
+    // Don't block initial render - detect in background
+    const detectWalletAsync = async () => {
       try {
-        setIsDetecting(true);
         const detection = await detectSolanaWallet();
+        
+        if (!mounted) return;
         
         setHasWallet(detection.hasWallet);
         setWalletType(detection.walletType);
@@ -116,18 +190,28 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
         setPublicKey(detection.publicKey || null);
       } catch (err) {
         console.error('Error detecting Solana wallet:', err);
-        setError(err instanceof Error ? err : new Error('Failed to detect wallet'));
+        if (mounted) {
+          setError(err instanceof Error ? err : new Error('Failed to detect wallet'));
+        }
       } finally {
-        setIsDetecting(false);
+        if (mounted) {
+          setIsDetecting(false);
+        }
       }
     };
 
-    detectWallet();
-  }, []);
+    // Small timeout to avoid blocking initial render
+    const timeoutId = setTimeout(detectWalletAsync, 100);
+    
+    return () => {
+      mounted = false;
+      clearTimeout(timeoutId);
+    };
+  }, [initialCache, isDetecting]);
 
   // Connect to wallet
   const connect = useCallback(async (): Promise<string | null> => {
-    if (!hasWallet || typeof window === 'undefined' || !window.solana) {
+    if (!hasWallet || !isSolanaAvailable()) {
       setError(new Error('No Solana wallet found'));
       return null;
     }
@@ -137,14 +221,28 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
 
     try {
       await window.solana.connect();
+      
+      // Wait a brief moment for the connection to establish
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       const key = window.solana.publicKey?.toString() || null;
       
       if (!key) {
         throw new Error('Failed to get public key after connection');
       }
       
+      // Update state
       setPublicKey(key);
       setIsConnected(true);
+      
+      // Update cache
+      cacheWalletDetection({
+        hasWallet,
+        walletType,
+        walletName,
+        isConnected: true,
+        publicKey: key
+      });
       
       return key;
     } catch (err) {
@@ -155,26 +253,39 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
     } finally {
       setIsConnecting(false);
     }
-  }, [hasWallet]);
+  }, [hasWallet, walletType, walletName]);
 
   // Disconnect from wallet
   const disconnect = useCallback(async (): Promise<void> => {
-    if (!hasWallet || typeof window === 'undefined' || !window.solana || !isConnected) {
+    if (!hasWallet || !isSolanaAvailable() || !isConnected) {
       return;
     }
 
     try {
       await window.solana.disconnect();
+      
+      // Update state
       setPublicKey(null);
       setIsConnected(false);
+      
+      // Update cache
+      cacheWalletDetection({
+        hasWallet,
+        walletType,
+        walletName,
+        isConnected: false,
+        publicKey: null
+      });
     } catch (err) {
       console.error('Error disconnecting from Solana wallet:', err);
       setError(err instanceof Error ? err : new Error('Failed to disconnect from wallet'));
     }
-  }, [hasWallet, isConnected]);
+  }, [hasWallet, isConnected, walletType, walletName]);
 
   // Refresh wallet state
   const refresh = useCallback(async (): Promise<void> => {
+    setIsDetecting(true);
+    
     try {
       const detection = await detectSolanaWallet();
       
@@ -186,6 +297,8 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
     } catch (err) {
       console.error('Error refreshing wallet state:', err);
       setError(err instanceof Error ? err : new Error('Failed to refresh wallet state'));
+    } finally {
+      setIsDetecting(false);
     }
   }, []);
 
