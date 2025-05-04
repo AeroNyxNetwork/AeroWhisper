@@ -1,24 +1,26 @@
+// src/components/layout/Header.tsx
 import React from 'react';
 import {
   Box, Flex, Button, IconButton, useColorMode,
   Heading, HStack, Avatar, Menu, MenuButton,
-  MenuList, MenuItem, Divider, Text,
-  useDisclosure, Drawer, DrawerBody, DrawerHeader,
-  DrawerOverlay, DrawerContent, DrawerCloseButton,
-  VStack,
+  MenuList, MenuItem, Divider, Text, useToast,
+  Badge,
+  // other imports...
 } from '@chakra-ui/react';
 import { FaMoon, FaSun, FaBars, FaUserCircle, FaCog, FaSignOutAlt } from 'react-icons/fa';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useAuth } from '../../contexts/AuthContext';
 import Image from 'next/image';
-import { useToast } from '@chakra-ui/react';
 
 export const Header: React.FC = () => {
   const { colorMode, toggleColorMode } = useColorMode();
   const { isOpen, onOpen, onClose } = useDisclosure();
   const router = useRouter();
-  const { user, logout, isAuthenticated } = useAuth();
+  const { user, logout, isAuthenticated, authMethod, solanaWallet } = useAuth();
+  
+  // Initialize toast at the component level - not inside a function
+  const toast = useToast();
   
   const handleLogoClick = () => {
     router.push('/');
@@ -27,27 +29,27 @@ export const Header: React.FC = () => {
   const handleLogout = async () => {
     try {
       await logout();
-      // Clear any local storage data related to authentication
-      localStorage.removeItem('aero-keypair');
-      const toast = useToast();
-
+      
+      // Now we can use the toast that was declared at component level
       toast({
         title: "Logged out successfully",
         status: "success",
         duration: 3000,
       });
       
-      // Add delay before redirect to ensure state is updated
+      // Add delay before redirect to ensure logout is complete
       setTimeout(() => {
         router.push('/auth/connect-wallet');
       }, 300);
     } catch (error) {
       console.error("Logout failed:", error);
+      
       toast({
         title: "Logout failed",
         description: "Please try again",
         status: "error",
         duration: 3000,
+        isClosable: true,
       });
     }
   };
@@ -58,6 +60,41 @@ export const Header: React.FC = () => {
   
   const handleSettingsClick = () => {
     router.push('/settings');
+  };
+
+  // Wallet status component
+  const WalletStatus = () => {
+    if (!isAuthenticated || !user) return null;
+    
+    const displayName = user.displayName || '';
+    const pubKey = user.publicKey || '';
+    const truncatedKey = pubKey.substring(0, 6) + '...' + pubKey.substring(pubKey.length - 4);
+    
+    return (
+      <Flex
+        align="center"
+        px={3}
+        py={1}
+        mr={2}
+        bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
+        borderRadius="full"
+      >
+        <Box w="8px" h="8px" borderRadius="full" bg="green.400" mr={2} />
+        <HStack spacing={1}>
+          <Text fontSize="sm">{displayName}</Text>
+          {authMethod === 'wallet' && (
+            <Badge size="sm" colorScheme="purple" variant="subtle">
+              {solanaWallet.walletName}
+            </Badge>
+          )}
+          {authMethod === 'keypair' && (
+            <Badge size="sm" colorScheme="blue" variant="subtle">
+              Local Account
+            </Badge>
+          )}
+        </HStack>
+      </Flex>
+    );
   };
 
   return (
@@ -102,6 +139,9 @@ export const Header: React.FC = () => {
         </HStack>
 
         <HStack spacing={4}>
+          {/* Display the wallet status component */}
+          <WalletStatus />
+          
           <IconButton
             aria-label={`Switch to ${colorMode === 'dark' ? 'light' : 'dark'} mode`}
             icon={colorMode === 'dark' ? <FaSun /> : <FaMoon />}
@@ -120,7 +160,6 @@ export const Header: React.FC = () => {
                 <Avatar 
                   size="sm" 
                   name={user?.displayName || 'User'} 
-                  // Removed the src property since photoURL doesn't exist on User type
                   bg="purple.500"
                 />
               </MenuButton>
