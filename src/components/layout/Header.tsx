@@ -89,7 +89,7 @@ export const Header: React.FC = () => {
           >
             <Box position="relative" width="32px" height="32px" mr={2}>
               <Image 
-                src="/logo.svg" 
+                src="https://binary.aeronyx.network/aeronyx_logo.png" 
                 alt="AeroNyx Logo"
                 layout="fill"
                 priority
