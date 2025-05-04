@@ -12,7 +12,6 @@ import { FaMoon, FaSun, FaBars, FaUserCircle, FaCog, FaSignOutAlt } from 'react-
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useAuth } from '../../contexts/AuthContext';
-import Image from 'next/image';
 
 export const Header: React.FC = () => {
   const { colorMode, toggleColorMode } = useColorMode();
@@ -27,6 +26,16 @@ export const Header: React.FC = () => {
   
   const handleLogout = async () => {
     try {
+      // Clear any active WebSocket connections before logout
+      if (typeof window !== 'undefined') {
+        // Dispatch event to notify components to clean up
+        window.dispatchEvent(new CustomEvent('aeronyx-logout'));
+        
+        // Clear chat-related storage to prevent reconnection
+        sessionStorage.removeItem('aero-current-chat-id');
+        localStorage.removeItem('aero-current-chat-id');
+      }
+      
       await logout();
       
       toast({
@@ -35,10 +44,10 @@ export const Header: React.FC = () => {
         duration: 3000,
       });
       
-      // Add delay before redirect to ensure logout is complete
+      // Increase timeout to ensure all cleanup is done
       setTimeout(() => {
         router.push('/auth/connect-wallet');
-      }, 300);
+      }, 500);
     } catch (error) {
       console.error("Logout failed:", error);
       
@@ -88,12 +97,21 @@ export const Header: React.FC = () => {
             alignItems="center"
           >
             <Box position="relative" width="32px" height="32px" mr={2}>
-              <Image 
-                src="https://binary.aeronyx.network/aeronyx_logo.png" 
-                alt="AeroNyx Logo"
-                layout="fill"
-                priority
-              />
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" height="40" viewBox="0 0 40 40" width="40">
+                <g clipPath="url(#clip0_41_7839)">
+                  <mask height="40" id="mask0_41_7839" maskUnits="userSpaceOnUse" style={{maskType: "luminance"}} width="40" x="0" y="0">
+                    <path d="M-1.74846e-06 0L0 40L40 40L40 -1.74846e-06L-1.74846e-06 0Z" fill="white"/>
+                  </mask>
+                  <g mask="url(#mask0_41_7839)">
+                    <path clipRule="evenodd" d="M-8.74228e-07 20L0 40L20 20L20 40L40 20L40 -1.74846e-06L20 20L20 -8.74228e-07L-8.74228e-07 20Z" fill="#7462F7" fillRule="evenodd"/>
+                  </g>
+                </g>
+                <defs>
+                  <clipPath id="clip0_41_7839">
+                    <rect fill="white" height="40" transform="translate(0 40) rotate(-90)" width="40"/>
+                  </clipPath>
+                </defs>
+              </svg>
             </Box>
             <Heading size="md" bgGradient="linear(to-r, purple.500, blue.500)" bgClip="text">
               AeroNyx
@@ -120,7 +138,6 @@ export const Header: React.FC = () => {
                 <Avatar 
                   size="sm" 
                   name={user?.displayName || 'User'} 
-                  // Removed the src property since photoURL doesn't exist on User type
                   bg="purple.500"
                 />
               </MenuButton>
@@ -165,11 +182,21 @@ export const Header: React.FC = () => {
           <DrawerHeader>
             <Flex align="center">
               <Box position="relative" width="24px" height="24px" mr={2}>
-                <Image 
-                  src="https://binary.aeronyx.network/aeronyx_logo.png" 
-                  alt="AeroNyx Logo"
-                  layout="fill"
-                />
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" height="40" viewBox="0 0 40 40" width="40">
+                  <g clipPath="url(#clip0_41_7839)">
+                    <mask height="40" id="mask0_41_7839" maskUnits="userSpaceOnUse" style={{maskType: "luminance"}} width="40" x="0" y="0">
+                      <path d="M-1.74846e-06 0L0 40L40 40L40 -1.74846e-06L-1.74846e-06 0Z" fill="white"/>
+                    </mask>
+                    <g mask="url(#mask0_41_7839)">
+                      <path clipRule="evenodd" d="M-8.74228e-07 20L0 40L20 20L20 40L40 20L40 -1.74846e-06L20 20L20 -8.74228e-07L-8.74228e-07 20Z" fill="#7462F7" fillRule="evenodd"/>
+                    </g>
+                  </g>
+                  <defs>
+                    <clipPath id="clip0_41_7839">
+                      <rect fill="white" height="40" transform="translate(0 40) rotate(-90)" width="40"/>
+                    </clipPath>
+                  </defs>
+                </svg>
               </Box>
               <Text bgGradient="linear(to-r, purple.500, blue.500)" bgClip="text" fontWeight="bold">
                 AeroNyx
