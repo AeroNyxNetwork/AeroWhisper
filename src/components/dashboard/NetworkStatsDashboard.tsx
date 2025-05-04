@@ -152,7 +152,7 @@ const NetworkStatsDashboard = () => {
   };
   
   // Get CPU utilization color (inverse - lower is better for resources)
-  const getCPUColor = (value) => {
+  const getCPUColor = (value: number) => {
     if (value <= 40) return 'green';
     if (value <= 70) return 'yellow';
     return 'red';
