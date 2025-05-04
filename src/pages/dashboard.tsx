@@ -48,7 +48,8 @@ import {
   FaHistory,
   FaSyncAlt,
   FaArchive,
-  FaStar
+  FaStar,
+  FaCheck
 } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Layout } from '../components/layout/Layout';
