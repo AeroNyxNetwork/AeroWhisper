@@ -12,6 +12,7 @@ import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useAuth } from '../../contexts/AuthContext';
 import Image from 'next/image';
+import { useToast } from '@chakra-ui/react';
 
 export const Header: React.FC = () => {
   const { colorMode, toggleColorMode } = useColorMode();
@@ -28,7 +29,8 @@ export const Header: React.FC = () => {
       await logout();
       // Clear any local storage data related to authentication
       localStorage.removeItem('aero-keypair');
-      
+      const toast = useToast();
+
       toast({
         title: "Logged out successfully",
         status: "success",
