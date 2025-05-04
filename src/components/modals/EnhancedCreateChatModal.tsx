@@ -87,6 +87,7 @@ import {
   FaWallet,
   FaChartLine,
   FaLink,
+  FaArrowRight // Added this to replace FaRocket
 } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createChatRoom } from '../../lib/chatService';
@@ -908,7 +909,7 @@ export const EnhancedCreateChatModal: React.FC<EnhancedCreateChatModalProps> = (
                 </Button>
                 
                 <Button 
-                  leftIcon={<Icon as={FaRocket} />}
+                  leftIcon={<Icon as={FaArrowRight} />} // Changed FaRocket to FaArrowRight
                   colorScheme="purple" 
                   onClick={handleCreateChat}
                   isLoading={loading}
