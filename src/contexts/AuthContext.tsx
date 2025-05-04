@@ -204,6 +204,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return updatedState;
     });
   }, []);
+
+  const saveAuthStateToStorage = (state) => {
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('aero-auth-state', JSON.stringify({
+        status: state.status,
+        user: state.user,
+        walletType: state.walletType,
+        lastValidated: Date.now()
+      }));
+    }
+  } catch (e) {
+    console.warn('Failed to save auth state', e);
+  }
+};
   
   /**
    * Validates the current authentication state
