@@ -3,7 +3,6 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { v4 as uuid } from 'uuid';
 import { useAuth } from '../contexts/AuthContext';
-import { LOGOUT_EVENT } from '../utils/authUtils';
 import {
     MessageType as ChatMessageType,
     Participant,
@@ -88,6 +87,9 @@ const fromSocketMessage = (message: MessagePayload): ChatMessageType => ({
     status: message.status || 'received'
 });
 
+// Define the logout event name constant
+const LOGOUT_EVENT = 'aeronyx-logout';
+
 /**
  * Custom hook for managing chat room connections and interactions
  * @param chatId The ID of the chat room to connect to
@@ -110,6 +112,7 @@ export const useChat = (chatId: string | null) => {
     // --- Refs ---
     const socketRef = useRef<AeroNyxSocket | null>(null);
     const messagesMapRef = useRef<Map<string, ChatMessageType>>(new Map());
+    const checkIntervalRef = useRef<NodeJS.Timeout | null>(null);
     
     // --- Derived State ---
     const isCreator = useMemo(() => 
@@ -117,69 +120,101 @@ export const useChat = (chatId: string | null) => {
         [chatInfo?.createdBy, user?.id]
     );
 
-    useEffect(() => {
+    /**
+     * Safely disconnects the socket and performs cleanup
+     * Handles race conditions by storing a reference before nullifying
+     */
+    const disconnectSocket = useCallback(async (socket: AeroNyxSocket | null): Promise<void> => {
+        if (!socket) return;
         
-    const handleLogout = () => {
-        // Disconnect the socket on logout
-        if (socketRef.current) {
-          console.log('[useChat] Detected logout, disconnecting socket');
-          // Store the socket reference before nullifying it to ensure we disconnect the right instance
-          const socket = socketRef.current;
-          
-          // Clear references first to prevent any race conditions
-          socketRef.current = null;
-          setCurrentSocketChatId(null);
-          
-          // Then perform async disconnect operation
-          socket.disconnect().catch(err => {
-            console.error('[useChat] Error during socket disconnect on logout:', err);
-          });
+        try {
+            console.log('[useChat] Disconnecting socket');
+            await socket.disconnect();
+        } catch (err) {
+            console.error('[useChat] Error during socket disconnect:', err);
         }
-        
-        // Clear all state in a single batch update when possible
+    }, []);
+
+    /**
+     * Complete reset of chat state
+     * Called during logout or when chat/user becomes invalid
+     */
+    const resetChatState = useCallback(() => {
         setConnectionStatus('disconnected');
         setMessages([]);
         setParticipants([]);
         setChatInfo(null);
         setError(null);
         setIsSendingMessage(false);
-        
-        // Clear the messages map
         messagesMapRef.current.clear();
-      };
-    
-      // Handle both custom event and auth context changes
-      const checkAndHandleLogout = () => {
-        // Check if user is logged out or invalid
-        if (!user || !user.publicKey) {
-          console.log('[useChat] User session invalid, triggering logout cleanup');
-          handleLogout();
-          return true;
-        }
-        return false;
-      };
-    
-      // Initial check on mount
-      checkAndHandleLogout();
-    
-      // Set up event listeners
-      if (typeof window !== 'undefined') {
-        // Listen for custom logout event - use constant for event name
-        window.addEventListener(LOGOUT_EVENT, handleLogout);
-        
-        // Check session status periodically, but with a more reasonable interval (10s instead of 5s)
-        const interval = setInterval(checkAndHandleLogout, 10000);
-        
-        // Clean up all listeners and timers on unmount
-        return () => {
-          window.removeEventListener(LOGOUT_EVENT, handleLogout);
-          clearInterval(interval);
+        console.log('[useChat] Chat state reset');
+    }, []);
+
+    /**
+     * Handle logout process
+     * Properly manages socket lifecycle and state cleanup
+     */
+    useEffect(() => {
+        const handleLogout = () => {
+            console.log('[useChat] Logout detected, cleaning up resources');
+            
+            // Capture socket reference before nullifying to prevent race conditions
+            const socket = socketRef.current;
+            
+            // Clear reference immediately to prevent any new operations
+            socketRef.current = null;
+            setCurrentSocketChatId(null);
+            
+            // Then disconnect async without awaiting (don't block UI)
+            if (socket) {
+                disconnectSocket(socket).catch(err => {
+                    console.error('[useChat] Error during socket cleanup on logout:', err);
+                });
+            }
+            
+            // Clear all states
+            resetChatState();
         };
-      }
-      
-      return undefined;
-    }, [user]); // Add user to dependencies to react to auth context changes
-    
+
+        // Check for invalid user session
+        const checkUserSession = () => {
+            if (!user || !user.publicKey) {
+                console.log('[useChat] User session invalid, triggering cleanup');
+                handleLogout();
+                return true;
+            }
+            return false;
+        };
+
+        // Run initial check
+        const isInvalid = checkUserSession();
+        
+        // Don't set up listeners if already invalid
+        if (isInvalid) return;
+
+        // Setup listeners
+        if (typeof window !== 'undefined') {
+            // Listen for explicit logout events
+            window.addEventListener(LOGOUT_EVENT, handleLogout);
+            
+            // Set up periodic session check (8s interval is a good balance)
+            // Store the interval reference for proper cleanup
+            checkIntervalRef.current = setInterval(checkUserSession, 8000);
+        }
+        
+        // Cleanup function
+        return () => {
+            if (typeof window !== 'undefined') {
+                window.removeEventListener(LOGOUT_EVENT, handleLogout);
+            }
+            
+            if (checkIntervalRef.current) {
+                clearInterval(checkIntervalRef.current);
+                checkIntervalRef.current = null;
+            }
+        };
+    }, [user, disconnectSocket, resetChatState]);
+
     // --- Helper Functions ---
     
     /**
