@@ -1,5 +1,4 @@
 // src/utils/authUtils.ts
-import { socketManager } from './socketManager'; // If you implemented socketManager from earlier
 
 /**
  * Constants for storage keys
@@ -49,35 +48,14 @@ export const cleanupStorageOnLogout = (): void => {
 };
 
 /**
- * Disconnects all active sockets
- */
-export const disconnectAllSockets = async (): Promise<void> => {
-  // If socketManager is available, use it to disconnect all sockets
-  if (socketManager) {
-    try {
-      await socketManager.disconnectAllSockets();
-    } catch (error) {
-      console.error('[AuthUtils] Error disconnecting sockets:', error);
-    }
-    return;
-  }
-  
-  // Fallback: Use the logout event to trigger socket disconnection in components
-  dispatchLogoutEvent();
-};
-
-/**
  * Performs complete logout cleanup
- * This handles all storage, socket, and event dispatching in one place
+ * This handles all storage and event dispatching in one place
  */
 export const performLogoutCleanup = async (): Promise<void> => {
-  // Step 1: Disconnect all active sockets
-  await disconnectAllSockets();
-  
-  // Step 2: Clean up storage items
+  // Step 1: Clean up storage items
   cleanupStorageOnLogout();
   
-  // Step 3: Dispatch logout event to notify all components
+  // Step 2: Dispatch logout event to notify all components
   dispatchLogoutEvent();
   
   console.log('[AuthUtils] Logout cleanup completed');
