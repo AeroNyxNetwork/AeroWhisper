@@ -247,6 +247,7 @@ export const EnhancedChatRoomCard: React.FC<EnhancedChatRoomCardProps> = ({
     
     return `${room.messageRetention} days`;
   };
+
   
   return (
     <MotionBox
@@ -563,7 +564,7 @@ export const EnhancedChatRoomCard: React.FC<EnhancedChatRoomCardProps> = ({
                     Message Retention
                   </Text>
                   <Badge colorScheme={
-                    room.messageRetention === 0 ? 'green' :
+                    !room.messageRetention || room.messageRetention === 0 ? 'green' :
                     room.messageRetention <= 7 ? 'yellow' : 'red'
                   }>
                     {getRetentionText()}
