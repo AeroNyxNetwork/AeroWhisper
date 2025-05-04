@@ -11,7 +11,7 @@ import {
 } from '../utils/keyStorage';
 import { useSolanaWallet } from '../hooks/useSolanaWallet';
 import { SolanaWalletType } from '../utils/solanaWalletDetector';
-
+import { performLogout, SESSION_KEYS } from '../utils/authSessionUtils';
 // --- Constants ---
 const DISPLAY_NAME_KEY = 'aero-display-name';
 const AUTH_STATE_KEY = 'aero-auth-state';
@@ -438,71 +438,84 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
     
     try {
-      await Promise.race([
-        (async () => {
-          try {
-            // If using wallet auth, disconnect wallet
-            if (authMethod === 'wallet') {
-              if (solanaWallet.isConnected) {
-                await solanaWallet.disconnect();
-              }
-            } else {
-              // Delete the keypair
-              await deleteStoredKeypair();
+    await Promise.race([
+      (async () => {
+        try {
+         
+          if (authMethod === 'wallet') {
+            if (solanaWallet.isConnected) {
+    
+              console.log('[AuthContext] Disconnecting wallet...');
+              await solanaWallet.disconnect();
             }
-            
-            // IMPORTANT: Add this code to clean up any active chat connections
-            // We need to clear any active chat IDs in session storage to prevent reconnection attempts
-            if (typeof window !== 'undefined') {
-              try {
-                // Clear all chat-related storage items that might cause reconnection
-                sessionStorage.removeItem('aero-current-chat-id');
-                localStorage.removeItem('aero-current-chat-id');
-                
-                // Clear any auth state that might be persisted and causing reconnection
-                sessionStorage.removeItem(AUTH_STATE_KEY);
-                localStorage.removeItem('aero-auth-state-backup');
-                
-                // Clear chat rooms data
-                localStorage.removeItem('aero-chat-rooms');
-                
-                // Force all windows to disconnect WebSockets
-                window.dispatchEvent(new CustomEvent('aeronyx-logout', { detail: { timestamp: Date.now() } }));
-              } catch (e) {
-                console.warn('[AuthContext] Error cleaning up storage during logout:', e);
-              }
-            }
-            
-            // Clear auth state
-            updateAuthState({
-              status: 'unauthenticated',
-              user: null,
-              lastValidated: Date.now()
-            });
-            
-            // Set auth method
-            setAuthMethod('none');
-          } catch (error) {
-            console.error('[AuthContext] Error in logout process:', error);
-            throw error;
+          } else if (authMethod === 'keypair') {
+    
+            console.log('[AuthContext] Deleting stored keypair...');
+            await deleteStoredKeypair();
           }
-        })(),
-        createTimeout(AUTH_TIMEOUT, 'Auth logout timeout')
-      ]);
-    } catch (error) {
-      console.error('[AuthContext] Logout failed:', error);
+          
+   
+          await performLogout({
+            clearUserData: false, // 
+            reason: 'user_initiated' // 
+          });
+          
+          // 
+          updateAuthState({
+            status: 'unauthenticated',
+            user: null,
+            lastValidated: Date.now()
+          });
+          
+          // 
+          setAuthMethod('none');
+          
+          console.log('[AuthContext] Logout completed successfully');
+        } catch (error) {
+          console.error('[AuthContext] Error in primary logout process:', error);
+          throw error; // 
+        }
+      })(),
+      createTimeout(AUTH_TIMEOUT, 'Auth logout timeout')
+    ]);
+  } catch (error) {
+    console.error('[AuthContext] Logout process failed:', error);
+    
+    // 
+    updateAuthState({
+      status: 'unauthenticated',
+      user: null,
+      error: error instanceof Error ? error : new Error(String(error)),
+      lastValidated: Date.now()
+    });
+    
+    // 
+    setAuthMethod('none');
+    
+    //
+    try {
+      console.log('[AuthContext] Attempting fallback cleanup...');
       
-      // Even on error, reset the auth state
-      updateAuthState({
-        status: 'unauthenticated',
-        user: null,
-        error: error instanceof Error ? error : new Error('Unknown logout error'),
-        lastValidated: Date.now()
-      });
-      
-      setAuthMethod('none');
+      // 
+      if (typeof window !== 'undefined') {
+        // 
+        sessionStorage.removeItem(SESSION_KEYS.AUTH_STATE);
+        localStorage.removeItem(SESSION_KEYS.AUTH_STATE_BACKUP);
+        
+        // 
+        window.dispatchEvent(new CustomEvent('aeronyx-logout', { 
+          detail: { 
+            timestamp: Date.now(),
+            reason: 'error_recovery'
+          } 
+        }));
+      }
+    } catch (fallbackError) {
+      console.error('[AuthContext] Even fallback cleanup failed:', fallbackError);
+      //
     }
-  }, [authMethod, solanaWallet, updateAuthState]);
+  }
+}, [authMethod, solanaWallet, updateAuthState, deleteStoredKeypair]);
   
   /**
    * Generates a new keypair, replacing any existing one
