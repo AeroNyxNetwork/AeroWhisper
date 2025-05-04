@@ -73,7 +73,7 @@ const createTimeout = (ms: number, message: string): Promise<never> => {
   return new Promise((_, reject) => {
     setTimeout(() => reject(new Error(`Timeout after ${ms}ms: ${message}`)), ms);
   });
-}
+};
 
 /**
  * Converts a StoredKeypair to a User object
@@ -110,25 +110,42 @@ const persistAuthState = (state: AuthState): void => {
       user: state.user,
       lastValidated: state.lastValidated
     }));
+    
+    // Also save to localStorage as a fallback
+    localStorage.setItem('aero-auth-state-backup', JSON.stringify({
+      status: state.status,
+      user: state.user,
+      lastValidated: state.lastValidated
+    }));
   } catch (error) {
     console.warn('[AuthContext] Failed to persist auth state:', error);
   }
 };
 
 /**
- * Loads authentication state from sessionStorage
+ * Loads authentication state from sessionStorage or localStorage fallback
  */
 const loadPersistedAuthState = (): Partial<AuthState> | null => {
   try {
+    // Try sessionStorage first
     const storedState = sessionStorage.getItem(AUTH_STATE_KEY);
-    if (!storedState) return null;
+    if (storedState) {
+      return JSON.parse(storedState);
+    }
     
-    return JSON.parse(storedState);
+    // Fallback to localStorage if sessionStorage is empty
+    const backupState = localStorage.getItem('aero-auth-state-backup');
+    if (backupState) {
+      return JSON.parse(backupState);
+    }
+    
+    return null;
   } catch (error) {
     console.warn('[AuthContext] Failed to load persisted auth state:', error);
     // Clear potentially corrupted auth state
     try {
       sessionStorage.removeItem(AUTH_STATE_KEY);
+      localStorage.removeItem('aero-auth-state-backup');
     } catch {}
     return null;
   }
@@ -445,6 +462,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             try {
               localStorage.removeItem(DISPLAY_NAME_KEY);
               sessionStorage.removeItem(AUTH_STATE_KEY);
+              localStorage.removeItem('aero-auth-state-backup');
             } catch (e) {
               console.warn('[AuthContext] Error clearing storage during logout:', e);
             }
@@ -572,12 +590,43 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       error: null
     });
     
+    // First check if Solana is available
+    if (typeof window === 'undefined' || !window.solana) {
+      const error = new Error('Solana wallet is not available in this browser');
+      updateAuthState({
+        status: 'error',
+        error
+      });
+      
+      setTimeout(() => {
+        updateAuthState({
+          status: 'unauthenticated',
+          error: null
+        });
+      }, 3000);
+      
+      return null;
+    }
+    
     try {
-      // Attempt to connect to wallet
-      const publicKey = await solanaWallet.connect();
+      // Perform connection with additional error checks
+      try {
+        await window.solana.connect();
+      } catch (connectError) {
+        console.error('[AuthContext] Error during solana.connect():', connectError);
+        throw new Error('Failed to connect to wallet: ' + 
+          (connectError instanceof Error ? connectError.message : 'Unknown wallet error'));
+      }
+      
+      // Wait for connection to establish - slight delay helps avoid race conditions
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Verify public key with explicit error handling
+      const publicKey = window.solana?.publicKey?.toString();
       
       if (!publicKey) {
-        throw new Error('Failed to get public key from wallet');
+        console.error('[AuthContext] No public key available after connection');
+        throw new Error('Failed to get public key from wallet - please try connecting again');
       }
       
       // Create user object from wallet public key
@@ -589,7 +638,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         lastLogin: Date.now()
       };
       
-      // Update display name if needed
+      // Update display name
       try {
         localStorage.setItem(DISPLAY_NAME_KEY, user.displayName);
       } catch (error) {
@@ -610,9 +659,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return user;
     } catch (error) {
       console.error('[AuthContext] Wallet connection failed:', error);
+      
+      // Provide more descriptive error messages
+      let errorMessage = 'Failed to connect wallet';
+      
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        
+        // Handle specific error cases
+        if (errorMessage.includes('Unexpected error')) {
+          errorMessage = 'The wallet extension encountered an error. Please try refreshing the page.';
+        } else if (errorMessage.includes('User rejected')) {
+          errorMessage = 'Connection request was rejected. Please approve the connection in your wallet.';
+        }
+      }
+      
       updateAuthState({
         status: 'error',
-        error: error instanceof Error ? error : new Error('Failed to connect wallet')
+        error: new Error(errorMessage)
       });
       
       // After setting error state, transition to unauthenticated
@@ -625,7 +689,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       return null;
     }
-  }, [solanaWallet, updateAuthState]);
+  }, [solanaWallet.walletName, updateAuthState]);
   
   /**
    * Disconnect from Solana wallet
@@ -684,6 +748,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             lastValidated: persistedState.lastValidated
           });
           
+          // Determine auth method
+          setAuthMethod(solanaWallet.isConnected ? 'wallet' : 'keypair');
+          
           // Then validate in background
           setTimeout(() => {
             validateAuth().catch(error => {
@@ -711,7 +778,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return () => {
       if (initTimeout) clearTimeout(initTimeout);
     };
-  }, [authState.status, login, validateAuth, updateAuthState]);
+  }, [authState.status, login, validateAuth, updateAuthState, solanaWallet.isConnected]);
   
   // Set up periodic revalidation when authenticated
   useEffect(() => {
