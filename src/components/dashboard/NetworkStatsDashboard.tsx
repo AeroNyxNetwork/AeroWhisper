@@ -145,7 +145,7 @@ const NetworkStatsDashboard = () => {
   };
   
   // Get latency color (inverse - lower is better)
-  const getLatencyColor = (value) => {
+  const getLatencyColor = (value: number) => {
     if (value <= 40) return 'green';
     if (value <= 80) return 'yellow';
     return 'red';
