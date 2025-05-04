@@ -116,6 +116,68 @@ export const useChat = (chatId: string | null) => {
         [chatInfo?.createdBy, user?.id]
     );
 
+    useEffect(() => {
+      const handleLogout = () => {
+        // Disconnect the socket on logout
+        if (socketRef.current) {
+          console.log('[useChat] Detected logout, disconnecting socket');
+          // Store the socket reference before nullifying it to ensure we disconnect the right instance
+          const socket = socketRef.current;
+          
+          // Clear references first to prevent any race conditions
+          socketRef.current = null;
+          setCurrentSocketChatId(null);
+          
+          // Then perform async disconnect operation
+          socket.disconnect().catch(err => {
+            console.error('[useChat] Error during socket disconnect on logout:', err);
+          });
+        }
+        
+        // Clear all state in a single batch update when possible
+        setConnectionStatus('disconnected');
+        setMessages([]);
+        setParticipants([]);
+        setChatInfo(null);
+        setError(null);
+        setIsSendingMessage(false);
+        
+        // Clear the messages map
+        messagesMapRef.current.clear();
+      };
+
+      // Handle both custom event and auth context changes
+      const checkAndHandleLogout = () => {
+        // Check if user is logged out or invalid
+        if (!user || !user.publicKey) {
+          console.log('[useChat] User session invalid, triggering logout cleanup');
+          handleLogout();
+          return true;
+        }
+        return false;
+      };
+
+      // Initial check on mount
+      checkAndHandleLogout();
+
+      // Set up event listeners
+      if (typeof window !== 'undefined') {
+        // Listen for custom logout event
+        window.addEventListener('aeronyx-logout', handleLogout);
+        
+        // Check session status periodically
+        const interval = setInterval(checkAndHandleLogout, 5000);
+        
+        // Clean up all listeners and timers on unmount
+        return () => {
+          window.removeEventListener('aeronyx-logout', handleLogout);
+          clearInterval(interval);
+        };
+      }
+      
+      return undefined;
+    }, [user]); // Add user to dependencies to react to auth context changes
+    
     // --- Helper Functions ---
     
     /**
