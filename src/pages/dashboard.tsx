@@ -56,7 +56,7 @@ import { Layout } from '../components/layout/Layout';
 import { EnhancedChatRoomCard } from '../components/chat/EnhancedChatRoomCard';
 import { EnhancedCreateChatModal } from '../components/modals/EnhancedCreateChatModal';
 import { WalletConnectionCard } from '../components/wallet/WalletConnectionCard';
-import { NetworkStatsDashboard } from '../components/dashboard/NetworkStatsDashboard';
+import NetworkStatsDashboard from '../components/dashboard/NetworkStatsDashboard';
 import { useAuth } from '../contexts/AuthContext';
 import { useChatRooms } from '../hooks/useChatRooms';
 
