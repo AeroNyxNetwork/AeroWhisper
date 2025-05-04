@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { detectSolanaWallet, SolanaWalletType } from '../utils/solanaWalletDetector';
+import { SolanaWalletType } from '../utils/solanaWalletDetector';
 
 interface UseSolanaWalletResult {
   hasWallet: boolean;
@@ -13,6 +13,83 @@ interface UseSolanaWalletResult {
   connect: () => Promise<string | null>;
   disconnect: () => Promise<void>;
   refresh: () => Promise<void>;
+}
+
+/**
+ * Detects available Solana wallets in the user's browser
+ */
+async function detectSolanaWallet(): Promise<{
+  hasWallet: boolean;
+  walletType: SolanaWalletType;
+  walletName: string;
+  isConnected: boolean;
+  publicKey?: string;
+}> {
+  try {
+    // Check if any Solana wallet adapter is available
+    if (typeof window === 'undefined' || !window.solana) {
+      return {
+        hasWallet: false,
+        walletType: 'none',
+        walletName: 'None',
+        isConnected: false
+      };
+    }
+
+    // Detect which Solana wallet is available
+    const solana = window.solana;
+    
+    // Phantom wallet detection
+    if (solana.isPhantom) {
+      return {
+        hasWallet: true,
+        walletType: 'phantom',
+        walletName: 'Phantom',
+        isConnected: solana.isConnected,
+        publicKey: solana.publicKey?.toString()
+      };
+    }
+    
+    // Solflare wallet detection
+    if (solana.isSolflare) {
+      return {
+        hasWallet: true,
+        walletType: 'solflare',
+        walletName: 'Solflare',
+        isConnected: solana.isConnected,
+        publicKey: solana.publicKey?.toString()
+      };
+    }
+
+    // OKX wallet detection
+    if (solana.isOKX) {
+      return {
+        hasWallet: true,
+        walletType: 'okx',
+        walletName: 'OKX Wallet',
+        isConnected: solana.isConnected,
+        publicKey: solana.publicKey?.toString()
+      };
+    }
+    
+    // Other Solana wallet
+    return {
+      hasWallet: true,
+      walletType: 'other',
+      walletName: 'Solana Wallet',
+      isConnected: solana.isConnected,
+      publicKey: solana.publicKey?.toString()
+    };
+  } catch (error) {
+    console.error('Error detecting Solana wallet:', error);
+    
+    return {
+      hasWallet: false,
+      walletType: 'none',
+      walletName: 'None',
+      isConnected: false
+    };
+  }
 }
 
 export const useSolanaWallet = (): UseSolanaWalletResult => {
@@ -50,7 +127,7 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
 
   // Connect to wallet
   const connect = useCallback(async (): Promise<string | null> => {
-    if (!hasWallet || !window.solana) {
+    if (!hasWallet || typeof window === 'undefined' || !window.solana) {
       setError(new Error('No Solana wallet found'));
       return null;
     }
@@ -82,7 +159,7 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
 
   // Disconnect from wallet
   const disconnect = useCallback(async (): Promise<void> => {
-    if (!hasWallet || !window.solana || !isConnected) {
+    if (!hasWallet || typeof window === 'undefined' || !window.solana || !isConnected) {
       return;
     }
 
