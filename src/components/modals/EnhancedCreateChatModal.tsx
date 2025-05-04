@@ -54,7 +54,9 @@ import {
   AlertDialogHeader,
   AlertDialogContent,
   AlertDialogOverlay,
+  Heading
 } from '@chakra-ui/react';
+
 import { 
   FaChevronDown, 
   FaChevronUp, 
