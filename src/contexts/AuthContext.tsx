@@ -9,12 +9,14 @@ import {
   getPublicKeyInfo,
   KeyStorageError
 } from '../utils/keyStorage';
+import { useSolanaWallet } from '../hooks/useSolanaWallet';
+import { SolanaWalletType } from '../utils/solanaWalletDetector';
 
 // --- Constants ---
 const DISPLAY_NAME_KEY = 'aero-display-name';
 const AUTH_STATE_KEY = 'aero-auth-state';
 const REVALIDATION_INTERVAL = 1000 * 60 * 60; // Revalidate auth every hour
-const AUTH_TIMEOUT = 30000; // 10 second timeout for auth operations
+const AUTH_TIMEOUT = 30000; // 30 second timeout for auth operations
 
 // --- Types ---
 export type AuthStatus = 'initializing' | 'authenticated' | 'unauthenticated' | 'error';
@@ -48,6 +50,18 @@ interface AuthContextType {
   generateNewKeypair: () => Promise<User | null>;
   updateDisplayName: (name: string) => Promise<void>;
   validateAuth: () => Promise<boolean>;
+  
+  // Solana wallet integration
+  solanaWallet: {
+    hasWallet: boolean;
+    walletType: SolanaWalletType;
+    walletName: string;
+    isConnected: boolean;
+    isDetecting: boolean;
+  };
+  connectWallet: () => Promise<User | null>;
+  disconnectWallet: () => Promise<void>;
+  authMethod: 'keypair' | 'wallet' | 'none';
 }
 
 // --- Helper Functions ---
@@ -167,6 +181,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   });
   
+  // Add Solana wallet integration
+  const solanaWallet = useSolanaWallet();
+  const [authMethod, setAuthMethod] = useState<'keypair' | 'wallet' | 'none'>('none');
+  
   // Setup derived state for easier access
   const isAuthenticated = authState.status === 'authenticated';
   const isLoading = authState.status === 'initializing';
@@ -209,6 +227,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const validationResult = await Promise.race([
         (async () => {
           try {
+            // If using wallet auth, check wallet connection
+            if (authMethod === 'wallet') {
+              if (!solanaWallet.isConnected || !solanaWallet.publicKey) {
+                console.log('[AuthContext] Wallet disconnected, setting unauthenticated');
+                updateAuthState({ 
+                  status: 'unauthenticated', 
+                  user: null,
+                  lastValidated: now
+                });
+                return false;
+              }
+              
+              // Wallet still connected, update last validated
+              updateAuthState({
+                lastValidated: now
+              });
+              return true;
+            }
+            
+            // Otherwise, check keypair auth
             // Check if keypair exists
             console.log('[AuthContext] Checking if keypair exists');
             const exists = await keypairExists();
@@ -296,7 +334,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       return false;
     }
-  }, [authState.lastValidated, authState.status, authState.user, updateAuthState]);
+  }, [authState.lastValidated, authState.status, authState.user, authMethod, solanaWallet.isConnected, solanaWallet.publicKey, updateAuthState]);
   
   /**
    * Initializes authentication by loading/creating a keypair
@@ -338,6 +376,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               error: null,
               lastValidated: Date.now()
             });
+            
+            // Set auth method
+            setAuthMethod('keypair');
             
             return user;
           } catch (error) {
@@ -383,8 +424,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await Promise.race([
         (async () => {
           try {
-            // Delete the keypair
-            await deleteStoredKeypair();
+            // If using wallet auth, disconnect wallet
+            if (authMethod === 'wallet') {
+              if (solanaWallet.isConnected) {
+                await solanaWallet.disconnect();
+              }
+            } else {
+              // Delete the keypair
+              await deleteStoredKeypair();
+            }
             
             // Clear auth state
             updateAuthState({
@@ -400,6 +448,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             } catch (e) {
               console.warn('[AuthContext] Error clearing storage during logout:', e);
             }
+            
+            // Reset auth method
+            setAuthMethod('none');
           } catch (error) {
             console.error('[AuthContext] Error in logout process:', error);
             throw error;
@@ -417,8 +468,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         error: error instanceof Error ? error : new Error('Unknown logout error'),
         lastValidated: Date.now()
       });
+      
+      setAuthMethod('none');
     }
-  }, [updateAuthState]);
+  }, [authMethod, solanaWallet, updateAuthState]);
   
   /**
    * Generates a new keypair, replacing any existing one
@@ -445,6 +498,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               error: null,
               lastValidated: Date.now()
             });
+            
+            // Set auth method
+            setAuthMethod('keypair');
             
             return user;
           } catch (error) {
@@ -505,6 +561,97 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       throw error;
     }
   }, [authState.user, updateAuthState]);
+  
+  /**
+   * Connect to Solana wallet
+   */
+  const connectWallet = useCallback(async (): Promise<User | null> => {
+    console.log('[AuthContext] Connecting to Solana wallet...');
+    updateAuthState({ 
+      status: 'initializing',
+      error: null
+    });
+    
+    try {
+      // Attempt to connect to wallet
+      const publicKey = await solanaWallet.connect();
+      
+      if (!publicKey) {
+        throw new Error('Failed to get public key from wallet');
+      }
+      
+      // Create user object from wallet public key
+      const user: User = {
+        id: publicKey,
+        publicKey,
+        displayName: localStorage.getItem(DISPLAY_NAME_KEY) || `${solanaWallet.walletName}_${publicKey.substring(0, 6)}`,
+        createdAt: Date.now(),
+        lastLogin: Date.now()
+      };
+      
+      // Update display name if needed
+      try {
+        localStorage.setItem(DISPLAY_NAME_KEY, user.displayName);
+      } catch (error) {
+        console.warn('[AuthContext] Failed to save display name:', error);
+      }
+      
+      // Update auth state
+      updateAuthState({
+        status: 'authenticated',
+        user,
+        error: null,
+        lastValidated: Date.now()
+      });
+      
+      // Set auth method
+      setAuthMethod('wallet');
+      
+      return user;
+    } catch (error) {
+      console.error('[AuthContext] Wallet connection failed:', error);
+      updateAuthState({
+        status: 'error',
+        error: error instanceof Error ? error : new Error('Failed to connect wallet')
+      });
+      
+      // After setting error state, transition to unauthenticated
+      setTimeout(() => {
+        updateAuthState({
+          status: 'unauthenticated',
+          error: null
+        });
+      }, 3000);
+      
+      return null;
+    }
+  }, [solanaWallet, updateAuthState]);
+  
+  /**
+   * Disconnect from Solana wallet
+   */
+  const disconnectWallet = useCallback(async (): Promise<void> => {
+    if (authMethod !== 'wallet') {
+      return;
+    }
+    
+    try {
+      await solanaWallet.disconnect();
+      
+      // Reset auth state
+      updateAuthState({
+        status: 'unauthenticated',
+        user: null,
+        error: null
+      });
+      
+      // Reset auth method
+      setAuthMethod('none');
+    } catch (error) {
+      console.error('[AuthContext] Failed to disconnect wallet:', error);
+      throw error;
+    }
+  }, [authMethod, solanaWallet, updateAuthState]);
   
   // Initialize auth on mount with timeout
   useEffect(() => {
@@ -582,7 +729,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     logout,
     generateNewKeypair,
     updateDisplayName,
-    validateAuth
+    validateAuth,
+    solanaWallet: {
+      hasWallet: solanaWallet.hasWallet,
+      walletType: solanaWallet.walletType,
+      walletName: solanaWallet.walletName,
+      isConnected: solanaWallet.isConnected,
+      isDetecting: solanaWallet.isDetecting
+    },
+    connectWallet,
+    disconnectWallet,
+    authMethod
   }), [
     authState.error,
     authState.status,
@@ -593,7 +750,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     login,
     logout,
     updateDisplayName,
-    validateAuth
+    validateAuth,
+    solanaWallet.hasWallet,
+    solanaWallet.walletType,
+    solanaWallet.walletName,
+    solanaWallet.isConnected,
+    solanaWallet.isDetecting,
+    connectWallet,
+    disconnectWallet,
+    authMethod
   ]);
   
   return (
