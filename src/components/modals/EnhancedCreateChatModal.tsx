@@ -284,7 +284,7 @@ export const EnhancedCreateChatModal: React.FC<EnhancedCreateChatModalProps> = (
       });
       return;
     }
-
+  
     setLoading(true);
     
     try {
@@ -295,7 +295,7 @@ export const EnhancedCreateChatModal: React.FC<EnhancedCreateChatModalProps> = (
       const sessionId = generateEnhancedSessionId();
       setRoomId(sessionId);
       
-      // Create the room with all the settings
+      // Create the room with only the supported settings
       const room = await createChatRoom({
         name: chatName,
         isEphemeral,
@@ -303,16 +303,9 @@ export const EnhancedCreateChatModal: React.FC<EnhancedCreateChatModalProps> = (
         encryptionType,
         messageRetention: parseInt(messageRetention),
         createdAt: new Date().toISOString(),
-        // Add additional settings for enhanced chat room
-        channelType,
-        verificationLevel,
-        backupToIPFS,
-        metadataPrivacy,
-        shardingEnabled,
-        keyRotationInterval,
-        forwardSecrecy,
+        // Remove unsupported properties
       });
-
+  
       toast({
         title: 'Secure chat room created',
         description: 'Your end-to-end encrypted room is ready',
@@ -320,7 +313,7 @@ export const EnhancedCreateChatModal: React.FC<EnhancedCreateChatModalProps> = (
         duration: 3000,
         isClosable: true,
       });
-
+  
       onClose();
       router.push(`/chat/${room.id}`);
     } catch (error) {
