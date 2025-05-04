@@ -70,6 +70,7 @@ import {
   FaUserShield,
   FaChartLine,
   FaTools,
+  FaUser,
 } from 'react-icons/fa';
 import { FileTransfer } from './FileTransfer';
 import { AnimatePresence, motion } from 'framer-motion';
