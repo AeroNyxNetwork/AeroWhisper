@@ -204,21 +204,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return updatedState;
     });
   }, []);
-
-  const saveAuthStateToStorage = (state) => {
-  try {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('aero-auth-state', JSON.stringify({
-        status: state.status,
-        user: state.user,
-        walletType: state.walletType,
-        lastValidated: Date.now()
-      }));
-    }
-  } catch (e) {
-    console.warn('Failed to save auth state', e);
-  }
-};
   
   /**
    * Validates the current authentication state
@@ -685,17 +670,42 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }, AUTH_TIMEOUT);
     }
     
-    // Perform normal initialization if needed
-    if (authState.status !== 'authenticated' && authState.status !== 'initializing') {
-      login().catch(error => {
-        console.error('[AuthContext] Login during initialization failed:', error);
-      });
-    } else if (authState.status === 'authenticated') {
-      // If already authenticated, validate the auth state
-      validateAuth().catch(error => {
-        console.error('[AuthContext] Auth validation during initialization failed:', error);
-      });
-    }
+    // Perform non-blocking initialization - don't wait for it in the render path
+    const initializeAuth = async () => {
+      // Set fast initial state, update it later
+      if (authState.status === 'initializing') {
+        // Quick check for auth to prevent blank page
+        const persistedState = loadPersistedAuthState();
+        if (persistedState && persistedState.status === 'authenticated' && persistedState.user) {
+          // Show authenticated UI right away based on persisted state
+          updateAuthState({
+            status: 'authenticated',
+            user: persistedState.user,
+            lastValidated: persistedState.lastValidated
+          });
+          
+          // Then validate in background
+          setTimeout(() => {
+            validateAuth().catch(error => {
+              console.error('[AuthContext] Deferred validation failed:', error);
+            });
+          }, 500);
+        } else {
+          // Try to log in but don't block rendering for it
+          setTimeout(() => {
+            login().catch(error => {
+              console.error('[AuthContext] Deferred login failed:', error);
+              updateAuthState({
+                status: 'unauthenticated',
+                error: null
+              });
+            });
+          }, 100);
+        }
+      }
+    };
+    
+    initializeAuth();
     
     // Clean up timeout on unmount
     return () => {
