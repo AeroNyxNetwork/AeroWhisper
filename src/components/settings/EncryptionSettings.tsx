@@ -52,7 +52,7 @@ import {
 } from 'react-icons/fa';
 import { useAuth } from '../../contexts/AuthContext';
 import { isAesGcmSupported } from '../../utils/cryptoUtils';
-import { testEncryptionFormat } from '../../utils/testCrypto';
+import { testEncryptionFormat, findCompatibleEncryptionFormat } from '../../utils/testCrypto';
 
 interface EncryptionSettingsProps {
   onSave?: () => void;
@@ -907,9 +907,8 @@ export const EncryptionSettings: React.FC<EncryptionSettingsProps> = ({ onSave }
                         >
                           Switch to AES-CBC
                         </Button>
-                      </AlertDescription>
-                    </Box>
-                  </Alert>
+                      </Box>
+                    </Alert>
                   )}
                   
                   {!diagnosticStatus.p2pConnectionPossible && (
@@ -928,9 +927,8 @@ export const EncryptionSettings: React.FC<EncryptionSettingsProps> = ({ onSave }
                         >
                           Disable P2P Mode
                         </Button>
-                      </AlertDescription>
-                    </Box>
-                  </Alert>
+                      </Box>
+                    </Alert>
                   )}
                   
                   {!diagnosticStatus.certificateValid && (
