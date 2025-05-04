@@ -1,4 +1,3 @@
-// src/components/chat/ChatHeader.tsx
 import React from 'react';
 import { 
   Box, Flex, Heading, Text, Badge, 
@@ -8,10 +7,13 @@ import {
 import { FaUserPlus, FaUsers } from 'react-icons/fa';
 import { ConnectionStatus } from '../../types/chat';
 
+// Define an extended connection status type
+type ExtendedConnectionStatus = ConnectionStatus | 'p2p-connected' | 'p2p-connecting';
+
 interface ChatHeaderProps {
   chatName: string;
   participants: number;
-  connectionStatus: ConnectionStatus;
+  connectionStatus: ExtendedConnectionStatus; // Changed from ConnectionStatus
   onInvite: () => void;
 }
 
