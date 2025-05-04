@@ -81,8 +81,29 @@ const messageVariants = {
   exit: { opacity: 0, y: -20 }
 };
 
+// Type for the extended connection status
+type ExtendedConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'p2p-connecting' | 'p2p-connected';
+
+
+
+interface BlockchainInspiredHeaderProps {
+  chatName: string;
+  participants: any[]; // Replace with the actual type of participants if known
+  connectionStatus: ExtendedConnectionStatus; // Use the same type that you defined for ChatHeader
+  onInvite: () => void;
+  onOpenSettings: () => void;
+}
+
+
+
 // New component: BlockchainInspiredHeader
-const BlockchainInspiredHeader = ({ chatName, participants, connectionStatus, onInvite, onOpenSettings }) => {
+const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({ 
+  chatName, 
+  participants, 
+  connectionStatus, 
+  onInvite, 
+  onOpenSettings 
+}) => {
   const { colorMode } = useColorMode();
   const [showBlockInfo, setShowBlockInfo] = useState(false);
   
@@ -348,8 +369,6 @@ const ParticipantsList = ({ participants, isOpen, onClose }) => {
   );
 };
 
-// Type for the extended connection status
-type ExtendedConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'p2p-connecting' | 'p2p-connected';
 
 interface EnhancedChatViewProps {
   chatId: string;
