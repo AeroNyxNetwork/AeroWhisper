@@ -22,9 +22,51 @@ const inter = Inter({
 // Maximum loading time in milliseconds
 const MAX_LOADING_TIME = 5000; 
 
+// Separate LoadingScreen component with its own colorMode access
+const LoadingScreen = () => {
+  const { colorMode } = useColorMode();
+  
+  return (
+    <Center 
+      height="100vh" 
+      bg={colorMode === 'dark' ? 'gray.900' : 'gray.50'}
+      position="fixed"
+      top={0}
+      left={0}
+      right={0}
+      bottom={0}
+      zIndex={9999}
+    >
+      <VStack spacing={6}>
+        <Box position="relative" width="80px" height="80px">
+          <Image 
+            src="/logo.svg" 
+            alt="AeroNyx Logo"
+            layout="fill"
+            priority
+          />
+        </Box>
+        <Heading 
+          size="md" 
+          bgGradient="linear(to-r, purple.500, blue.500)" 
+          bgClip="text"
+        >
+          AeroNyx
+        </Heading>
+        <Text>Secure messaging loading...</Text>
+        <Progress 
+          isIndeterminate 
+          colorScheme="purple" 
+          w="300px" 
+          borderRadius="full" 
+        />
+      </VStack>
+    </Center>
+  );
+};
+
 export default function App({ Component, pageProps }: AppProps) {
   const [isLoading, setIsLoading] = useState(true);
-  const { colorMode } = useColorMode || { colorMode: 'light' };
   
   useEffect(() => {
     // Polyfill Buffer for client-side
@@ -63,45 +105,6 @@ export default function App({ Component, pageProps }: AppProps) {
       clearTimeout(quickCheckId);
     };
   }, []);
-  
-  // Loading screen component
-  const LoadingScreen = () => (
-    <Center 
-      height="100vh" 
-      bg={colorMode === 'dark' ? 'gray.900' : 'gray.50'}
-      position="fixed"
-      top={0}
-      left={0}
-      right={0}
-      bottom={0}
-      zIndex={9999}
-    >
-      <VStack spacing={6}>
-        <Box position="relative" width="80px" height="80px">
-          <Image 
-            src="/logo.svg" 
-            alt="AeroNyx Logo"
-            layout="fill"
-            priority
-          />
-        </Box>
-        <Heading 
-          size="md" 
-          bgGradient="linear(to-r, purple.500, blue.500)" 
-          bgClip="text"
-        >
-          AeroNyx
-        </Heading>
-        <Text>Secure messaging loading...</Text>
-        <Progress 
-          isIndeterminate 
-          colorScheme="purple" 
-          w="300px" 
-          borderRadius="full" 
-        />
-      </VStack>
-    </Center>
-  );
 
   return (
     <>
