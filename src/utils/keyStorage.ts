@@ -1,5 +1,5 @@
 // src/utils/keyStorage.ts
-import { generateKeyPair as generateEd25519KeyPair } from '@noble/ed25519';
+import * as nacl from 'tweetnacl';
 import { encode, decode } from 'bs58';
 
 // Type definitions
@@ -256,17 +256,18 @@ export const deleteStoredKeypair = async (): Promise<void> => {
 
 /**
  * Generate a new keypair for the user
+ * Using TweetNaCl instead of @noble/ed25519
  */
 export const generateKeyPair = async (): Promise<StoredKeypair> => {
   try {
-    // Generate the keypair
-    const privateKey = await generateEd25519KeyPair();
-    const publicKey = await privateKey.getPublicKey();
+    // Generate the keypair using TweetNaCl
+    const keypair = nacl.sign.keyPair();
+    const publicKey = keypair.publicKey;
     const publicKeyBase58 = encode(publicKey);
     
     return {
       publicKey,
-      secretKey: privateKey.secretKey,
+      secretKey: keypair.secretKey,
       publicKeyBase58
     };
   } catch (error) {
