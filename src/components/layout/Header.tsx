@@ -31,11 +31,12 @@ export const Header: React.FC = () => {
         // Dispatch event to notify components to clean up
         window.dispatchEvent(new CustomEvent('aeronyx-logout'));
         
-        // Clear chat-related storage to prevent reconnection
+        // We'll keep these lines since they're important for your cleanup
         sessionStorage.removeItem('aero-current-chat-id');
         localStorage.removeItem('aero-current-chat-id');
       }
       
+      // Call the logout function from AuthContext
       await logout();
       
       toast({
@@ -44,10 +45,11 @@ export const Header: React.FC = () => {
         duration: 3000,
       });
       
-      // Increase timeout to ensure all cleanup is done
-      setTimeout(() => {
-        router.push('/auth/connect-wallet');
-      }, 500);
+      // Remove the timeout and navigation - let auth state change handle it
+      // This is causing our navigation problems
+      // setTimeout(() => {
+      //   router.push('/auth/connect-wallet');
+      // }, 500);
     } catch (error) {
       console.error("Logout failed:", error);
       
