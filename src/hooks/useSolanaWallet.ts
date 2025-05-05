@@ -81,8 +81,19 @@ async function detectSolanaWallet(): Promise<{
   }
 
   try {
-    // Early return if no wallet is available
-    if (!isSolanaAvailable()) {
+    // Check if window is defined (browser environment)
+    if (typeof window === 'undefined') {
+      return {
+        hasWallet: false,
+        walletType: 'none',
+        walletName: 'None',
+        isConnected: false
+      };
+    }
+
+    // Early return if no solana object available
+    if (!window.solana) {
+      console.log('[Wallet] No Solana wallet detected in window.solana');
       const result = {
         hasWallet: false,
         walletType: 'none' as SolanaWalletType,
@@ -106,6 +117,14 @@ async function detectSolanaWallet(): Promise<{
       return result;
     }
 
+    console.log('[Wallet] Detecting wallet properties:', {
+      isPhantom: solana.isPhantom,
+      isSolflare: solana.isSolflare,
+      isOKX: solana.isOKX,
+      isBackpack: solana.isBackpack,
+      isConnected: solana.isConnected
+    });
+
     let result;
     
     // Phantom wallet detection
@@ -128,8 +147,8 @@ async function detectSolanaWallet(): Promise<{
         publicKey: solana.publicKey?.toString()
       };
     }
-    // OKX wallet detection
-    else if (solana.isOKX) {
+    // OKX wallet detection - be more flexible with property name
+    else if (solana.isOKX || solana.isOkx || solana.isOkxWallet) {
       result = {
         hasWallet: true,
         walletType: 'okx' as SolanaWalletType,
@@ -138,22 +157,40 @@ async function detectSolanaWallet(): Promise<{
         publicKey: solana.publicKey?.toString()
       };
     }
-    // Other Solana wallet
-    else {
+    // Backpack wallet detection
+    else if (solana.isBackpack) {
       result = {
         hasWallet: true,
-        walletType: 'other' as SolanaWalletType,
-        walletName: 'Solana Wallet',
+        walletType: 'backpack' as SolanaWalletType,
+        walletName: 'Backpack',
         isConnected: solana.isConnected,
         publicKey: solana.publicKey?.toString()
       };
+    }
+    // Other Solana wallet
+    else {
+      // Check for other possible wallet identifiers
+      const possibleWalletName = 
+        solana._walletName || 
+        solana.walletName || 
+        (solana.hasOwnProperty('name') ? solana.name : 'Solana Wallet');
+        
+      result = {
+        hasWallet: true,
+        walletType: 'other' as SolanaWalletType,
+        walletName: possibleWalletName,
+        isConnected: solana.isConnected,
+        publicKey: solana.publicKey?.toString()
+      };
+      
+      console.log('[Wallet] Detected generic Solana wallet:', possibleWalletName);
     }
     
     // Cache the result
     cacheWalletDetection(result);
     return result;
   } catch (error) {
-    console.error('Error detecting Solana wallet:', error);
+    console.error('[Wallet] Error detecting Solana wallet:', error);
     
     const result = {
       hasWallet: false,
