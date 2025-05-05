@@ -388,7 +388,7 @@ const ConnectWalletPage = () => {
               <Flex
                 w="100%"
                 direction={isLargerThan768 ? "row" : "column"}
-                gap={isLargerThan768 ? "40px" : "24px"} {/* Changed spacing to gap here */}
+                gap={isLargerThan768 ? "40px" : "24px"}
                 align="stretch"
                 p={6}
                 borderRadius="2xl"
