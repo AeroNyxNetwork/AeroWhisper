@@ -438,84 +438,75 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
     
     try {
-    await Promise.race([
-      (async () => {
-        try {
-         
-          if (authMethod === 'wallet') {
-            if (solanaWallet.isConnected) {
-    
-              console.log('[AuthContext] Disconnecting wallet...');
-              await solanaWallet.disconnect();
+      await Promise.race([
+        (async () => {
+          try {
+            // Handle wallet disconnection if using wallet auth
+            if (authMethod === 'wallet') {
+              if (solanaWallet.isConnected) {
+                console.log('[AuthContext] Disconnecting wallet...');
+                await solanaWallet.disconnect();
+              }
+            } else if (authMethod === 'keypair') {
+              console.log('[AuthContext] Deleting stored keypair...');
+              await deleteStoredKeypair();
             }
-          } else if (authMethod === 'keypair') {
-    
-            console.log('[AuthContext] Deleting stored keypair...');
-            await deleteStoredKeypair();
+            
+            // Use the existing performLogout function WITHOUT custom redirection
+            await performLogout({
+              clearUserData: false,
+              reason: 'user_initiated'
+            });
+            
+            // Update auth state AFTER logout is complete
+            updateAuthState({
+              status: 'unauthenticated',
+              user: null,
+              lastValidated: Date.now()
+            });
+            
+            // Reset auth method
+            setAuthMethod('none');
+            
+            console.log('[AuthContext] Logout completed successfully');
+          } catch (error) {
+            console.error('[AuthContext] Error in primary logout process:', error);
+            throw error;
           }
-          
-   
-          await performLogout({
-            clearUserData: false, // 
-            reason: 'user_initiated' // 
-          });
-          
-          // 
-          updateAuthState({
-            status: 'unauthenticated',
-            user: null,
-            lastValidated: Date.now()
-          });
-          
-          // 
-          setAuthMethod('none');
-          
-          console.log('[AuthContext] Logout completed successfully');
-        } catch (error) {
-          console.error('[AuthContext] Error in primary logout process:', error);
-          throw error; // 
-        }
-      })(),
-      createTimeout(AUTH_TIMEOUT, 'Auth logout timeout')
-    ]);
-  } catch (error) {
-    console.error('[AuthContext] Logout process failed:', error);
-    
-    // 
-    updateAuthState({
-      status: 'unauthenticated',
-      user: null,
-      error: error instanceof Error ? error : new Error(String(error)),
-      lastValidated: Date.now()
-    });
-    
-    // 
-    setAuthMethod('none');
-    
-    //
-    try {
-      console.log('[AuthContext] Attempting fallback cleanup...');
+        })(),
+        createTimeout(AUTH_TIMEOUT, 'Auth logout timeout')
+      ]);
+    } catch (error) {
+      console.error('[AuthContext] Logout process failed:', error);
       
-      // 
-      if (typeof window !== 'undefined') {
-        // 
-        sessionStorage.removeItem(SESSION_KEYS.AUTH_STATE);
-        localStorage.removeItem(SESSION_KEYS.AUTH_STATE_BACKUP);
-        
-        // 
-        window.dispatchEvent(new CustomEvent('aeronyx-logout', { 
-          detail: { 
-            timestamp: Date.now(),
-            reason: 'error_recovery'
-          } 
-        }));
+      // Emergency fallback - ensure we at least set unauthenticated state
+      updateAuthState({
+        status: 'unauthenticated',
+        user: null,
+        error: error instanceof Error ? error : new Error(String(error)),
+        lastValidated: Date.now()
+      });
+      
+      setAuthMethod('none');
+      
+      try {
+        console.log('[AuthContext] Attempting fallback cleanup...');
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem(SESSION_KEYS.AUTH_STATE);
+          localStorage.removeItem(SESSION_KEYS.AUTH_STATE_BACKUP);
+          
+          window.dispatchEvent(new CustomEvent('aeronyx-logout', { 
+            detail: { 
+              timestamp: Date.now(),
+              reason: 'error_recovery'
+            } 
+          }));
+        }
+      } catch (fallbackError) {
+        console.error('[AuthContext] Even fallback cleanup failed:', fallbackError);
       }
-    } catch (fallbackError) {
-      console.error('[AuthContext] Even fallback cleanup failed:', fallbackError);
-      //
     }
-  }
-}, [authMethod, solanaWallet, updateAuthState, deleteStoredKeypair]);
+  }, [authMethod, solanaWallet, updateAuthState, deleteStoredKeypair]);
   
   /**
    * Generates a new keypair, replacing any existing one
