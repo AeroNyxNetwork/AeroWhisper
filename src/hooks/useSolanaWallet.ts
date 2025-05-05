@@ -21,8 +21,7 @@ import {
   Progress,
   SimpleGrid,
   Link,
-  Tooltip,
-  useMediaQuery
+  Tooltip
 } from '@chakra-ui/react';
 import { 
   FaWallet, 
@@ -33,33 +32,20 @@ import {
   FaInfoCircle,
   FaShieldAlt
 } from 'react-icons/fa';
-import { motion } from 'framer-motion';
 import { Layout } from '../../components/layout/Layout';
 import { useAuth } from '../../contexts/AuthContext';
 
 // SVG Icon Components with enhanced design
 const PhantomIcon = () => (
   <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="phantomGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#ab9ff2" />
-        <stop offset="100%" stopColor="#4e44ce" />
-      </linearGradient>
-    </defs>
-    <path d="M113.6 14.4v69.4c0 16.9-13.7 30.6-30.6 30.6H14.4V45c0-16.9 13.7-30.6 30.6-30.6h68.6z" fill="url(#phantomGradient)" />
-    <path d="M96.6 42c2.6 0 4.7 2.1 4.7 4.7 0 2.6-2.1 4.7-4.7 4.7-2.6 0-4.7-2.1-4.7-4.7 0-2.6 2.1-4.7 4.7-4.7zm-21.6 0h7.5c1.5 0 2.6 1.2 2.6 2.6 0 1.5-1.2 2.6-2.6 2.6H75c-1.5 0-2.6-1.2-2.6-2.6 0-1.5 1.1-2.6 2.6-2.6zm-21.5 0h7.5c1.5 0 2.6 1.2 2.6 2.6 0 1.5-1.2 2.6-2.6 2.6h-7.5c-1.5 0-2.6-1.2-2.6-2.6 0-1.5 1.2-2.6 2.6-2.6zM32 42h7.5c1.5 0 2.6 1.2 2.6 2.6 0 1.5-1.2 2.6-2.6 2.6H32c-1.5 0-2.6-1.2-2.6-2.6 0-1.5 1.2-2.6 2.6-2.6zm53.2 15.8c6.1 0 11.1 5 11.1 11.1 0 6.1-5 11.1-11.1 11.1H72.9v-5.8c8 0 14.5-6.5 14.5-14.5s-6.5-14.5-14.5-14.5H37.3c-4.9 0-8.9 4-8.9 8.9s4 8.9 8.9 8.9h35.6c3.2 0 5.8-2.6 5.8-5.8s-2.6-5.8-5.8-5.8h-25v5.8h23.1c1.5 0 2.6 1.2 2.6 2.6 0 1.5-1.2 2.6-2.6 2.6H36c-7.5 0-13.6-6.1-13.6-13.6S28.5 36.1 36 36.1h38.4c9.6 0 17.4 7.8 17.4 17.4 0 1.7-0.2 3.4-0.7 5h-5.9z" fill="white" />
+    <path d="M113.6 14.4v69.4c0 16.9-13.7 30.6-30.6 30.6H14.4V45c0-16.9 13.7-30.6 30.6-30.6h68.6z" fill="#ab9ff2" />
+    <path d="M96.6 42c2.6 0 4.7 2.1 4.7 4.7 0 2.6-2.1 4.7-4.7 4.7-2.6 0-4.7-2.1-4.7-4.7 0-2.6 2.1-4.7 4.7-4.7zm-21.6 0h7.5c1.5 0 2.6 1.2 2.6 2.6 0 1.5-1.2 2.6-2.6 2.6H75c-1.5 0-2.6-1.2-2.6-2.6 0-1.5 1.1-2.6 2.6-2.6zm-21.5 0h7.5c1.5 0 2.6 1.2 2.6 2.6 0 1.5-1.2 2.6-2.6 2.6h-7.5c-1.5 0-2.6-1.2-2.6-2.6 0-1.5 1.2-2.6 2.6-2.6zM32 42h7.5c1.5 0 2.6 1.2 2.6 2.6 0 1.5-1.2 2.6-2.6 2.6H32c-1.5 0-2.6-1.2-2.6-2.6 0-1.5 1.2-2.6 2.6-2.6zm53.2 15.8c6.1 0 11.1 5 11.1 11.1 0 6.1-5 11.1-11.1 11.1H72.9v-5.8c8 0 14.5-6.5 14.5-14.5s-6.5-14.5-14.5-14.5H37.3c-4.9 0-8.9 4-8.9 8.9s4 8.9 8.9 8.9h35.6c3.2 0 5.8-2.6 5.8-5.8s-2.6-5.8-5.8-5.8h-25v5.8h23.1c1.5 0 2.6 1.2 2.6 2.6 0 1.5-1.2 2.6-2.6 2.6H36c-7.5 0-13.6-6.1-13.6-13.6S28.5 36.1 36 36.1h38.4c9.6 0 17.4 7.8 17.4 17.4 0 1.7-0.2 3.4-0.7 5h-5.9z" fill="#4e44ce" />
   </svg>
 );
 
 const SolflareIcon = () => (
   <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="solflareGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#FC9A24" />
-        <stop offset="100%" stopColor="#FF7A00" />
-      </linearGradient>
-    </defs>
-    <circle cx="64" cy="64" r="64" fill="url(#solflareGradient)" />
+    <circle cx="64" cy="64" r="64" fill="#FC9A24" />
     <path d="M108.4 60.1L84.8 27.5c-1.8-2.7-4.9-4.3-8.1-4.3H38.1c-6.9 0-10.8 7.8-6.6 13.2l16.7 20.4c2.6 3.2 0.7 8-3.3 8H26.7c-3.7 0-6 4.1-4 7.3l28.8 45.2c4 6.3 13.6 1.8 11.1-5.2l-9.4-26.8c-1.4-4 1.5-8.1 5.8-8.1h13.8c2.9 0 5.6 1.4 7.2 3.8l25.1 36.9c4.3 6.3 14.5 3.3 14.5-4.3V67.3c0-2.7-1-5.4-2.8-7.4l-8.4-9.8z" fill="white" />
   </svg>
 );
@@ -73,23 +59,44 @@ const OKXIcon = () => (
 
 const BackpackIcon = () => (
   <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="backpackGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#121212" />
-        <stop offset="100%" stopColor="#2D2D2D" />
-      </linearGradient>
-    </defs>
-    <circle cx="64" cy="64" r="64" fill="url(#backpackGradient)" />
+    <circle cx="64" cy="64" r="64" fill="#121212" />
     <path d="M90.5 67.8h-53c-1.7 0-3.1-1.4-3.1-3.1v-28c0-1.7 1.4-3.1 3.1-3.1h53c1.7 0 3.1 1.4 3.1 3.1v28c0 1.7-1.4 3.1-3.1 3.1z" fill="#E4E4E4" />
     <path d="M37.5 67.8v25.8c0 1.7 1.4 3.1 3.1 3.1h46.8c1.7 0 3.1-1.4 3.1-3.1V67.8H37.5z" fill="#25D1F8" />
     <path d="M45.8 54.6h36.4v-4h-36.4v4zm0-9h36.4v-4h-36.4v4z" fill="#FFFFFF" />
   </svg>
 );
 
-const MotionBox = motion(Box);
-const MotionFlex = motion(Flex);
+// Security bar at the top
+const SecurityBar = () => {
+  const { colorMode } = useColorMode();
+  
+  return (
+    <Flex
+      bg={colorMode === 'dark' ? 'green.800' : 'green.50'}
+      color={colorMode === 'dark' ? 'white' : 'green.700'}
+      py={2}
+      px={4}
+      alignItems="center"
+      justifyContent="center"
+      borderBottomWidth="1px"
+      borderBottomColor={colorMode === 'dark' ? 'green.700' : 'green.100'}
+    >
+      <Icon as={FaShieldAlt} mr={2} />
+      <Text fontSize="sm" fontWeight="medium">End-to-end encrypted & secure connection</Text>
+    </Flex>
+  );
+};
 
-// Wallet option display component with micro-interactions
+// Enhanced tooltip component for education
+const InfoTooltip = ({ label }: { label: string }) => (
+  <Tooltip label={label} placement="top" hasArrow>
+    <Box as="span" ml={1} display="inline-flex">
+      <Icon as={FaInfoCircle} color="gray.400" boxSize="14px" />
+    </Box>
+  </Tooltip>
+);
+
+// Wallet option display component with improved styling
 interface WalletOptionProps {
   name: string;
   icon: React.ReactNode;
@@ -112,7 +119,7 @@ const WalletOption: React.FC<WalletOptionProps> = ({
   const { colorMode } = useColorMode();
   
   return (
-    <MotionBox
+    <Box
       p={4}
       borderWidth="2px"
       borderRadius="xl"
@@ -121,14 +128,13 @@ const WalletOption: React.FC<WalletOptionProps> = ({
       _hover={!isDisabled ? { 
         borderColor: isDetected ? 'purple.500' : 'gray.400',
         shadow: isDetected ? 'lg' : 'md',
+        transform: 'translateY(-8px)'
       } : {}}
       transition="all 0.3s ease"
       opacity={isDisabled ? 0.6 : 1}
-      whileHover={!isDisabled ? { y: -8, scale: 1.03 } : {}}
-      whileTap={!isDisabled && isDetected ? { scale: 0.98 } : {}}
     >
       <VStack spacing={4}>
-        <MotionBox 
+        <Box 
           w="48px" 
           h="48px" 
           borderRadius="xl" 
@@ -137,15 +143,15 @@ const WalletOption: React.FC<WalletOptionProps> = ({
           alignItems="center"
           justifyContent="center"
           bg={colorMode === 'dark' ? 'gray.700' : 'gray.50'}
-          whileHover={{ rotate: 5 }}
-          transition={{ duration: 0.2 }}
+          transition="transform 0.2s ease"
+          _hover={{ transform: 'rotate(5deg)' }}
         >
           {icon ? (
             icon
           ) : (
             <Icon as={FaWallet} boxSize="24px" color="gray.400" />
           )}
-        </MotionBox>
+        </Box>
         
         <Text fontWeight="bold" fontSize="md">{name}</Text>
         
@@ -193,45 +199,14 @@ const WalletOption: React.FC<WalletOptionProps> = ({
           </Button>
         )}
       </VStack>
-    </MotionBox>
-  );
-};
-
-// Security bar at the top
-const SecurityBar = () => {
-  const { colorMode } = useColorMode();
-  
-  return (
-    <Flex
-      bg={colorMode === 'dark' ? 'green.800' : 'green.50'}
-      color={colorMode === 'dark' ? 'white' : 'green.700'}
-      py={2}
-      px={4}
-      alignItems="center"
-      justifyContent="center"
-      borderBottomWidth="1px"
-      borderBottomColor={colorMode === 'dark' ? 'green.700' : 'green.100'}
-    >
-      <Icon as={FaShieldAlt} mr={2} />
-      <Text fontSize="sm" fontWeight="medium">End-to-end encrypted & secure connection</Text>
-    </Flex>
-  );
-};
-
-// Enhanced tooltip component for education
-const InfoTooltip = ({ label }: { label: string }) => (
-  <Tooltip label={label} placement="top" hasArrow>
-    <Box as="span" ml={1} display="inline-flex">
-      <Icon as={FaInfoCircle} color="gray.400" boxSize="14px" />
     </Box>
-  </Tooltip>
-);
+  );
+};
 
 const ConnectWalletPage = () => {
   const router = useRouter();
   const { colorMode } = useColorMode();
   const toast = useToast();
-  const [isLargerThan768] = useMediaQuery("(min-width: 768px)");
   
   const { 
     isAuthenticated,
@@ -244,6 +219,21 @@ const ConnectWalletPage = () => {
   
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isLargerThan768, setIsLargerThan768] = useState(false);
+  
+  // Check screen size
+  useEffect(() => {
+    const checkScreenSize = () => {
+      setIsLargerThan768(window.innerWidth >= 768);
+    };
+    
+    checkScreenSize();
+    window.addEventListener('resize', checkScreenSize);
+    
+    return () => {
+      window.removeEventListener('resize', checkScreenSize);
+    };
+  }, []);
   
   // Redirect if already authenticated
   useEffect(() => {
@@ -360,10 +350,7 @@ const ConnectWalletPage = () => {
       <Layout>
         <SecurityBar />
         <Center h="calc(100vh - 80px)" bg={colorMode === 'dark' ? 'gray.900' : 'gray.50'}>
-          <MotionBox 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
+          <Box 
             p={8}
             maxW="500px"
             w="100%"
@@ -373,19 +360,16 @@ const ConnectWalletPage = () => {
             shadow="xl"
           >
             <VStack spacing={6} w="100%">
-              <MotionBox
-                animate={{ rotate: [0, 360] }}
-                transition={{ repeat: Infinity, duration: 4, ease: "linear" }}
-              >
+              <Box>
                 <Icon as={FaWallet} boxSize={16} color="purple.400" />
-              </MotionBox>
+              </Box>
               <Heading size="lg">Detecting Wallets...</Heading>
               <Progress isIndeterminate colorScheme="purple" w="100%" h="4px" borderRadius="full" />
               <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.600'}>
                 Scanning for Solana wallets to provide a secure connection experience.
               </Text>
             </VStack>
-          </MotionBox>
+          </Box>
         </Center>
       </Layout>
     );
@@ -403,10 +387,7 @@ const ConnectWalletPage = () => {
         }
       >
         <Center py={12}>
-          <MotionBox
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
+          <Box
             w="100%" 
             maxW="900px" 
             mx="auto"
@@ -432,7 +413,7 @@ const ConnectWalletPage = () => {
                 </Alert>
               )}
               
-              <MotionFlex
+              <Flex
                 w="100%"
                 direction={isLargerThan768 ? "row" : "column"}
                 spacing={isLargerThan768 ? "40px" : "24px"}
@@ -441,9 +422,6 @@ const ConnectWalletPage = () => {
                 borderRadius="2xl"
                 bg={colorMode === 'dark' ? 'gray.800' : 'white'}
                 shadow="xl"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.2, duration: 0.5 }}
               >
                 <Box flex={isLargerThan768 ? "1.2" : "1"} textAlign="left" mb={isLargerThan768 ? 0 : 8}>
                   <Heading size="md" mb={4} display="flex" alignItems="center">
@@ -476,23 +454,25 @@ const ConnectWalletPage = () => {
                     <InfoTooltip label="Quick start without a wallet - your keys are generated and stored securely on your device" />
                   </Heading>
                   
-                  <MotionBox 
+                  <Box 
                     p={6}
                     borderWidth="2px"
                     borderRadius="xl"
                     borderColor="blue.400"
                     bg={colorMode === 'dark' ? 'blue.900' : 'blue.50'}
                     transition="all 0.3s ease"
-                    whileHover={!isProcessing ? { y: -8, scale: 1.02 } : {}}
-                    whileTap={!isProcessing ? { scale: 0.98 } : {}}
+                    _hover={!isProcessing ? { 
+                      transform: 'translateY(-8px)',
+                      boxShadow: 'xl'
+                    } : {}}
                   >
                     <VStack spacing={5} align="center">
-                      <MotionBox
-                        whileHover={{ rotate: 10 }}
-                        transition={{ duration: 0.2 }}
+                      <Box
+                        transition="transform 0.2s"
+                        _hover={{ transform: 'rotate(10deg)' }}
                       >
                         <Icon as={FaKey} boxSize={12} color="blue.500" />
-                      </MotionBox>
+                      </Box>
                       
                       <Heading size="md">
                         Secure Keypair Account
@@ -527,9 +507,9 @@ const ConnectWalletPage = () => {
                         Creates a secure keypair stored only on your device
                       </Text>
                     </VStack>
-                  </MotionBox>
+                  </Box>
                 </Box>
-              </MotionFlex>
+              </Flex>
               
               <Alert 
                 status="info" 
@@ -550,7 +530,7 @@ const ConnectWalletPage = () => {
                 </AlertDescription>
               </Alert>
             </VStack>
-          </MotionBox>
+          </Box>
         </Center>
       </Box>
     </Layout>
