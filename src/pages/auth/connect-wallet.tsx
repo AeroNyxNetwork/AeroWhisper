@@ -43,26 +43,10 @@ const PhantomIcon = () => (
   </svg>
 );
 
-const SolflareIcon = () => (
-  <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="64" cy="64" r="64" fill="#FC9A24" />
-    <path d="M108.4 60.1L84.8 27.5c-1.8-2.7-4.9-4.3-8.1-4.3H38.1c-6.9 0-10.8 7.8-6.6 13.2l16.7 20.4c2.6 3.2 0.7 8-3.3 8H26.7c-3.7 0-6 4.1-4 7.3l28.8 45.2c4 6.3 13.6 1.8 11.1-5.2l-9.4-26.8c-1.4-4 1.5-8.1 5.8-8.1h13.8c2.9 0 5.6 1.4 7.2 3.8l25.1 36.9c4.3 6.3 14.5 3.3 14.5-4.3V67.3c0-2.7-1-5.4-2.8-7.4l-8.4-9.8z" fill="white" />
-  </svg>
-);
-
 const OKXIcon = () => (
   <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
     <rect width="128" height="128" rx="24" fill="#121212" />
     <path d="M64 86.4c-12.3 0-22.4-10-22.4-22.4s10-22.4 22.4-22.4 22.4 10 22.4 22.4-10 22.4-22.4 22.4zm0-36c-7.5 0-13.6 6.1-13.6 13.6S56.5 77.6 64 77.6 77.6 71.5 77.6 64 71.5 50.4 64 50.4z" fill="#FFFFFF" />
-  </svg>
-);
-
-const BackpackIcon = () => (
-  <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="64" cy="64" r="64" fill="#121212" />
-    <path d="M90.5 67.8h-53c-1.7 0-3.1-1.4-3.1-3.1v-28c0-1.7 1.4-3.1 3.1-3.1h53c1.7 0 3.1 1.4 3.1 3.1v28c0 1.7-1.4 3.1-3.1 3.1z" fill="#E4E4E4" />
-    <path d="M37.5 67.8v25.8c0 1.7 1.4 3.1 3.1 3.1h46.8c1.7 0 3.1-1.4 3.1-3.1V67.8H37.5z" fill="#25D1F8" />
-    <path d="M45.8 54.6h36.4v-4h-36.4v4zm0-9h36.4v-4h-36.4v4z" fill="#FFFFFF" />
   </svg>
 );
 
@@ -242,7 +226,7 @@ const ConnectWalletPage = () => {
     }
   }, [isAuthenticated, isLoading, router]);
   
-  // Define Solana wallets with SVG icons
+  // Define Solana wallets with SVG icons - ONLY Phantom and OKX as requested
   const solanaWallets = [
     {
       name: 'Phantom',
@@ -251,22 +235,10 @@ const ConnectWalletPage = () => {
       installUrl: 'https://phantom.app/download'
     },
     {
-      name: 'Solflare',
-      icon: <SolflareIcon />,
-      isDetected: solanaWallet?.hasWallet && solanaWallet?.walletType === 'solflare',
-      installUrl: 'https://solflare.com/download'
-    },
-    {
       name: 'OKX Wallet',
       icon: <OKXIcon />,
       isDetected: solanaWallet?.hasWallet && solanaWallet?.walletType === 'okx',
       installUrl: 'https://www.okx.com/web3/wallet'
-    },
-    {
-      name: 'Backpack',
-      icon: <BackpackIcon />,
-      isDetected: solanaWallet?.hasWallet && solanaWallet?.walletType === 'backpack',
-      installUrl: 'https://www.backpack.app/download'
     }
   ];
   
@@ -416,7 +388,7 @@ const ConnectWalletPage = () => {
               <Flex
                 w="100%"
                 direction={isLargerThan768 ? "row" : "column"}
-                spacing={isLargerThan768 ? "40px" : "24px"}
+                gap={isLargerThan768 ? "40px" : "24px"} {/* Changed spacing to gap here */}
                 align="stretch"
                 p={6}
                 borderRadius="2xl"
