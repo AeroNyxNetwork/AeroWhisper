@@ -1,6 +1,6 @@
 //src/utils/solanaWalletDetector.ts
 // Utility to detect Solana wallet environments
-export type SolanaWalletType = 'phantom' | 'solflare' | 'okx' | 'slope' | 'backpack' | 'other' | 'none';
+export type SolanaWalletType = 'phantom' | 'solflare' | 'okx' | 'backpack' | 'slope' | 'other' | 'none';
 
 interface SolanaWalletDetectionResult {
   hasWallet: boolean;
