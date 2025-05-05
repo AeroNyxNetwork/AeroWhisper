@@ -80,7 +80,8 @@ async function detectSolanaWallet(): Promise<{
     }
     
     // First check for OKX wallet using their specific API path
-    if (window.okxwallet && window.okxwallet.solana) {
+    // Use type checking with `in` operator instead of direct property access
+    if ('okxwallet' in window && window.okxwallet && 'solana' in window.okxwallet) {
       console.log('[Wallet] OKX wallet detected via window.okxwallet.solana');
       return {
         hasWallet: true,
@@ -115,10 +116,7 @@ async function detectSolanaWallet(): Promise<{
     }
     
     // Generic fallback - could be any wallet
-    console.log('[Wallet] Unknown wallet detected. Properties:', {
-      hasPublicKey: !!window.solana.publicKey,
-      isConnected: window.solana.isConnected
-    });
+    console.log('[Wallet] Unknown wallet detected');
     
     // Default to generic wallet
     return {
@@ -194,69 +192,89 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
 
   // Connect to wallet
   const connect = useCallback(async (): Promise<string | null> => {
-    if (typeof window === 'undefined') {
-      setError(new Error('Browser environment required'));
-      return null;
-    }
-  
-    setIsConnecting(true);
-    setError(null);
-  
-    try {
-      // First try OKX wallet connection
-      if (window.okxwallet && window.okxwallet.solana) {
-        console.log('[Wallet] Connecting to OKX wallet...');
-        await window.okxwallet.solana.connect();
-        
-        // Wait a brief moment for the connection to establish
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        const key = window.okxwallet.solana.publicKey?.toString() || null;
-        
-        if (!key) {
-          throw new Error('Failed to get public key after OKX wallet connection');
-        }
-        
-        // Update state
-        setPublicKey(key);
-        setIsConnected(true);
-        setWalletType('okx');
-        setWalletName('OKX Wallet');
-        
-        return key;
-      }
-      
-      // Then try standard Solana wallet connection
-      if (!window.solana) {
-        throw new Error('No Solana wallet found');
-      }
-  
-      await window.solana.connect();
+  if (!hasWallet || !isSolanaAvailable()) {
+    setError(new Error('No Solana wallet found'));
+    return null;
+  }
+
+  setIsConnecting(true);
+  setError(null);
+
+  try {
+    // First try OKX wallet connection
+    if ('okxwallet' in window && window.okxwallet && 'solana' in window.okxwallet) {
+      console.log('[Wallet] Connecting to OKX wallet...');
+      await window.okxwallet.solana.connect();
       
       // Wait a brief moment for the connection to establish
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      const key = window.solana.publicKey?.toString() || null;
+      const key = window.okxwallet.solana.publicKey?.toString() || null;
       
       if (!key) {
-        throw new Error('Failed to get public key after connection');
+        throw new Error('Failed to get public key after OKX wallet connection');
       }
       
       // Update state
       setPublicKey(key);
       setIsConnected(true);
+      setWalletType('okx');
+      setWalletName('OKX Wallet');
+      
+      // Update cache
+      cacheWalletDetection({
+        hasWallet: true,
+        walletType: 'okx',
+        walletName: 'OKX Wallet',
+        isConnected: true,
+        publicKey: key
+      });
       
       return key;
-    } catch (err) {
-      console.error('Error connecting to wallet:', err);
-      const error = err instanceof Error ? err : new Error('Failed to connect to wallet');
-      setError(error);
-      return null;
-    } finally {
-      setIsConnecting(false);
     }
-  }, []);
+    
+    // Then try standard Solana wallet connection
+    const solana = window.solana;
+    if (!solana) {
+      setError(new Error('Solana wallet is not available'));
+      return null;
+    }
 
+    await solana.connect();
+    
+    // Wait a brief moment for the connection to establish
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    const key = solana.publicKey?.toString() || null;
+    
+    if (!key) {
+      throw new Error('Failed to get public key after connection');
+    }
+    
+    // Update state
+    setPublicKey(key);
+    setIsConnected(true);
+    
+    // Update cache
+    cacheWalletDetection({
+      hasWallet,
+      walletType,
+      walletName,
+      isConnected: true,
+      publicKey: key
+    });
+    
+    return key;
+  } catch (err) {
+    console.error('Error connecting to Solana wallet:', err);
+    const error = err instanceof Error ? err : new Error('Failed to connect to wallet');
+    setError(error);
+    return null;
+  } finally {
+    setIsConnecting(false);
+  }
+}, [hasWallet, walletType, walletName]);
+  
   return {
     hasWallet,
     walletType,
