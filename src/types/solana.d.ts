@@ -3,8 +3,13 @@ interface SolanaProvider {
   isPhantom?: boolean;
   isSolflare?: boolean;
   isOKX?: boolean;
+  isOkx?: boolean; // Alternative property name
+  isOkxWallet?: boolean; // Alternative property name
   isBackpack?: boolean;
   isSlope?: boolean;
+  _walletName?: string;
+  walletName?: string;
+  name?: string;
   isConnected: boolean;
   publicKey?: {
     toString(): string;
