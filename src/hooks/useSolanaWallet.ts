@@ -173,12 +173,13 @@ async function detectSolanaWallet(): Promise<{
       const possibleWalletName = 
         solana._walletName || 
         solana.walletName || 
-        (solana.hasOwnProperty('name') ? solana.name : 'Solana Wallet');
+        (solana.hasOwnProperty('name') ? solana.name : null) || 
+        'Solana Wallet'; // Provide a default value
         
       result = {
         hasWallet: true,
         walletType: 'other' as SolanaWalletType,
-        walletName: possibleWalletName,
+        walletName: possibleWalletName, // Now this is guaranteed to be a string
         isConnected: solana.isConnected,
         publicKey: solana.publicKey?.toString()
       };
