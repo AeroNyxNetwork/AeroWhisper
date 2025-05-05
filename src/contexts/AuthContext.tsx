@@ -441,7 +441,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await Promise.race([
         (async () => {
           try {
-            // Handle wallet disconnection if using wallet auth
+            // Handle wallet or keypair disconnection
             if (authMethod === 'wallet') {
               if (solanaWallet.isConnected) {
                 console.log('[AuthContext] Disconnecting wallet...');
@@ -452,13 +452,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               await deleteStoredKeypair();
             }
             
-            // Use the existing performLogout function WITHOUT custom redirection
+            // Perform logout with proper cleanup
             await performLogout({
-              clearUserData: false,
+              clearUserData: true, // Set to true to ensure all auth data is cleared
               reason: 'user_initiated'
             });
             
-            // Update auth state AFTER logout is complete
+            // Explicitly clear auth state to ensure we're logged out
+            if (typeof window !== 'undefined') {
+              // Force clear critical auth state items
+              sessionStorage.removeItem(AUTH_STATE_KEY);
+              localStorage.removeItem('aero-auth-state-backup');
+            }
+            
+            // Update auth state to unauthenticated
             updateAuthState({
               status: 'unauthenticated',
               user: null,
@@ -469,6 +476,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             setAuthMethod('none');
             
             console.log('[AuthContext] Logout completed successfully');
+            
+            // Manually redirect after successful logout
+            if (typeof window !== 'undefined') {
+              // Use clean window.location instead of router.push to avoid React router issues
+              window.location.href = '/auth/connect-wallet';
+            }
           } catch (error) {
             console.error('[AuthContext] Error in primary logout process:', error);
             throw error;
@@ -479,7 +492,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch (error) {
       console.error('[AuthContext] Logout process failed:', error);
       
-      // Emergency fallback - ensure we at least set unauthenticated state
+      // Emergency cleanup - ensure we at least set unauthenticated state
       updateAuthState({
         status: 'unauthenticated',
         user: null,
@@ -487,20 +500,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         lastValidated: Date.now()
       });
       
+      // Reset auth method
       setAuthMethod('none');
       
+      // Emergency fallback cleanup
       try {
         console.log('[AuthContext] Attempting fallback cleanup...');
+        
         if (typeof window !== 'undefined') {
+          // Clear auth state data
           sessionStorage.removeItem(SESSION_KEYS.AUTH_STATE);
           localStorage.removeItem(SESSION_KEYS.AUTH_STATE_BACKUP);
           
+          // Dispatch logout event
           window.dispatchEvent(new CustomEvent('aeronyx-logout', { 
-            detail: { 
-              timestamp: Date.now(),
-              reason: 'error_recovery'
-            } 
+            detail: { timestamp: Date.now(), reason: 'error_recovery' } 
           }));
+          
+          // Force redirect on error recovery as well
+          window.location.href = '/auth/connect-wallet';
         }
       } catch (fallbackError) {
         console.error('[AuthContext] Even fallback cleanup failed:', fallbackError);
