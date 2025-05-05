@@ -3,13 +3,8 @@ interface SolanaProvider {
   isPhantom?: boolean;
   isSolflare?: boolean;
   isOKX?: boolean;
-  isOkx?: boolean; // Alternative property name
-  isOkxWallet?: boolean; // Alternative property name
   isBackpack?: boolean;
   isSlope?: boolean;
-  _walletName?: string;
-  walletName?: string;
-  name?: string;
   isConnected: boolean;
   publicKey?: {
     toString(): string;
@@ -20,6 +15,22 @@ interface SolanaProvider {
   signTransaction(transaction: any): Promise<any>;
 }
 
+// Add OKX wallet specific interface
+interface OKXWalletProvider {
+  solana: {
+    isConnected: boolean;
+    publicKey?: {
+      toString(): string;
+    };
+    connect(): Promise<{ publicKey: string }>;
+    disconnect(): Promise<void>;
+    signMessage(message: Uint8Array, encoding: string): Promise<{ signature: Uint8Array }>;
+    signTransaction(transaction: any): Promise<any>;
+    on(event: string, callback: Function): void;
+  }
+}
+
 interface Window {
   solana?: SolanaProvider;
+  okxwallet?: OKXWalletProvider; // Add OKX wallet to Window interface
 }
