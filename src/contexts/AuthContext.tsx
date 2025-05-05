@@ -438,93 +438,74 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
     
     try {
-      await Promise.race([
-        (async () => {
-          try {
-            // Handle wallet or keypair disconnection
-            if (authMethod === 'wallet') {
-              if (solanaWallet.isConnected) {
-                console.log('[AuthContext] Disconnecting wallet...');
-                await solanaWallet.disconnect();
-              }
-            } else if (authMethod === 'keypair') {
-              console.log('[AuthContext] Deleting stored keypair...');
-              await deleteStoredKeypair();
-            }
-            
-            // Perform logout with proper cleanup
-            await performLogout({
-              clearUserData: true, // Set to true to ensure all auth data is cleared
-              reason: 'user_initiated'
-            });
-            
-            // Explicitly clear auth state to ensure we're logged out
-            if (typeof window !== 'undefined') {
-              // Force clear critical auth state items
-              sessionStorage.removeItem(AUTH_STATE_KEY);
-              localStorage.removeItem('aero-auth-state-backup');
-            }
-            
-            // Update auth state to unauthenticated
-            updateAuthState({
-              status: 'unauthenticated',
-              user: null,
-              lastValidated: Date.now()
-            });
-            
-            // Reset auth method
-            setAuthMethod('none');
-            
-            console.log('[AuthContext] Logout completed successfully');
-            
-            // Manually redirect after successful logout
-            if (typeof window !== 'undefined') {
-              // Use clean window.location instead of router.push to avoid React router issues
-              window.location.href = '/auth/connect-wallet';
-            }
-          } catch (error) {
-            console.error('[AuthContext] Error in primary logout process:', error);
-            throw error;
-          }
-        })(),
-        createTimeout(AUTH_TIMEOUT, 'Auth logout timeout')
-      ]);
-    } catch (error) {
-      console.error('[AuthContext] Logout process failed:', error);
+      // Set flag to prevent auto-login on next page load
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('force-logout', 'true');
+      }
       
-      // Emergency cleanup - ensure we at least set unauthenticated state
+      // First, handle wallet or keypair disconnection
+      if (authMethod === 'wallet') {
+        if (solanaWallet.isConnected) {
+          console.log('[AuthContext] Disconnecting wallet...');
+          await solanaWallet.disconnect();
+        }
+      } else if (authMethod === 'keypair') {
+        console.log('[AuthContext] Deleting stored keypair...');
+        await deleteStoredKeypair();
+      }
+      
+      // CRITICAL - clear all authentication data
+      if (typeof window !== 'undefined') {
+        // Clear session storage
+        sessionStorage.removeItem(AUTH_STATE_KEY);
+        sessionStorage.removeItem('aero-current-chat-id');
+        
+        // Clear local storage auth data
+        localStorage.removeItem('aero-auth-state-backup');
+        localStorage.removeItem('aero-current-chat-id');
+        localStorage.removeItem('aero-keypair');
+        localStorage.removeItem(DISPLAY_NAME_KEY);
+        
+        // Dispatch logout event
+        window.dispatchEvent(new CustomEvent('aeronyx-logout', { 
+          detail: { timestamp: Date.now(), reason: 'user_initiated' } 
+        }));
+      }
+      
+      // Reset auth state
       updateAuthState({
         status: 'unauthenticated',
         user: null,
-        error: error instanceof Error ? error : new Error(String(error)),
         lastValidated: Date.now()
       });
       
       // Reset auth method
       setAuthMethod('none');
       
-      // Emergency fallback cleanup
-      try {
-        console.log('[AuthContext] Attempting fallback cleanup...');
-        
-        if (typeof window !== 'undefined') {
-          // Clear auth state data
-          sessionStorage.removeItem(SESSION_KEYS.AUTH_STATE);
-          localStorage.removeItem(SESSION_KEYS.AUTH_STATE_BACKUP);
-          
-          // Dispatch logout event
-          window.dispatchEvent(new CustomEvent('aeronyx-logout', { 
-            detail: { timestamp: Date.now(), reason: 'error_recovery' } 
-          }));
-          
-          // Force redirect on error recovery as well
-          window.location.href = '/auth/connect-wallet';
-        }
-      } catch (fallbackError) {
-        console.error('[AuthContext] Even fallback cleanup failed:', fallbackError);
+      console.log('[AuthContext] Logout completed successfully');
+      
+      // Redirect using window.location for a clean navigation
+      if (typeof window !== 'undefined') {
+        window.location.href = '/auth/connect-wallet';
+      }
+    } catch (error) {
+      console.error('[AuthContext] Logout process failed:', error);
+      
+      // Force unauthenticated state
+      updateAuthState({
+        status: 'unauthenticated',
+        user: null,
+        error: error instanceof Error ? error : new Error(String(error))
+      });
+      
+      setAuthMethod('none');
+      
+      // Force redirect even on error
+      if (typeof window !== 'undefined') {
+        window.location.href = '/auth/connect-wallet';
       }
     }
-  }, [authMethod, solanaWallet, updateAuthState, deleteStoredKeypair]);
+  }, [authMethod, solanaWallet, deleteStoredKeypair, updateAuthState]);
   
   /**
    * Generates a new keypair, replacing any existing one
@@ -753,67 +734,82 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, [authMethod, solanaWallet, updateAuthState]);
   
   // Initialize auth on mount with timeout
-  useEffect(() => {
-    console.log('[AuthContext] Initial auth effect, status:', authState.status);
-    
-    let initTimeout: NodeJS.Timeout | null = null;
-    
-    // Set a timeout to exit initializing state if it takes too long
-    if (authState.status === 'initializing') {
-      initTimeout = setTimeout(() => {
-        console.warn('[AuthContext] Auth initialization timeout - forcing to unauthenticated state');
-        updateAuthState({
-          status: 'unauthenticated',
-          error: new Error('Authentication initialization timed out')
-        });
-      }, AUTH_TIMEOUT);
+  // Initialize auth on mount with timeout
+useEffect(() => {
+  console.log('[AuthContext] Initial auth effect, status:', authState.status);
+  
+  let initTimeout: NodeJS.Timeout | null = null;
+  
+  // Set a timeout to exit initializing state if it takes too long
+  if (authState.status === 'initializing') {
+    initTimeout = setTimeout(() => {
+      console.warn('[AuthContext] Auth initialization timeout - forcing to unauthenticated state');
+      updateAuthState({
+        status: 'unauthenticated',
+        error: new Error('Authentication initialization timed out')
+      });
+    }, AUTH_TIMEOUT);
+  }
+  
+  // Perform non-blocking initialization - don't wait for it in the render path
+  const initializeAuth = async () => {
+    // IMPORTANT: Check if we have a forced logout flag
+    if (typeof window !== 'undefined' && sessionStorage.getItem('force-logout') === 'true') {
+      console.log('[AuthContext] Forced logout detected, preventing auto-login');
+      sessionStorage.removeItem('force-logout');
+      
+      // Ensure we're logged out
+      updateAuthState({
+        status: 'unauthenticated',
+        user: null,
+        error: null
+      });
+      return;
     }
     
-    // Perform non-blocking initialization - don't wait for it in the render path
-    const initializeAuth = async () => {
-      // Set fast initial state, update it later
-      if (authState.status === 'initializing') {
-        // Quick check for auth to prevent blank page
-        const persistedState = loadPersistedAuthState();
-        if (persistedState && persistedState.status === 'authenticated' && persistedState.user) {
-          // Show authenticated UI right away based on persisted state
-          updateAuthState({
-            status: 'authenticated',
-            user: persistedState.user,
-            lastValidated: persistedState.lastValidated
+    // Set fast initial state, update it later
+    if (authState.status === 'initializing') {
+      // Quick check for auth to prevent blank page
+      const persistedState = loadPersistedAuthState();
+      if (persistedState && persistedState.status === 'authenticated' && persistedState.user) {
+        // Show authenticated UI right away based on persisted state
+        updateAuthState({
+          status: 'authenticated',
+          user: persistedState.user,
+          lastValidated: persistedState.lastValidated
+        });
+        
+        // Determine auth method
+        setAuthMethod(solanaWallet.isConnected ? 'wallet' : 'keypair');
+        
+        // Then validate in background
+        setTimeout(() => {
+          validateAuth().catch(error => {
+            console.error('[AuthContext] Deferred validation failed:', error);
           });
-          
-          // Determine auth method
-          setAuthMethod(solanaWallet.isConnected ? 'wallet' : 'keypair');
-          
-          // Then validate in background
-          setTimeout(() => {
-            validateAuth().catch(error => {
-              console.error('[AuthContext] Deferred validation failed:', error);
+        }, 500);
+      } else {
+        // Try to log in but don't block rendering for it
+        setTimeout(() => {
+          login().catch(error => {
+            console.error('[AuthContext] Deferred login failed:', error);
+            updateAuthState({
+              status: 'unauthenticated',
+              error: null
             });
-          }, 500);
-        } else {
-          // Try to log in but don't block rendering for it
-          setTimeout(() => {
-            login().catch(error => {
-              console.error('[AuthContext] Deferred login failed:', error);
-              updateAuthState({
-                status: 'unauthenticated',
-                error: null
-              });
-            });
-          }, 100);
-        }
+          });
+        }, 100);
       }
-    };
-    
-    initializeAuth();
-    
-    // Clean up timeout on unmount
-    return () => {
-      if (initTimeout) clearTimeout(initTimeout);
-    };
-  }, [authState.status, login, validateAuth, updateAuthState, solanaWallet.isConnected]);
+    }
+  };
+  
+  initializeAuth();
+  
+  // Clean up timeout on unmount
+  return () => {
+    if (initTimeout) clearTimeout(initTimeout);
+  };
+}, [authState.status, login, validateAuth, updateAuthState, solanaWallet.isConnected]);
   
   // Set up periodic revalidation when authenticated
   useEffect(() => {
