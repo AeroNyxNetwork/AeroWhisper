@@ -20,19 +20,22 @@ import {
   AlertDescription,
   Progress,
   SimpleGrid,
-  Link
+  Link,
+  Tooltip
 } from '@chakra-ui/react';
 import { 
   FaWallet, 
   FaKey, 
   FaUser, 
   FaExternalLinkAlt, 
-  FaExclamationTriangle 
+  FaExclamationTriangle,
+  FaInfoCircle,
+  FaShieldAlt
 } from 'react-icons/fa';
 import { Layout } from '../../components/layout/Layout';
 import { useAuth } from '../../contexts/AuthContext';
 
-// SVG Icon Components
+// SVG Icon Components with enhanced design
 const PhantomIcon = () => (
   <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
     <path d="M113.6 14.4v69.4c0 16.9-13.7 30.6-30.6 30.6H14.4V45c0-16.9 13.7-30.6 30.6-30.6h68.6z" fill="#ab9ff2" />
@@ -63,7 +66,37 @@ const BackpackIcon = () => (
   </svg>
 );
 
-// Wallet option display component
+// Security bar at the top
+const SecurityBar = () => {
+  const { colorMode } = useColorMode();
+  
+  return (
+    <Flex
+      bg={colorMode === 'dark' ? 'green.800' : 'green.50'}
+      color={colorMode === 'dark' ? 'white' : 'green.700'}
+      py={2}
+      px={4}
+      alignItems="center"
+      justifyContent="center"
+      borderBottomWidth="1px"
+      borderBottomColor={colorMode === 'dark' ? 'green.700' : 'green.100'}
+    >
+      <Icon as={FaShieldAlt} mr={2} />
+      <Text fontSize="sm" fontWeight="medium">End-to-end encrypted & secure connection</Text>
+    </Flex>
+  );
+};
+
+// Enhanced tooltip component for education
+const InfoTooltip = ({ label }: { label: string }) => (
+  <Tooltip label={label} placement="top" hasArrow>
+    <Box as="span" ml={1} display="inline-flex">
+      <Icon as={FaInfoCircle} color="gray.400" boxSize="14px" />
+    </Box>
+  </Tooltip>
+);
+
+// Wallet option display component with improved styling
 interface WalletOptionProps {
   name: string;
   icon: React.ReactNode;
@@ -88,52 +121,62 @@ const WalletOption: React.FC<WalletOptionProps> = ({
   return (
     <Box
       p={4}
-      borderWidth="1px"
-      borderRadius="lg"
+      borderWidth="2px"
+      borderRadius="xl"
       borderColor={isDetected ? 'purple.400' : 'gray.300'}
       bg={colorMode === 'dark' ? 'gray.800' : 'white'}
       _hover={!isDisabled ? { 
-        transform: isDetected ? 'translateY(-4px)' : 'none', 
-        shadow: isDetected ? 'lg' : 'none',
-        borderColor: isDetected ? 'purple.500' : 'gray.300'
+        borderColor: isDetected ? 'purple.500' : 'gray.400',
+        shadow: isDetected ? 'lg' : 'md',
+        transform: 'translateY(-8px)'
       } : {}}
       transition="all 0.3s ease"
       opacity={isDisabled ? 0.6 : 1}
     >
-      <VStack spacing={3}>
+      <VStack spacing={4}>
         <Box 
-          w="40px" 
-          h="40px" 
-          borderRadius="full" 
+          w="48px" 
+          h="48px" 
+          borderRadius="xl" 
           overflow="hidden"
           display="flex"
           alignItems="center"
           justifyContent="center"
-          bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
+          bg={colorMode === 'dark' ? 'gray.700' : 'gray.50'}
+          transition="transform 0.2s ease"
+          _hover={{ transform: 'rotate(5deg)' }}
         >
           {icon ? (
             icon
           ) : (
-            <Icon as={FaWallet} boxSize="20px" color="gray.400" />
+            <Icon as={FaWallet} boxSize="24px" color="gray.400" />
           )}
         </Box>
         
-        <Text fontWeight="medium">{name}</Text>
+        <Text fontWeight="bold" fontSize="md">{name}</Text>
         
         {isDetected ? (
-          <Badge colorScheme="green">Detected</Badge>
+          <Badge colorScheme="green" borderRadius="full" px={3} py={1}>
+            Detected
+          </Badge>
         ) : (
-          <Badge colorScheme="gray">Not Installed</Badge>
+          <Badge colorScheme="gray" borderRadius="full" px={3} py={1}>
+            Not Installed
+          </Badge>
         )}
         
         {isDetected ? (
           <Button
-            size="sm"
+            size="md"
             colorScheme="purple"
             onClick={onClick}
             isLoading={isLoading}
             isDisabled={isDisabled}
             width="full"
+            borderRadius="xl"
+            fontWeight="bold"
+            _hover={{ transform: 'translateY(-2px)', shadow: 'md' }}
+            leftIcon={<Icon as={FaWallet} boxSize="16px" />}
           >
             Connect
           </Button>
@@ -143,11 +186,14 @@ const WalletOption: React.FC<WalletOptionProps> = ({
             href={installUrl}
             target="_blank"
             rel="noopener noreferrer"
-            size="sm"
+            size="md"
             colorScheme="blue"
             variant="outline"
-            rightIcon={<Icon as={FaExternalLinkAlt} boxSize="12px" />}
+            rightIcon={<Icon as={FaExternalLinkAlt} boxSize="14px" />}
             width="full"
+            borderRadius="xl"
+            fontWeight="bold"
+            _hover={{ transform: 'translateY(-2px)', shadow: 'md' }}
           >
             Install
           </Button>
@@ -173,6 +219,21 @@ const ConnectWalletPage = () => {
   
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isLargerThan768, setIsLargerThan768] = useState(false);
+  
+  // Check screen size
+  useEffect(() => {
+    const checkScreenSize = () => {
+      setIsLargerThan768(window.innerWidth >= 768);
+    };
+    
+    checkScreenSize();
+    window.addEventListener('resize', checkScreenSize);
+    
+    return () => {
+      window.removeEventListener('resize', checkScreenSize);
+    };
+  }, []);
   
   // Redirect if already authenticated
   useEffect(() => {
@@ -223,6 +284,8 @@ const ConnectWalletPage = () => {
           description: `Successfully connected to ${solanaWallet?.walletName}`,
           status: "success",
           duration: 3000,
+          isClosable: true,
+          position: "top-right",
         });
         
         router.push('/dashboard');
@@ -237,6 +300,7 @@ const ConnectWalletPage = () => {
         status: "error",
         duration: 5000,
         isClosable: true,
+        position: "top-right",
       });
     } finally {
       setIsProcessing(false);
@@ -257,6 +321,8 @@ const ConnectWalletPage = () => {
           description: "Your secure account has been created",
           status: "success",
           duration: 3000,
+          isClosable: true,
+          position: "top-right",
         });
         
         router.push('/dashboard');
@@ -271,6 +337,7 @@ const ConnectWalletPage = () => {
         status: "error",
         duration: 5000,
         isClosable: true,
+        position: "top-right",
       });
     } finally {
       setIsProcessing(false);
@@ -281,12 +348,28 @@ const ConnectWalletPage = () => {
   if (solanaWallet?.isDetecting) {
     return (
       <Layout>
-        <Center h="calc(100vh - 80px)">
-          <VStack spacing={6} w="100%" p={8} textAlign="center">
-            <Heading size="lg">Detecting Solana Wallets...</Heading>
-            <Progress isIndeterminate colorScheme="purple" w="80%" maxW="400px" />
-            <Text>We're detecting Solana wallets to provide the best experience.</Text>
-          </VStack>
+        <SecurityBar />
+        <Center h="calc(100vh - 80px)" bg={colorMode === 'dark' ? 'gray.900' : 'gray.50'}>
+          <Box 
+            p={8}
+            maxW="500px"
+            w="100%"
+            textAlign="center"
+            borderRadius="2xl"
+            bg={colorMode === 'dark' ? 'gray.800' : 'white'}
+            shadow="xl"
+          >
+            <VStack spacing={6} w="100%">
+              <Box>
+                <Icon as={FaWallet} boxSize={16} color="purple.400" />
+              </Box>
+              <Heading size="lg">Detecting Wallets...</Heading>
+              <Progress isIndeterminate colorScheme="purple" w="100%" h="4px" borderRadius="full" />
+              <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.600'}>
+                Scanning for Solana wallets to provide a secure connection experience.
+              </Text>
+            </VStack>
+          </Box>
         </Center>
       </Layout>
     );
@@ -294,116 +377,160 @@ const ConnectWalletPage = () => {
   
   return (
     <Layout>
-      <Box minH="calc(100vh - 80px)" bg={colorMode === 'dark' ? 'gray.900' : 'gray.50'}>
+      <SecurityBar />
+      <Box 
+        minH="calc(100vh - 80px)" 
+        bg={colorMode === 'dark' ? 'gray.900' : 'gray.50'}
+        backgroundImage={colorMode === 'dark' ? 
+          'linear-gradient(to bottom right, rgba(66, 39, 90, 0.1), rgba(28, 28, 40, 0.4))' : 
+          'linear-gradient(to bottom right, rgba(247, 250, 252, 0.8), rgba(237, 242, 247, 0.8))'
+        }
+      >
         <Center py={12}>
-          <VStack spacing={8} w="100%" p={6} textAlign="center" maxW="800px" mx="auto">
-            <Heading 
-              size="xl" 
-              bgGradient="linear(to-r, purple.500, blue.500)" 
-              bgClip="text"
-            >
-              Welcome to AeroNyx
-            </Heading>
-            
-            <Text fontSize="lg">
-              Secure, end-to-end encrypted messaging with Solana-based encryption
-            </Text>
-            
-            {error && (
-              <Alert status="error" borderRadius="md">
-                <AlertIcon />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            
-            <Box w="100%" textAlign="left">
-              <Heading size="md" mb={4}>Connect with Solana Wallet</Heading>
-              
-              <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4} mb={8}>
-                {solanaWallets.map((wallet) => (
-                  <WalletOption
-                    key={wallet.name}
-                    name={wallet.name}
-                    icon={wallet.icon}
-                    isDetected={wallet.isDetected}
-                    installUrl={wallet.installUrl}
-                    onClick={handleConnectWallet}
-                    isLoading={isProcessing && wallet.isDetected}
-                    isDisabled={isProcessing}
-                  />
-                ))}
-              </SimpleGrid>
-            </Box>
-            
-            <Divider />
-            
-            <Box w="100%">
-              <Heading size="md" mb={4}>Or Create a New Account</Heading>
-              
-              <Box 
-                p={6}
-                borderWidth="1px"
-                borderRadius="xl"
-                borderColor="blue.400"
-                bg={colorMode === 'dark' ? 'gray.800' : 'white'}
-                _hover={!isProcessing ? { 
-                  transform: 'translateY(-4px)', 
-                  shadow: 'lg',
-                  borderColor: 'blue.500' 
-                } : {}}
-                transition="all 0.3s ease"
+          <Box
+            w="100%" 
+            maxW="900px" 
+            mx="auto"
+          >
+            <VStack spacing={8} p={6} textAlign="center">
+              <Heading 
+                size="xl" 
+                bgGradient="linear(to-r, purple.500, blue.500)" 
+                bgClip="text"
+                letterSpacing="tight"
               >
-                <VStack spacing={4} align="center">
-                  <Icon as={FaKey} boxSize={12} color="blue.500" />
-                  
-                  <Heading size="md">
-                    Create Secure Account
+                Welcome to AeroNyx
+              </Heading>
+              
+              <Text fontSize="lg" maxW="600px" color={colorMode === 'dark' ? 'gray.300' : 'gray.600'}>
+                Seamless, secure messaging with Solana-based encryption that keeps your conversations private.
+              </Text>
+              
+              {error && (
+                <Alert status="error" borderRadius="xl" variant="left-accent">
+                  <AlertIcon />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+              
+              <Flex
+                w="100%"
+                direction={isLargerThan768 ? "row" : "column"}
+                spacing={isLargerThan768 ? "40px" : "24px"}
+                align="stretch"
+                p={6}
+                borderRadius="2xl"
+                bg={colorMode === 'dark' ? 'gray.800' : 'white'}
+                shadow="xl"
+              >
+                <Box flex={isLargerThan768 ? "1.2" : "1"} textAlign="left" mb={isLargerThan768 ? 0 : 8}>
+                  <Heading size="md" mb={4} display="flex" alignItems="center">
+                    Connect with Solana Wallet
+                    <InfoTooltip label="Use your existing Solana wallet for maximum security and ownership of your keys" />
                   </Heading>
                   
-                  <Text>
-                    Create an encrypted account instantly without a wallet. Perfect for getting started quickly.
-                  </Text>
+                  <SimpleGrid columns={{ base: 2, md: 2 }} spacing={6} mb={8}>
+                    {solanaWallets.map((wallet) => (
+                      <WalletOption
+                        key={wallet.name}
+                        name={wallet.name}
+                        icon={wallet.icon}
+                        isDetected={wallet.isDetected}
+                        installUrl={wallet.installUrl}
+                        onClick={handleConnectWallet}
+                        isLoading={isProcessing && wallet.isDetected}
+                        isDisabled={isProcessing}
+                      />
+                    ))}
+                  </SimpleGrid>
+                </Box>
+                
+                {isLargerThan768 && <Divider orientation="vertical" />}
+                {!isLargerThan768 && <Divider />}
+                
+                <Box flex="1" textAlign="left">
+                  <Heading size="md" mb={4} display="flex" alignItems="center">
+                    Create a New Account
+                    <InfoTooltip label="Quick start without a wallet - your keys are generated and stored securely on your device" />
+                  </Heading>
                   
-                  <HStack spacing={2}>
-                    <Badge colorScheme="blue">Recommended for New Users</Badge>
-                    <Badge colorScheme="green">No Wallet Required</Badge>
-                  </HStack>
-                  
-                  <Button
-                    colorScheme="blue"
-                    leftIcon={<Icon as={FaUser} />}
-                    onClick={handleCreateAccount}
-                    isLoading={isProcessing}
-                    isDisabled={isProcessing}
-                    size="lg"
-                    w="full"
-                    maxW="300px"
+                  <Box 
+                    p={6}
+                    borderWidth="2px"
+                    borderRadius="xl"
+                    borderColor="blue.400"
+                    bg={colorMode === 'dark' ? 'blue.900' : 'blue.50'}
+                    transition="all 0.3s ease"
+                    _hover={!isProcessing ? { 
+                      transform: 'translateY(-8px)',
+                      boxShadow: 'xl'
+                    } : {}}
                   >
-                    Create Account
-                  </Button>
-                  
-                  <Text fontSize="sm" color="gray.500">
-                    Creates a secure keypair stored only on your device
-                  </Text>
-                </VStack>
-              </Box>
-            </Box>
-            
-            <Alert 
-              status="info" 
-              variant="subtle" 
-              flexDirection="column" 
-              alignItems="center"
-              borderRadius="md"
-              p={4}
-            >
-              <AlertIcon boxSize={6} mr={0} />
-              <AlertDescription maxWidth="sm" mt={3} textAlign="center">
-                AeroNyx uses Solana-based encryption for maximum security.
-                All messages are end-to-end encrypted and your keys never leave your device.
-              </AlertDescription>
-            </Alert>
-          </VStack>
+                    <VStack spacing={5} align="center">
+                      <Box
+                        transition="transform 0.2s"
+                        _hover={{ transform: 'rotate(10deg)' }}
+                      >
+                        <Icon as={FaKey} boxSize={12} color="blue.500" />
+                      </Box>
+                      
+                      <Heading size="md">
+                        Secure Keypair Account
+                      </Heading>
+                      
+                      <Text textAlign="center">
+                        Get started instantly with a secure encrypted account. Perfect for beginners and quick access.
+                      </Text>
+                      
+                      <HStack spacing={2} flexWrap="wrap" justifyContent="center">
+                        <Badge colorScheme="blue" borderRadius="full" px={3} py={1}>Recommended for New Users</Badge>
+                        <Badge colorScheme="green" borderRadius="full" px={3} py={1}>No Wallet Required</Badge>
+                      </HStack>
+                      
+                      <Button
+                        colorScheme="blue"
+                        leftIcon={<Icon as={FaUser} />}
+                        onClick={handleCreateAccount}
+                        isLoading={isProcessing}
+                        isDisabled={isProcessing}
+                        size="lg"
+                        w="full"
+                        maxW="300px"
+                        borderRadius="xl"
+                        fontWeight="bold"
+                        _hover={{ transform: 'translateY(-2px)', shadow: 'md' }}
+                      >
+                        Create Account
+                      </Button>
+                      
+                      <Text fontSize="sm" color={colorMode === 'dark' ? 'gray.400' : 'gray.500'}>
+                        Creates a secure keypair stored only on your device
+                      </Text>
+                    </VStack>
+                  </Box>
+                </Box>
+              </Flex>
+              
+              <Alert 
+                status="info" 
+                variant="subtle" 
+                flexDirection="column" 
+                alignItems="center"
+                borderRadius="xl"
+                p={4}
+                bg={colorMode === 'dark' ? 'blue.900' : 'blue.50'}
+                borderWidth="1px"
+                borderColor={colorMode === 'dark' ? 'blue.800' : 'blue.100'}
+                maxW="800px"
+              >
+                <AlertIcon boxSize={6} mr={0} />
+                <AlertDescription maxWidth="sm" mt={3} textAlign="center" fontSize="sm">
+                  AeroNyx uses Solana-based encryption for maximum security.
+                  All messages are end-to-end encrypted and your keys never leave your device.
+                </AlertDescription>
+              </Alert>
+            </VStack>
+          </Box>
         </Center>
       </Box>
     </Layout>
