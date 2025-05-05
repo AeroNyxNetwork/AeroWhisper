@@ -320,7 +320,6 @@ const ConnectWalletPage = () => {
   if (solanaWallet?.isDetecting) {
     return (
       <Layout>
-        <SecurityBar />
         <Center h="calc(100vh - 80px)" bg={colorMode === 'dark' ? 'gray.900' : 'gray.50'}>
           <Box 
             p={8}
