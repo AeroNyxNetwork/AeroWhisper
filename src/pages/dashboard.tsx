@@ -139,7 +139,13 @@ const ConnectionCertificateAlert = () => {
 };
 
 // Feature Card Component
-const FeatureCard = ({ icon, title, description }) => {
+interface FeatureCardProps {
+  icon: React.ComponentType;
+  title: string;
+  description: string;
+}
+
+const FeatureCard: React.FC<FeatureCardProps> = ({ icon, title, description }) => {
   const { colorMode } = useColorMode();
   const isMobile = useBreakpointValue({ base: true, md: false });
   
@@ -173,7 +179,14 @@ const FeatureCard = ({ icon, title, description }) => {
 };
 
 // Mobile Action Button
-const MobileActionButton = ({ icon, label, onClick, colorScheme = "gray" }) => {
+interface MobileActionButtonProps {
+  icon: React.ComponentType;
+  label: string;
+  onClick: () => void;
+  colorScheme?: string;
+}
+
+const MobileActionButton: React.FC<MobileActionButtonProps> = ({ icon, label, onClick, colorScheme = "gray" }) => {
   return (
     <VStack spacing={1} align="center" onClick={onClick} cursor="pointer" flex="1">
       <Circle size="40px" bg={`${colorScheme}.500`} color="white">
