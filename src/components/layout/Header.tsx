@@ -335,7 +335,7 @@ export const Header: React.FC = () => {
                   size={isMobile ? "xs" : "sm"}
                   name={user?.displayName || 'User'} 
                   bg="purple.500"
-                  src={user?.avatarUrl}
+                  src={user?.avatarUrl || undefined}
                 />
               </MenuButton>
               <MenuList py={2} boxShadow="lg">
@@ -418,7 +418,7 @@ export const Header: React.FC = () => {
                   size="lg" 
                   name={user?.displayName || 'User'} 
                   bg="purple.500"
-                  src={user?.avatarUrl}
+                  src={user?.avatarUrl || undefined}
                   mb={3}
                 />
                 <Text fontWeight="bold" fontSize="lg">{user?.displayName || 'User'}</Text>
