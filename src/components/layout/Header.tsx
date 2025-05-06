@@ -45,6 +45,8 @@ import {
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useAuth } from '../../contexts/AuthContext';
+// Import the notification toggle component
+import { NotificationToggle } from '../common/NotificationToggle';
 
 // Logo component with improved organization and proper TypeScript types
 interface AeronyxLogoProps {
@@ -59,8 +61,10 @@ const AeronyxLogo: React.FC<AeronyxLogoProps> = ({
   showText = true 
 }) => {
   const { colorMode } = useColorMode();
-  const logoSize = size === 'sm' ? "24px" : size === 'md' ? "32px" : "40px";
+  // 调整 logo 尺寸以更好地适配不同场景
+  const logoSize = size === 'sm' ? "22px" : size === 'md' ? "28px" : "36px";
   const textSize = size === 'sm' ? "sm" : size === 'md' ? "md" : "lg";
+  const fontWeight = size === 'sm' ? "semibold" : "bold";
   
   return (
     <Flex 
@@ -69,14 +73,34 @@ const AeronyxLogo: React.FC<AeronyxLogoProps> = ({
       cursor={onClick ? "pointer" : "default"}
       aria-label="AeroNyx Logo"
     >
-      <Box position="relative" width={logoSize} height={logoSize} mr={2}>
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" height="40" viewBox="0 0 40 40" width="40">
+      <Box 
+        position="relative" 
+        width={logoSize} 
+        height={logoSize} 
+        mr={size === 'sm' ? 1.5 : 2.5}
+        // 添加轻微动画效果增强质感
+        transition="transform 0.2s ease-in-out"
+        _hover={{ transform: "scale(1.05)" }}
+      >
+        <svg 
+          xmlns="http://www.w3.org/2000/svg" 
+          fill="none" 
+          height="100%" 
+          width="100%" 
+          viewBox="0 0 40 40"
+          style={{ filter: colorMode === 'dark' ? 'drop-shadow(0 0 2px rgba(149, 128, 255, 0.5))' : 'drop-shadow(0 0 1px rgba(116, 98, 247, 0.3))' }}
+        >
           <g clipPath="url(#clip0_41_7839)">
             <mask height="40" id="mask0_41_7839" maskUnits="userSpaceOnUse" style={{maskType: "luminance"}} width="40" x="0" y="0">
               <path d="M-1.74846e-06 0L0 40L40 40L40 -1.74846e-06L-1.74846e-06 0Z" fill="white"/>
             </mask>
             <g mask="url(#mask0_41_7839)">
-              <path clipRule="evenodd" d="M-8.74228e-07 20L0 40L20 20L20 40L40 20L40 -1.74846e-06L20 20L20 -8.74228e-07L-8.74228e-07 20Z" fill="#7462F7" fillRule="evenodd"/>
+              <path 
+                clipRule="evenodd" 
+                d="M-8.74228e-07 20L0 40L20 20L20 40L40 20L40 -1.74846e-06L20 20L20 -8.74228e-07L-8.74228e-07 20Z" 
+                fill={colorMode === 'dark' ? "#8673ff" : "#7462F7"} 
+                fillRule="evenodd"
+              />
             </g>
           </g>
           <defs>
@@ -87,7 +111,19 @@ const AeronyxLogo: React.FC<AeronyxLogoProps> = ({
         </svg>
       </Box>
       {showText && (
-        <Heading size={textSize} bgGradient="linear(to-r, purple.500, blue.500)" bgClip="text">
+        <Heading 
+          size={textSize} 
+          fontWeight={fontWeight}
+          letterSpacing="tight"
+          // 更柔和的渐变色调
+          bgGradient={colorMode === 'dark' 
+            ? "linear(to-r, purple.300, blue.300)" 
+            : "linear(to-r, purple.600, blue.500)"
+          } 
+          bgClip="text"
+          // 增加轻微文字阴影以增强质感
+          textShadow={colorMode === 'dark' ? "0 0 8px rgba(149, 128, 255, 0.3)" : "none"}
+        >
           AeroNyx
         </Heading>
       )}
@@ -322,7 +358,16 @@ export const Header: React.FC = () => {
           )}
         </HStack>
 
-        <HStack spacing={{ base: 2, md: 4 }}>
+        <HStack spacing={{ base: 2, md: 3 }}>
+          {/* Notification Toggle Button - Only shown if user is authenticated */}
+          {isAuthenticated && (
+            <NotificationToggle 
+              size={isMobile ? "sm" : "md"} 
+              variant="ghost" 
+              isCompact={true}
+            />
+          )}
+          
           <Tooltip label={`Switch to ${colorMode === 'dark' ? 'light' : 'dark'} mode`}>
             <IconButton
               aria-label={`Switch to ${colorMode === 'dark' ? 'light' : 'dark'} mode`}
@@ -373,6 +418,17 @@ export const Header: React.FC = () => {
                 >
                   Settings
                 </MenuItem>
+                
+                {/* Add notifications menu item for mobile */}
+                {isMobile && (
+                  <Box width="full" px={3} py={2}>
+                    <Flex align="center" justify="space-between">
+                      <Text fontSize="sm">Notifications</Text>
+                      <NotificationToggle size="sm" variant="ghost" isCompact={false} />
+                    </Flex>
+                  </Box>
+                )}
+                
                 <Divider my={2} />
                 <MenuItem 
                   icon={<FaSignOutAlt />} 
@@ -438,6 +494,11 @@ export const Header: React.FC = () => {
                     {`${extendedUser.walletAddress.substring(0, 6)}...${extendedUser.walletAddress.substring(extendedUser.walletAddress.length - 4)}`}
                   </Badge>
                 )}
+                
+                {/* Add notification button in mobile profile section */}
+                <Box mt={3}>
+                  <NotificationToggle size="md" variant="outline" isCompact={false} />
+                </Box>
               </Flex>
             )}
             
