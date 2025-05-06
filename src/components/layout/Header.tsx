@@ -160,6 +160,14 @@ const NavItem: React.FC<NavItemProps> = ({
   );
 };
 
+// Custom User interface with avatarUrl property
+interface ExtendedUser {
+  displayName?: string;
+  walletAddress?: string;
+  avatarUrl?: string;
+  [key: string]: any; // Allow any other properties that might be on the user object
+}
+
 export const Header: React.FC = () => {
   const { colorMode, toggleColorMode } = useColorMode();
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -252,6 +260,9 @@ export const Header: React.FC = () => {
     if (isOpen) onClose();
   }, [router, isOpen, onClose]);
 
+  // Using type assertion for user
+  const extendedUser = user as ExtendedUser;
+
   // Get current route for active state
   const currentRoute = router.pathname;
   
@@ -333,18 +344,18 @@ export const Header: React.FC = () => {
               >
                 <Avatar 
                   size={isMobile ? "xs" : "sm"}
-                  name={user?.displayName || 'User'} 
+                  name={extendedUser?.displayName || 'User'} 
                   bg="purple.500"
-                  src={user?.avatarUrl || undefined}
+                  src={extendedUser?.avatarUrl}
                 />
               </MenuButton>
               <MenuList py={2} boxShadow="lg">
                 {isMobile && (
                   <Box px={3} py={2} mb={2}>
-                    <Text fontWeight="bold">{user?.displayName || 'User'}</Text>
+                    <Text fontWeight="bold">{extendedUser?.displayName || 'User'}</Text>
                     <Text fontSize="sm" color="gray.500" noOfLines={1}>
-                      {user?.walletAddress ? 
-                        `${user.walletAddress.substring(0, 6)}...${user.walletAddress.substring(user.walletAddress.length - 4)}` 
+                      {extendedUser?.walletAddress ? 
+                        `${extendedUser.walletAddress.substring(0, 6)}...${extendedUser.walletAddress.substring(extendedUser.walletAddress.length - 4)}` 
                         : 'Wallet Connected'}
                     </Text>
                   </Box>
@@ -416,15 +427,15 @@ export const Header: React.FC = () => {
               >
                 <Avatar 
                   size="lg" 
-                  name={user?.displayName || 'User'} 
+                  name={extendedUser?.displayName || 'User'} 
                   bg="purple.500"
-                  src={user?.avatarUrl || undefined}
+                  src={extendedUser?.avatarUrl}
                   mb={3}
                 />
-                <Text fontWeight="bold" fontSize="lg">{user?.displayName || 'User'}</Text>
-                {user?.walletAddress && (
+                <Text fontWeight="bold" fontSize="lg">{extendedUser?.displayName || 'User'}</Text>
+                {extendedUser?.walletAddress && (
                   <Badge colorScheme="purple" mt={1} fontSize="xs">
-                    {`${user.walletAddress.substring(0, 6)}...${user.walletAddress.substring(user.walletAddress.length - 4)}`}
+                    {`${extendedUser.walletAddress.substring(0, 6)}...${extendedUser.walletAddress.substring(extendedUser.walletAddress.length - 4)}`}
                   </Badge>
                 )}
               </Flex>
