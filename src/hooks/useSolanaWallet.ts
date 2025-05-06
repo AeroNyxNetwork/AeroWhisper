@@ -68,18 +68,6 @@ async function detectSolanaWallet(): Promise<{
   isConnected: boolean;
   publicKey?: string;
 }> {
-  // Try to use cached result first
-  const cached = loadCachedWalletDetection();
-  if (cached) {
-    return {
-      hasWallet: cached.hasWallet,
-      walletType: cached.walletType,
-      walletName: cached.walletName,
-      isConnected: cached.isConnected,
-      publicKey: cached.publicKey
-    };
-  }
-
   try {
     // Check if window is available (browser environment)
     if (typeof window === 'undefined') {
@@ -89,6 +77,15 @@ async function detectSolanaWallet(): Promise<{
         walletName: 'None',
         isConnected: false
       };
+    }
+    
+    // Debug output to help diagnose wallet detection
+    if (window.solana) {
+      console.log('[Wallet] Detected window.solana:', {
+        isPhantom: window.solana.isPhantom,
+        isConnected: window.solana.isConnected,
+        hasPublicKey: !!window.solana.publicKey
+      });
     }
     
     // First check for OKX wallet using their specific API path
@@ -103,59 +100,46 @@ async function detectSolanaWallet(): Promise<{
       };
     }
     
-    // Check for standard Solana wallet
-    if (!window.solana) {
-      console.log('[Wallet] No Solana wallet detected in window.solana');
-      const result = {
-        hasWallet: false,
-        walletType: 'none' as SolanaWalletType,
-        walletName: 'None',
-        isConnected: false
-      };
-      cacheWalletDetection(result);
-      return result;
-    }
-
-    // Phantom wallet detection
-    if (window.solana.isPhantom) {
-      console.log('[Wallet] Phantom wallet detected');
-      const result = {
+    // Then check for Phantom wallet
+    if (window.solana && window.solana.isPhantom) {
+      console.log('[Wallet] Phantom wallet detected via window.solana.isPhantom');
+      return {
         hasWallet: true,
-        walletType: 'phantom' as SolanaWalletType,
+        walletType: 'phantom',
         walletName: 'Phantom',
         isConnected: window.solana.isConnected,
         publicKey: window.solana.publicKey?.toString()
       };
-      cacheWalletDetection(result);
-      return result;
     }
     
-    // Other Solana wallet
-    console.log('[Wallet] Detected generic Solana wallet');
-    const result = {
-      hasWallet: true,
-      walletType: 'other' as SolanaWalletType,
-      walletName: 'Solana Wallet',
-      isConnected: window.solana.isConnected,
-      publicKey: window.solana.publicKey?.toString()
-    };
+    // Generic check for any Solana wallet
+    if (window.solana) {
+      console.log('[Wallet] Generic Solana wallet detected');
+      return {
+        hasWallet: true,
+        walletType: 'other',
+        walletName: 'Solana Wallet',
+        isConnected: window.solana.isConnected,
+        publicKey: window.solana.publicKey?.toString()
+      };
+    }
     
-    // Cache the result
-    cacheWalletDetection(result);
-    return result;
-  } catch (error) {
-    console.error('[Wallet] Error detecting Solana wallet:', error);
-    
-    const result = {
+    // No wallet detected
+    console.log('[Wallet] No Solana wallet detected');
+    return {
       hasWallet: false,
-      walletType: 'none' as SolanaWalletType,
+      walletType: 'none',
       walletName: 'None',
       isConnected: false
     };
-    
-    // Cache the result even on error
-    cacheWalletDetection(result);
-    return result;
+  } catch (error) {
+    console.error('[Wallet] Error detecting Solana wallet:', error);
+    return {
+      hasWallet: false,
+      walletType: 'none',
+      walletName: 'None',
+      isConnected: false
+    };
   }
 }
 
@@ -214,21 +198,23 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
 
   // Connect to wallet
   const connect = useCallback(async (): Promise<string | null> => {
-    if (!hasWallet || !isSolanaAvailable()) {
+    if (!hasWallet) {
       setError(new Error('No Solana wallet found'));
       return null;
     }
-
+  
     setIsConnecting(true);
     setError(null);
-
+  
     try {
-      // First try OKX wallet connection if available
-      if (typeof window !== 'undefined' && 'okxwallet' in window && window.okxwallet && 'solana' in window.okxwallet) {
+      console.log('[Wallet] Connecting to wallet of type:', walletType);
+      
+      // Handle OKX wallet connection
+      if (walletType === 'okx' && 'okxwallet' in window && window.okxwallet?.solana) {
         console.log('[Wallet] Connecting to OKX wallet...');
         await window.okxwallet.solana.connect();
         
-        // Wait a brief moment for the connection to establish
+        // Wait for connection to establish
         await new Promise(resolve => setTimeout(resolve, 100));
         
         const key = window.okxwallet.solana.publicKey?.toString() || null;
@@ -240,12 +226,10 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
         // Update state
         setPublicKey(key);
         setIsConnected(true);
-        setWalletType('okx');
-        setWalletName('OKX Wallet');
         
         // Update cache
         cacheWalletDetection({
-          hasWallet,
+          hasWallet: true,
           walletType: 'okx',
           walletName: 'OKX Wallet',
           isConnected: true,
@@ -255,40 +239,45 @@ export const useSolanaWallet = (): UseSolanaWalletResult => {
         return key;
       }
       
-      // Then try standard Solana wallet connection
-      if (typeof window === 'undefined' || !window.solana) {
-        throw new Error('Solana wallet is not available');
+      // Handle Phantom or other Solana wallet connection
+      if (window.solana) {
+        console.log('[Wallet] Connecting to Phantom/Solana wallet...');
+        
+        try {
+          await window.solana.connect();
+        } catch (connectError) {
+          console.error('[Wallet] Error connecting to Solana wallet:', connectError);
+          throw new Error(connectError instanceof Error ? connectError.message : 'Unknown connection error');
+        }
+        
+        // Wait for connection to establish
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        const key = window.solana.publicKey?.toString() || null;
+        
+        if (!key) {
+          throw new Error('Failed to get public key after wallet connection');
+        }
+        
+        // Update state
+        setPublicKey(key);
+        setIsConnected(true);
+        
+        // Update cache
+        cacheWalletDetection({
+          hasWallet,
+          walletType,
+          walletName,
+          isConnected: true,
+          publicKey: key
+        });
+        
+        return key;
       }
-
-      const solana = window.solana;
       
-      await solana.connect();
-      
-      // Wait a brief moment for the connection to establish
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      const key = solana.publicKey?.toString() || null;
-      
-      if (!key) {
-        throw new Error('Failed to get public key after connection');
-      }
-      
-      // Update state
-      setPublicKey(key);
-      setIsConnected(true);
-      
-      // Update cache
-      cacheWalletDetection({
-        hasWallet,
-        walletType,
-        walletName,
-        isConnected: true,
-        publicKey: key
-      });
-      
-      return key;
+      throw new Error('No compatible wallet found');
     } catch (err) {
-      console.error('Error connecting to Solana wallet:', err);
+      console.error('[Wallet] Connection error:', err);
       const error = err instanceof Error ? err : new Error('Failed to connect to wallet');
       setError(error);
       return null;
