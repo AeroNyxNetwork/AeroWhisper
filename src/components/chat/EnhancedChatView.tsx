@@ -190,20 +190,21 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
             />
           </Tooltip>
           
-          <Menu>
-            <MenuButton
-              as={IconButton}
-              aria-label="More options"
-              icon={<FaEllipsisV />}
-              variant="ghost"
-            />
-            <MenuList>
-              <MenuItem icon={<FaCog />} onClick={onOpenSettings}>Settings</MenuItem>
-              <MenuItem icon={<FaKey />}>Encryption Details</MenuItem>
-              <MenuItem icon={<FaUser />}>View Participants</MenuItem>
-              <MenuItem icon={<FaWallet />}>Connect Wallet</MenuItem>
-            </MenuList>
-          </Menu>
+          <Menu placement="bottom-end" closeOnSelect>
+          <MenuButton
+            as={IconButton}
+            aria-label="More options"
+            icon={<FaEllipsisV />}
+            variant="ghost"
+            zIndex={2}
+          />
+          <MenuList zIndex={9999}>
+            <MenuItem icon={<FaCog />} onClick={onOpenSettings}>Settings</MenuItem>
+            <MenuItem icon={<FaKey />}>Encryption Details</MenuItem>
+            <MenuItem icon={<FaUser />}>View Participants</MenuItem>
+            <MenuItem icon={<FaWallet />}>Connect Wallet</MenuItem>
+          </MenuList>
+        </Menu>
         </HStack>
       </Flex>
       
