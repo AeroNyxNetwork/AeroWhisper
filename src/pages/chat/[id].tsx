@@ -231,8 +231,16 @@ const ChatPage = () => {
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
   
-  // Get chat data using the useChat hook
-  const { chatRoom, loading: chatLoading, error: chatError } = useChat(chatId);
+  // Get chat data using the useChat hook - updated to match actual hook return values
+  const { 
+    messages, 
+    sendMessage, 
+    participants, 
+    connectionStatus, 
+    loading: chatLoading, 
+    error: chatError, 
+    chatInfo 
+  } = useChat(chatId);
   
   // Media queries for responsive design
   const [isMobile] = useMediaQuery("(max-width: 480px)");
@@ -340,10 +348,11 @@ const ChatPage = () => {
     );
   }
   
-  // Handle manual copy action when user clicks the copy button inside the modal
-  const handleCopyAction = () => {
-    copyToClipboard();
-  };
+  // Get chat name and other properties from chatInfo
+  const chatName = chatInfo?.name || "Chat";
+  const isEncrypted = chatInfo?.encryptionType === 'high' || chatInfo?.encryptionType === 'maximum';
+  const isP2P = chatInfo?.useP2P || false;
+  const participantCount = participants?.length || 0;
   
   return (
     <Layout hideHeader={isMobile}>
@@ -356,10 +365,10 @@ const ChatPage = () => {
       >
         {/* Chat header with info */}
         <ChatInfoHeader 
-          chatName={chatRoom?.name || "Chat"}
-          participantCount={chatRoom?.participants?.length || 0}
-          isEncrypted={chatRoom?.encryptionType === 'high' || chatRoom?.encryptionType === 'maximum'}
-          isP2P={chatRoom?.useP2P || false}
+          chatName={chatName}
+          participantCount={participantCount}
+          isEncrypted={isEncrypted}
+          isP2P={isP2P}
           isMobile={isMobile}
           onBackClick={handleBackClick}
           onInviteClick={onOpen}
