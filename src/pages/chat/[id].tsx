@@ -17,15 +17,8 @@ import {
   useMediaQuery,
   VStack,
   HStack,
-  Collapse,
   Avatar,
   Badge,
-  Drawer,
-  DrawerBody,
-  DrawerHeader,
-  DrawerOverlay,
-  DrawerContent,
-  DrawerCloseButton,
   Menu,
   MenuButton,
   MenuList,
@@ -212,7 +205,7 @@ export async function getStaticPaths() {
   };
 }
 
-// Helper components
+// Helper component
 interface IconProps {
   as: React.ElementType;
   [key: string]: any;
@@ -231,31 +224,30 @@ const ChatPage = () => {
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
   
-  // Get chat data using the useChat hook - updated to match actual hook return values
-  const { 
-    messages, 
-    sendMessage, 
-    participants, 
-    connectionStatus, 
-    loading: chatLoading, 
-    error: chatError, 
-    chatInfo 
-  } = useChat(chatId);
+  // Get data from the useChat hook without assuming property names
+  const chatData = useChat(chatId);
+  
+  // Track connection status to show loading
+  const [isConnecting, setIsConnecting] = useState(true);
   
   // Media queries for responsive design
   const [isMobile] = useMediaQuery("(max-width: 480px)");
   const [isTablet] = useMediaQuery("(max-width: 768px)");
   
-  // Mobile drawer for participants - this would be implemented in a real app
-  const { 
-    isOpen: isParticipantsOpen, 
-    onOpen: onParticipantsOpen, 
-    onClose: onParticipantsClose 
-  } = useDisclosure();
-  
   // Client-side only states
   const [isClient, setIsClient] = useState(false);
   const [currentUrl, setCurrentUrl] = useState('');
+  
+  // Update connection status when the chat connection state changes
+  useEffect(() => {
+    if (chatData.connectionStatus === 'connected') {
+      setIsConnecting(false);
+    } else if (chatData.connectionStatus === 'connecting') {
+      setIsConnecting(true);
+    } else if (chatData.connectionStatus === 'disconnected') {
+      setIsConnecting(true);
+    }
+  }, [chatData.connectionStatus]);
   
   // Initialize client-side functionality
   useEffect(() => {
@@ -348,11 +340,42 @@ const ChatPage = () => {
     );
   }
   
-  // Get chat name and other properties from chatInfo
-  const chatName = chatInfo?.name || "Chat";
-  const isEncrypted = chatInfo?.encryptionType === 'high' || chatInfo?.encryptionType === 'maximum';
-  const isP2P = chatInfo?.useP2P || false;
-  const participantCount = participants?.length || 0;
+  // Extract data safely from chatInfo if it exists
+  const chatInfo = chatData.chatInfo || {};
+  const chatName = chatInfo.name || "Chat";
+  const isEncrypted = chatInfo.encryptionType === 'high' || chatInfo.encryptionType === 'maximum';
+  const isP2P = chatInfo.useP2P || false;
+  const participantCount = chatData.participants?.length || 0;
+  
+  // Loading state while connecting to chat
+  if (isConnecting) {
+    return (
+      <Layout>
+        <Center h="calc(100vh - 80px)">
+          <MotionBox
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5 }}
+          >
+            <VStack spacing={4}>
+              <Spinner 
+                size={isMobile ? "lg" : "xl"} 
+                color="purple.500" 
+                thickness="4px" 
+                speed="0.65s" 
+              />
+              <Heading mt={2} fontSize={isMobile ? "md" : "lg"}>
+                Connecting to chat...
+              </Heading>
+              <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.600'} fontSize={isMobile ? "xs" : "sm"}>
+                Establishing secure connection
+              </Text>
+            </VStack>
+          </MotionBox>
+        </Center>
+      </Layout>
+    );
+  }
   
   return (
     <Layout hideHeader={isMobile}>
