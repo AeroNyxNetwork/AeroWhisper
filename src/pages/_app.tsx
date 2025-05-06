@@ -161,13 +161,13 @@ const Web3LoadingScreen = () => {
         w="100%"
         px={4}
       >
-        <Box position="relative" width="100px" height="100px" mb={4}>
-          <Image 
-            src="/logo.svg" 
-            alt="AeroNyx Logo"
-            layout="fill"
-            priority
-          />
+        <Box mb={4} width="100px" height="100px" display="flex" justifyContent="center" alignItems="center">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" preserveAspectRatio="xMidYMid meet" width="100px" height="100px">
+            <g transform="translate(0.000000,512.000000) scale(0.100000,-0.100000)" fill="#7462F7" stroke="none">
+              <path d="M1277 3833 l-1277 -1278 0 -1275 0 -1275 1280 1280 1280 1280 -2 1273 -3 1272 -1278 -1277z"/>
+              <path d="M3838 3833 l-1278 -1278 0 -1275 0 -1275 1280 1280 1280 1280 -2 1273 -3 1272 -1277 -1277z"/>
+            </g>
+          </svg>
         </Box>
         
         <Heading 
