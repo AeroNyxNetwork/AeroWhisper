@@ -1,5 +1,5 @@
 // src/components/layout/Header.tsx
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, MouseEvent } from 'react';
 import {
   Box, 
   Flex, 
@@ -27,7 +27,6 @@ import {
   VStack, 
   Badge,
   Tooltip,
-  Collapse,
   useMediaQuery
 } from '@chakra-ui/react';
 import { 
@@ -47,8 +46,18 @@ import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useAuth } from '../../contexts/AuthContext';
 
-// Logo component with improved organization
-const AeronyxLogo = ({ size = 'md', onClick = null, showText = true }) => {
+// Logo component with improved organization and proper TypeScript types
+interface AeronyxLogoProps {
+  size?: 'sm' | 'md' | 'lg';
+  onClick?: () => void;
+  showText?: boolean;
+}
+
+const AeronyxLogo: React.FC<AeronyxLogoProps> = ({ 
+  size = 'md', 
+  onClick, 
+  showText = true 
+}) => {
   const { colorMode } = useColorMode();
   const logoSize = size === 'sm' ? "24px" : size === 'md' ? "32px" : "40px";
   const textSize = size === 'sm' ? "sm" : size === 'md' ? "md" : "lg";
@@ -87,11 +96,20 @@ const AeronyxLogo = ({ size = 'md', onClick = null, showText = true }) => {
 };
 
 // Navigation item component for better reuse
-const NavItem = ({ 
+interface NavItemProps {
+  icon: React.ReactElement;
+  label: string;
+  href?: string;
+  onClick?: () => void;
+  isActive?: boolean;
+  isMobile?: boolean;
+}
+
+const NavItem: React.FC<NavItemProps> = ({ 
   icon, 
   label, 
   href, 
-  onClick = null, 
+  onClick, 
   isActive = false,
   isMobile = false
 }) => {
