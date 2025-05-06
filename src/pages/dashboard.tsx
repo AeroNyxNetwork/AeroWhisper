@@ -1,5 +1,5 @@
 // src/pages/dashboard.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import { 
   Box, 
@@ -29,7 +29,17 @@ import {
   MenuItem,
   Divider,
   useToast,
-  Skeleton
+  Skeleton,
+  useMediaQuery,
+  IconButton,
+  Drawer,
+  DrawerBody,
+  DrawerHeader,
+  DrawerOverlay,
+  DrawerContent,
+  DrawerCloseButton,
+  Collapse,
+  Link
 } from '@chakra-ui/react';
 import { 
   FaPlus, 
@@ -49,7 +59,10 @@ import {
   FaSyncAlt,
   FaArchive,
   FaStar,
-  FaCheck
+  FaCheck,
+  FaEllipsisV,
+  FaInfoCircle,
+  FaTimes
 } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Layout } from '../components/layout/Layout';
@@ -64,6 +77,54 @@ import { useChatRooms } from '../hooks/useChatRooms';
 const MotionBox = motion(Box);
 const MotionFlex = motion(Flex);
 
+// Connection Certificate Alert Component
+const ConnectionCertificateAlert = () => {
+  const [isVisible, setIsVisible] = useState(true);
+  const { colorMode } = useColorMode();
+
+  if (!isVisible) return null;
+
+  return (
+    <Flex
+      direction="column"
+      p={4}
+      bg={colorMode === 'dark' ? 'yellow.800' : 'yellow.50'}
+      borderRadius="md"
+      borderWidth="1px"
+      borderColor={colorMode === 'dark' ? 'yellow.700' : 'yellow.200'}
+      mb={6}
+      position="relative"
+    >
+      <Flex align="center" mb={2}>
+        <Icon as={FaInfoCircle} color={colorMode === 'dark' ? 'yellow.200' : 'yellow.500'} mr={2} />
+        <Text fontWeight="bold">Connection Certificate Notice</Text>
+        <IconButton 
+          icon={<FaTimes />} 
+          size="sm" 
+          aria-label="Close alert" 
+          variant="ghost"
+          position="absolute"
+          right={2}
+          top={2}
+          onClick={() => setIsVisible(false)}
+        />
+      </Flex>
+      <Text fontSize="sm" mb={3}>
+        If you experience connection issues, you may need to visit the server URL in your browser first to accept its security certificate.
+      </Text>
+      <Link 
+        href="https://p2p.aeronyx.network:8080" 
+        isExternal 
+        color={colorMode === 'dark' ? 'yellow.200' : 'yellow.700'}
+        fontWeight="medium"
+        fontSize="sm"
+      >
+        Visit https://p2p.aeronyx.network:8080
+      </Link>
+    </Flex>
+  );
+};
+
 const Dashboard = () => {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const { colorMode } = useColorMode();
@@ -72,6 +133,17 @@ const Dashboard = () => {
   const { user, isAuthenticated, logout } = useAuth();
   const { chatRooms, loading, error, refreshRooms, deleteRoom, archiveRoom, starRoom } = useChatRooms();
   
+  // Media queries for responsive design
+  const [isMobile] = useMediaQuery("(max-width: 480px)");
+  const [isTablet] = useMediaQuery("(max-width: 768px)");
+  
+  // Filter drawer state (for mobile)
+  const { 
+    isOpen: isFilterDrawerOpen, 
+    onOpen: onFilterDrawerOpen, 
+    onClose: onFilterDrawerClose 
+  } = useDisclosure();
+  
   // Filter and sort options
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'p2p' | 'encrypted' | 'ephemeral' | 'starred'>('all');
@@ -79,14 +151,20 @@ const Dashboard = () => {
   const [activeTab, setActiveTab] = useState(0);
   
   // UI States
-  const [showNetworkStats, setShowNetworkStats] = useState(true);
+  const [showNetworkStats, setShowNetworkStats] = useState(!isMobile);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showFeatureHighlights, setShowFeatureHighlights] = useState(!isTablet);
 
   useEffect(() => {
     if (!isAuthenticated) {
       router.push('/auth/connect-wallet');
     }
   }, [isAuthenticated, router]);
+  
+  // Hide network stats on mobile by default
+  useEffect(() => {
+    setShowNetworkStats(!isMobile);
+  }, [isMobile]);
 
   // Handle refresh rooms
   const handleRefreshRooms = async () => {
@@ -97,12 +175,16 @@ const Dashboard = () => {
         title: 'Rooms refreshed',
         status: 'success',
         duration: 2000,
+        isClosable: true,
+        position: isMobile ? "bottom" : "top-right"
       });
     } catch (error) {
       toast({
         title: 'Failed to refresh rooms',
         status: 'error',
         duration: 3000,
+        isClosable: true,
+        position: isMobile ? "bottom" : "top-right"
       });
     } finally {
       setIsRefreshing(false);
@@ -128,12 +210,16 @@ const Dashboard = () => {
         title: "Chat room deleted",
         status: "success",
         duration: 3000,
+        isClosable: true,
+        position: isMobile ? "bottom" : "top-right"
       });
     } catch (error) {
       toast({
         title: "Failed to delete chat room",
         status: "error",
         duration: 3000,
+        isClosable: true,
+        position: isMobile ? "bottom" : "top-right"
       });
     }
   };
@@ -147,12 +233,16 @@ const Dashboard = () => {
         title: "Chat room archived",
         status: "success",
         duration: 3000,
+        isClosable: true,
+        position: isMobile ? "bottom" : "top-right"
       });
     } catch (error) {
       toast({
         title: "Failed to archive chat room",
         status: "error",
         duration: 3000,
+        isClosable: true,
+        position: isMobile ? "bottom" : "top-right"
       });
     }
   };
@@ -167,12 +257,30 @@ const Dashboard = () => {
         title: "Failed to update star status",
         status: "error",
         duration: 3000,
+        isClosable: true,
+        position: isMobile ? "bottom" : "top-right"
       });
     }
   };
   
+  // Handle filter selection with automatic drawer close on mobile
+  const handleFilterSelect = useCallback((type: 'all' | 'p2p' | 'encrypted' | 'ephemeral' | 'starred') => {
+    setFilterType(type);
+    if (isMobile) {
+      onFilterDrawerClose();
+    }
+  }, [isMobile, onFilterDrawerClose]);
+  
+  // Handle sort selection with automatic drawer close on mobile
+  const handleSortSelect = useCallback((sort: 'newest' | 'oldest' | 'activity') => {
+    setSortOrder(sort);
+    if (isMobile) {
+      onFilterDrawerClose();
+    }
+  }, [isMobile, onFilterDrawerClose]);
+  
   // Filter chatRooms based on search query and filter type
-  const getFilteredRooms = () => {
+  const getFilteredRooms = useCallback(() => {
     return chatRooms.filter(room => {
       // Search filter
       if (searchQuery && !room.name.toLowerCase().includes(searchQuery.toLowerCase())) {
@@ -193,10 +301,10 @@ const Dashboard = () => {
           return true;
       }
     });
-  };
+  }, [chatRooms, searchQuery, filterType]);
   
   // Sort filtered rooms
-  const getSortedRooms = () => {
+  const getSortedRooms = useCallback(() => {
     const filteredRooms = getFilteredRooms();
     
     return [...filteredRooms].sort((a, b) => {
@@ -212,7 +320,7 @@ const Dashboard = () => {
           return bDate - aDate;
       }
     });
-  };
+  }, [getFilteredRooms, sortOrder]);
 
   if (!isAuthenticated) {
     return null;
@@ -222,52 +330,56 @@ const Dashboard = () => {
 
   return (
     <Layout>
-      <Box p={{ base: 4, md: 8 }}>
+      <Box p={{ base: 3, md: 6, lg: 8 }}>
+        {/* Mobile-optimized Connection Certificate Alert */}
+        <ConnectionCertificateAlert />
+        
         {/* Header */}
         <MotionFlex 
           direction={{ base: 'column', lg: 'row' }}
           justify="space-between" 
           align={{ base: 'flex-start', lg: 'center' }}
-          mb={6}
+          mb={{ base: 4, md: 6 }}
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
           <Box mb={{ base: 4, lg: 0 }}>
-            <Heading size="lg" mb={1}>
+            <Heading size={isMobile ? "md" : "lg"} mb={1}>
               Welcome to AeroNyx
             </Heading>
-            <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.600'}>
+            <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.600'} fontSize={{ base: "sm", md: "md" }}>
               Your secure end-to-end encrypted messaging platform
             </Text>
           </Box>
           
-          <HStack spacing={4}>
+          <HStack spacing={{ base: 2, md: 4 }} width={{ base: "100%", lg: "auto" }}>
             <Button 
               leftIcon={<FaPlus />} 
               colorScheme="purple" 
               onClick={handleCreateChat}
-              size="md"
-              px={6}
-              py={5}
+              size={isMobile ? "sm" : "md"}
+              px={{ base: 3, md: 6 }}
+              py={{ base: 4, md: 5 }}
               boxShadow="md"
+              flex={isMobile ? 1 : "auto"}
               _hover={{
                 transform: 'translateY(-2px)',
                 boxShadow: 'lg'
               }}
               transition="all 0.2s"
             >
-              Create New Chat
+              {isMobile ? "New Chat" : "Create New Chat"}
             </Button>
             
             <Menu>
               <MenuButton
-                as={Button}
-                rightIcon={<FaCog />}
+                as={IconButton}
+                aria-label="Options"
+                icon={<FaEllipsisV />}
                 variant="ghost"
-              >
-                Actions
-              </MenuButton>
+                size={isMobile ? "sm" : "md"}
+              />
               <MenuList>
                 <MenuItem icon={<FaWallet />} onClick={() => router.push('/settings?tab=3')}>
                   Wallet Settings
@@ -278,6 +390,11 @@ const Dashboard = () => {
                 <MenuItem icon={<FaNetworkWired />} onClick={() => setShowNetworkStats(!showNetworkStats)}>
                   {showNetworkStats ? 'Hide' : 'Show'} Network Status
                 </MenuItem>
+                {isTablet && (
+                  <MenuItem icon={showFeatureHighlights ? <FaTimes /> : <FaShieldAlt />} onClick={() => setShowFeatureHighlights(!showFeatureHighlights)}>
+                    {showFeatureHighlights ? 'Hide' : 'Show'} Features
+                  </MenuItem>
+                )}
                 <Divider />
                 <MenuItem icon={<FaSyncAlt />} onClick={handleRefreshRooms} isDisabled={isRefreshing}>
                   Refresh Rooms
@@ -290,100 +407,108 @@ const Dashboard = () => {
           </HStack>
         </MotionFlex>
         
-        {/* Main content grid */}
-        <Grid templateColumns={{ base: '1fr', xl: '3fr 1fr' }} gap={6}>
-          <Box>
+        {/* Main content grid - adaptive layout for mobile */}
+        <Grid 
+          templateColumns={{ base: '1fr', xl: '3fr 1fr' }} 
+          gap={{ base: 4, md: 6 }}
+          templateAreas={{
+            base: `"main" "sidebar"`,
+            xl: `"main sidebar"`
+          }}
+        >
+          <Box gridArea="main">
             {/* Network Stats Dashboard (collapsible) */}
-            {showNetworkStats && (
+            <Collapse in={showNetworkStats} animateOpacity>
               <MotionBox
                 mb={6}
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, height: 0 }}
                 transition={{ duration: 0.5 }}
               >
                 <NetworkStatsDashboard />
               </MotionBox>
-            )}
+            </Collapse>
             
-            {/* Feature highlights */}
-            <MotionBox
-              mb={8}
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-            >
-              <SimpleGrid columns={{ base: 1, md: 3 }} spacing={6}>
-                <Box 
-                  p={5} 
-                  shadow="md" 
-                  borderWidth="1px" 
-                  borderRadius="lg"
-                  bg={colorMode === 'dark' ? 'gray.700' : 'white'}
-                  _hover={{
-                    transform: 'translateY(-4px)',
-                    shadow: 'lg',
-                    borderColor: 'purple.400'
-                  }}
-                  transition="all 0.3s"
-                  cursor="pointer"
-                >
-                  <Flex direction="column" align="center" textAlign="center">
-                    <Icon as={FaKey} w={10} h={10} color="purple.500" mb={4} />
-                    <Heading fontSize="xl" mb={4}>End-to-End Encryption</Heading>
-                    <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.500'}>
-                      Military-grade ChaCha20-Poly1305 encryption protects your messages
-                    </Text>
-                  </Flex>
-                </Box>
+            {/* Feature highlights - collapsible on mobile/tablet */}
+            <Collapse in={showFeatureHighlights} animateOpacity>
+              <MotionBox
+                mb={{ base: 4, md: 6 }}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.2 }}
+              >
+                <SimpleGrid columns={{ base: 1, md: 3 }} spacing={{ base: 3, md: 6 }}>
+                  <Box 
+                    p={{ base: 3, md: 5 }} 
+                    shadow="md" 
+                    borderWidth="1px" 
+                    borderRadius="lg"
+                    bg={colorMode === 'dark' ? 'gray.700' : 'white'}
+                    _hover={{
+                      transform: 'translateY(-4px)',
+                      shadow: 'lg',
+                      borderColor: 'purple.400'
+                    }}
+                    transition="all 0.3s"
+                    cursor="pointer"
+                  >
+                    <Flex direction="column" align="center" textAlign="center">
+                      <Icon as={FaKey} w={{ base: 8, md: 10 }} h={{ base: 8, md: 10 }} color="purple.500" mb={3} />
+                      <Heading fontSize={{ base: "lg", md: "xl" }} mb={{ base: 2, md: 4 }}>End-to-End Encryption</Heading>
+                      <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.500'} fontSize={{ base: "xs", md: "sm" }}>
+                        Military-grade ChaCha20-Poly1305 encryption protects your messages
+                      </Text>
+                    </Flex>
+                  </Box>
 
-                <Box 
-                  p={5} 
-                  shadow="md" 
-                  borderWidth="1px" 
-                  borderRadius="lg"
-                  bg={colorMode === 'dark' ? 'gray.700' : 'white'}
-                  _hover={{
-                    transform: 'translateY(-4px)',
-                    shadow: 'lg',
-                    borderColor: 'purple.400'
-                  }}
-                  transition="all 0.3s"
-                  cursor="pointer"
-                >
-                  <Flex direction="column" align="center" textAlign="center">
-                    <Icon as={FaShieldAlt} w={10} h={10} color="purple.500" mb={4} />
-                    <Heading fontSize="xl" mb={4}>Decentralized Security</Heading>
-                    <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.500'}>
-                      Messages are encrypted locally with distributed consensus verification
-                    </Text>
-                  </Flex>
-                </Box>
+                  <Box 
+                    p={{ base: 3, md: 5 }} 
+                    shadow="md" 
+                    borderWidth="1px" 
+                    borderRadius="lg"
+                    bg={colorMode === 'dark' ? 'gray.700' : 'white'}
+                    _hover={{
+                      transform: 'translateY(-4px)',
+                      shadow: 'lg',
+                      borderColor: 'purple.400'
+                    }}
+                    transition="all 0.3s"
+                    cursor="pointer"
+                  >
+                    <Flex direction="column" align="center" textAlign="center">
+                      <Icon as={FaShieldAlt} w={{ base: 8, md: 10 }} h={{ base: 8, md: 10 }} color="purple.500" mb={3} />
+                      <Heading fontSize={{ base: "lg", md: "xl" }} mb={{ base: 2, md: 4 }}>Decentralized Security</Heading>
+                      <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.500'} fontSize={{ base: "xs", md: "sm" }}>
+                        Messages are encrypted locally with distributed consensus verification
+                      </Text>
+                    </Flex>
+                  </Box>
 
-                <Box 
-                  p={5} 
-                  shadow="md" 
-                  borderWidth="1px" 
-                  borderRadius="lg"
-                  bg={colorMode === 'dark' ? 'gray.700' : 'white'}
-                  _hover={{
-                    transform: 'translateY(-4px)',
-                    shadow: 'lg',
-                    borderColor: 'purple.400'
-                  }}
-                  transition="all 0.3s"
-                  cursor="pointer"
-                >
-                  <Flex direction="column" align="center" textAlign="center">
-                    <Icon as={FaUsers} w={10} h={10} color="purple.500" mb={4} />
-                    <Heading fontSize="xl" mb={4}>Peer-to-Peer Messaging</Heading>
-                    <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.500'}>
-                      Direct device-to-device communication without server intermediaries
-                    </Text>
-                  </Flex>
-                </Box>
-              </SimpleGrid>
-            </MotionBox>
+                  <Box 
+                    p={{ base: 3, md: 5 }} 
+                    shadow="md" 
+                    borderWidth="1px" 
+                    borderRadius="lg"
+                    bg={colorMode === 'dark' ? 'gray.700' : 'white'}
+                    _hover={{
+                      transform: 'translateY(-4px)',
+                      shadow: 'lg',
+                      borderColor: 'purple.400'
+                    }}
+                    transition="all 0.3s"
+                    cursor="pointer"
+                  >
+                    <Flex direction="column" align="center" textAlign="center">
+                      <Icon as={FaUsers} w={{ base: 8, md: 10 }} h={{ base: 8, md: 10 }} color="purple.500" mb={3} />
+                      <Heading fontSize={{ base: "lg", md: "xl" }} mb={{ base: 2, md: 4 }}>Peer-to-Peer Messaging</Heading>
+                      <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.500'} fontSize={{ base: "xs", md: "sm" }}>
+                        Direct device-to-device communication without server intermediaries
+                      </Text>
+                    </Flex>
+                  </Box>
+                </SimpleGrid>
+              </MotionBox>
+            </Collapse>
             
             {/* Chat Rooms Section */}
             <Box mb={6}>
@@ -393,24 +518,25 @@ const Dashboard = () => {
                 isLazy
                 index={activeTab}
                 onChange={(index) => setActiveTab(index)}
+                size={isMobile ? "sm" : "md"}
               >
-                <TabList mb={6} overflowX="auto" py={2}>
-                  <Tab>All Chats</Tab>
-                  <Tab>P2P Encrypted</Tab>
-                  <Tab>Ephemeral</Tab>
-                  <Tab>Starred</Tab>
-                  <Tab>Archived</Tab>
+                <TabList mb={4} overflowX="auto" py={2} whiteSpace="nowrap">
+                  <Tab fontSize={isMobile ? "xs" : "md"}>All Chats</Tab>
+                  <Tab fontSize={isMobile ? "xs" : "md"}>P2P</Tab>
+                  <Tab fontSize={isMobile ? "xs" : "md"}>Ephemeral</Tab>
+                  <Tab fontSize={isMobile ? "xs" : "md"}>Starred</Tab>
+                  <Tab fontSize={isMobile ? "xs" : "md"}>Archived</Tab>
                 </TabList>
                 
-                {/* Search and filter controls */}
+                {/* Mobile-optimized search and filter controls */}
                 <Flex
-                  mb={6}
+                  mb={{ base: 3, md: 6 }}
                   direction={{ base: 'column', md: 'row' }}
                   align={{ base: 'stretch', md: 'center' }}
                   justify="space-between"
-                  gap={4}
+                  gap={{ base: 2, md: 4 }}
                 >
-                  <InputGroup maxW={{ base: '100%', md: '400px' }}>
+                  <InputGroup maxW={{ base: '100%', md: '400px' }} size={isMobile ? "sm" : "md"}>
                     <InputLeftElement pointerEvents="none">
                       <FaSearch color="gray.300" />
                     </InputLeftElement>
@@ -420,100 +546,189 @@ const Dashboard = () => {
                       onChange={(e) => setSearchQuery(e.target.value)}
                       bg={colorMode === 'dark' ? 'gray.800' : 'white'}
                       borderRadius="full"
+                      fontSize={isMobile ? "sm" : "md"}
                     />
                   </InputGroup>
                   
-                  <HStack spacing={4}>
-                    <Menu>
-                      <MenuButton
-                        as={Button}
-                        rightIcon={<FaFilter />}
-                        variant="outline"
-                        size="md"
-                      >
-                        Filter
-                      </MenuButton>
-                      <MenuList>
-                        <MenuItem 
-                          onClick={() => setFilterType('all')}
-                          icon={filterType === 'all' ? <FaCheck /> : undefined}
+                  {/* Desktop filter controls */}
+                  {!isMobile && (
+                    <HStack spacing={4}>
+                      <Menu>
+                        <MenuButton
+                          as={Button}
+                          rightIcon={<FaFilter />}
+                          variant="outline"
+                          size={isMobile ? "sm" : "md"}
                         >
-                          All Chats
-                        </MenuItem>
-                        <MenuItem 
-                          onClick={() => setFilterType('p2p')}
-                          icon={filterType === 'p2p' ? <FaCheck /> : undefined}
+                          Filter: {filterType === 'all' ? 'All' : filterType}
+                        </MenuButton>
+                        <MenuList>
+                          <MenuItem 
+                            onClick={() => handleFilterSelect('all')}
+                            icon={filterType === 'all' ? <FaCheck /> : undefined}
+                          >
+                            All Chats
+                          </MenuItem>
+                          <MenuItem 
+                            onClick={() => handleFilterSelect('p2p')}
+                            icon={filterType === 'p2p' ? <FaCheck /> : undefined}
+                          >
+                            P2P Only
+                          </MenuItem>
+                          <MenuItem 
+                            onClick={() => handleFilterSelect('encrypted')}
+                            icon={filterType === 'encrypted' ? <FaCheck /> : undefined}
+                          >
+                            High Encryption
+                          </MenuItem>
+                          <MenuItem 
+                            onClick={() => handleFilterSelect('ephemeral')}
+                            icon={filterType === 'ephemeral' ? <FaCheck /> : undefined}
+                          >
+                            Ephemeral
+                          </MenuItem>
+                          <MenuItem 
+                            onClick={() => handleFilterSelect('starred')}
+                            icon={filterType === 'starred' ? <FaCheck /> : undefined}
+                          >
+                            Starred
+                          </MenuItem>
+                        </MenuList>
+                      </Menu>
+                      
+                      <Menu>
+                        <MenuButton
+                          as={Button}
+                          rightIcon={sortOrder === 'newest' ? <FaSortAmountDown /> : <FaSortAmountUp />}
+                          variant="outline"
+                          size={isMobile ? "sm" : "md"}
                         >
-                          P2P Only
-                        </MenuItem>
-                        <MenuItem 
-                          onClick={() => setFilterType('encrypted')}
-                          icon={filterType === 'encrypted' ? <FaCheck /> : undefined}
-                        >
-                          High Encryption
-                        </MenuItem>
-                        <MenuItem 
-                          onClick={() => setFilterType('ephemeral')}
-                          icon={filterType === 'ephemeral' ? <FaCheck /> : undefined}
-                        >
-                          Ephemeral
-                        </MenuItem>
-                        <MenuItem 
-                          onClick={() => setFilterType('starred')}
-                          icon={filterType === 'starred' ? <FaCheck /> : undefined}
-                        >
-                          Starred
-                        </MenuItem>
-                      </MenuList>
-                    </Menu>
-                    
-                    <Menu>
-                      <MenuButton
-                        as={Button}
-                        rightIcon={sortOrder === 'newest' ? <FaSortAmountDown /> : <FaSortAmountUp />}
-                        variant="outline"
-                        size="md"
-                      >
-                        Sort
-                      </MenuButton>
-                      <MenuList>
-                        <MenuItem 
-                          icon={<FaSortAmountDown />} 
-                          onClick={() => setSortOrder('newest')}
-                          fontWeight={sortOrder === 'newest' ? 'bold' : 'normal'}
-                        >
-                          Newest First
-                        </MenuItem>
-                        <MenuItem 
-                          icon={<FaSortAmountUp />} 
-                          onClick={() => setSortOrder('oldest')}
-                          fontWeight={sortOrder === 'oldest' ? 'bold' : 'normal'}
-                        >
-                          Oldest First
-                        </MenuItem>
-                        <MenuItem 
-                          icon={<FaHistory />} 
-                          onClick={() => setSortOrder('activity')}
-                          fontWeight={sortOrder === 'activity' ? 'bold' : 'normal'}
-                        >
-                          Recent Activity
-                        </MenuItem>
-                      </MenuList>
-                    </Menu>
-                  </HStack>
+                          Sort: {sortOrder}
+                        </MenuButton>
+                        <MenuList>
+                          <MenuItem 
+                            icon={<FaSortAmountDown />} 
+                            onClick={() => handleSortSelect('newest')}
+                            fontWeight={sortOrder === 'newest' ? 'bold' : 'normal'}
+                          >
+                            Newest First
+                          </MenuItem>
+                          <MenuItem 
+                            icon={<FaSortAmountUp />} 
+                            onClick={() => handleSortSelect('oldest')}
+                            fontWeight={sortOrder === 'oldest' ? 'bold' : 'normal'}
+                          >
+                            Oldest First
+                          </MenuItem>
+                          <MenuItem 
+                            icon={<FaHistory />} 
+                            onClick={() => handleSortSelect('activity')}
+                            fontWeight={sortOrder === 'activity' ? 'bold' : 'normal'}
+                          >
+                            Recent Activity
+                          </MenuItem>
+                        </MenuList>
+                      </Menu>
+                    </HStack>
+                  )}
+                  
+                  {/* Mobile filter button that opens a drawer */}
+                  {isMobile && (
+                    <Button 
+                      leftIcon={<FaFilter />} 
+                      onClick={onFilterDrawerOpen}
+                      size="sm"
+                      colorScheme="gray"
+                      width="full"
+                    >
+                      Filter & Sort
+                    </Button>
+                  )}
                 </Flex>
+                
+                {/* Mobile Filter Drawer */}
+                <Drawer
+                  isOpen={isFilterDrawerOpen}
+                  placement="bottom"
+                  onClose={onFilterDrawerClose}
+                  size="md"
+                >
+                  <DrawerOverlay />
+                  <DrawerContent borderTopRadius="xl">
+                    <DrawerCloseButton />
+                    <DrawerHeader borderBottomWidth="1px">Filter & Sort</DrawerHeader>
+                    <DrawerBody py={4}>
+                      <VStack spacing={6} align="stretch">
+                        <Box>
+                          <Text fontWeight="bold" mb={2}>Filter by Type</Text>
+                          <SimpleGrid columns={2} spacing={3}>
+                            {[
+                              { value: 'all', label: 'All Chats' },
+                              { value: 'p2p', label: 'P2P Only' },
+                              { value: 'encrypted', label: 'High Encryption' },
+                              { value: 'ephemeral', label: 'Ephemeral' },
+                              { value: 'starred', label: 'Starred' }
+                            ].map(option => (
+                              <Button 
+                                key={option.value} 
+                                colorScheme={filterType === option.value ? 'purple' : 'gray'} 
+                                variant={filterType === option.value ? 'solid' : 'outline'}
+                                size="sm"
+                                onClick={() => handleFilterSelect(option.value as any)}
+                              >
+                                {option.label}
+                              </Button>
+                            ))}
+                          </SimpleGrid>
+                        </Box>
+                        
+                        <Divider />
+                        
+                        <Box>
+                          <Text fontWeight="bold" mb={2}>Sort By</Text>
+                          <SimpleGrid columns={3} spacing={3}>
+                            {[
+                              { value: 'newest', label: 'Newest', icon: FaSortAmountDown },
+                              { value: 'oldest', label: 'Oldest', icon: FaSortAmountUp },
+                              { value: 'activity', label: 'Activity', icon: FaHistory }
+                            ].map(option => (
+                              <Button 
+                                key={option.value} 
+                                colorScheme={sortOrder === option.value ? 'purple' : 'gray'} 
+                                variant={sortOrder === option.value ? 'solid' : 'outline'}
+                                size="sm"
+                                leftIcon={<Icon as={option.icon} />}
+                                onClick={() => handleSortSelect(option.value as any)}
+                              >
+                                {option.label}
+                              </Button>
+                            ))}
+                          </SimpleGrid>
+                        </Box>
+                        
+                        <Button 
+                          colorScheme="purple" 
+                          onClick={onFilterDrawerClose}
+                          mt={2}
+                        >
+                          Apply Filters
+                        </Button>
+                      </VStack>
+                    </DrawerBody>
+                  </DrawerContent>
+                </Drawer>
                 
                 <TabPanels>
                   {/* All Chats Panel */}
                   <TabPanel px={0}>
                     {loading ? (
-                      <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={6}>
-                        {[1, 2, 3, 4, 5, 6].map((_, i) => (
+                      <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={{ base: 3, md: 6 }}>
+                        {[1, 2, 3, ...(isMobile ? [] : [4, 5, 6])].map((_, i) => (
                           <Skeleton key={i} height="200px" borderRadius="lg" />
                         ))}
                       </SimpleGrid>
                     ) : filteredSortedRooms.length > 0 ? (
-                      <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={6}>
+                      <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={{ base: 3, md: 6 }}>
                         <AnimatePresence>
                           {filteredSortedRooms.map((room) => (
                             <MotionBox
@@ -530,6 +745,7 @@ const Dashboard = () => {
                                 onDelete={handleDeleteRoom}
                                 onArchive={handleArchiveRoom}
                                 onStar={handleStarRoom}
+                                isMobile={isMobile}
                               />
                             </MotionBox>
                           ))}
@@ -537,7 +753,7 @@ const Dashboard = () => {
                       </SimpleGrid>
                     ) : (
                       <MotionBox
-                        p={10}
+                        p={{ base: 6, md: 10 }}
                         textAlign="center"
                         borderRadius="lg"
                         bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
@@ -546,8 +762,8 @@ const Dashboard = () => {
                         transition={{ duration: 0.5 }}
                       >
                         <VStack spacing={4}>
-                          <Icon as={FaRegComments} boxSize={10} opacity={0.5} />
-                          <Text mb={4}>
+                          <Icon as={FaRegComments} boxSize={{ base: 8, md: 10 }} opacity={0.5} />
+                          <Text mb={4} fontSize={{ base: "sm", md: "md" }}>
                             {searchQuery 
                               ? `No chat rooms found matching "${searchQuery}"` 
                               : "You don't have any active chats yet"}
@@ -555,6 +771,7 @@ const Dashboard = () => {
                           <Button
                             colorScheme="purple"
                             onClick={handleCreateChat}
+                            size={isMobile ? "sm" : "md"}
                           >
                             Create Your First Chat
                           </Button>
@@ -564,7 +781,6 @@ const Dashboard = () => {
                   </TabPanel>
                   
                   {/* Other tabs - P2P Encrypted, Ephemeral, Starred, Archived */}
-                  {/* These would follow a similar pattern to the All Chats panel */}
                   <TabPanel px={0}>
                     {/* P2P Encrypted tab content */}
                     <ChatRoomsList 
@@ -576,6 +792,7 @@ const Dashboard = () => {
                       onStarRoom={handleStarRoom}
                       emptyMessage="No P2P encrypted chats found"
                       emptyIcon={FaShieldAlt}
+                      isMobile={isMobile}
                     />
                   </TabPanel>
                   
@@ -590,6 +807,7 @@ const Dashboard = () => {
                       onStarRoom={handleStarRoom}
                       emptyMessage="No ephemeral chats found"
                       emptyIcon={FaHistory}
+                      isMobile={isMobile}
                     />
                   </TabPanel>
                   
@@ -604,6 +822,7 @@ const Dashboard = () => {
                       onStarRoom={handleStarRoom}
                       emptyMessage="No starred chats found"
                       emptyIcon={FaStar}
+                      isMobile={isMobile}
                     />
                   </TabPanel>
                   
@@ -618,6 +837,7 @@ const Dashboard = () => {
                       onStarRoom={handleStarRoom}
                       emptyMessage="No archived chats found"
                       emptyIcon={FaArchive}
+                      isMobile={isMobile}
                     />
                   </TabPanel>
                 </TabPanels>
@@ -625,10 +845,17 @@ const Dashboard = () => {
             </Box>
           </Box>
           
-          {/* Sidebar */}
-          <VStack spacing={6} align="stretch">
-            <WalletConnectionCard />
-          </VStack>
+          {/* Sidebar - Only shown on Desktop, moves to bottom on mobile */}
+          <Box 
+            gridArea="sidebar"
+            display={{ base: isTablet ? 'none' : 'block', xl: 'block' }}
+          >
+            <VStack spacing={6} align="stretch">
+              <WalletConnectionCard />
+              
+              {/* Additional sidebar widgets could go here */}
+            </VStack>
+          </Box>
         </Grid>
       </Box>
 
@@ -647,6 +874,7 @@ interface ChatRoomsListProps {
   onStarRoom: (id: string) => Promise<void>;
   emptyMessage: string;
   emptyIcon: React.ComponentType;
+  isMobile?: boolean;
 }
 
 const ChatRoomsList: React.FC<ChatRoomsListProps> = ({ 
@@ -657,13 +885,14 @@ const ChatRoomsList: React.FC<ChatRoomsListProps> = ({
   onArchiveRoom, 
   onStarRoom,
   emptyMessage,
-  emptyIcon
+  emptyIcon,
+  isMobile = false
 }) => {
   const { colorMode } = useColorMode();
   
   if (loading) {
     return (
-      <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={6}>
+      <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={{ base: 3, md: 6 }}>
         {[1, 2, 3].map((_, i) => (
           <Skeleton key={i} height="200px" borderRadius="lg" />
         ))}
@@ -673,17 +902,22 @@ const ChatRoomsList: React.FC<ChatRoomsListProps> = ({
   
   if (rooms.length === 0) {
     return (
-      <Box p={10} textAlign="center" borderRadius="lg" bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}>
+      <Box 
+        p={isMobile ? 5 : 10} 
+        textAlign="center" 
+        borderRadius="lg" 
+        bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
+      >
         <VStack spacing={4}>
-          <Icon as={emptyIcon} boxSize={10} opacity={0.5} />
-          <Text>{emptyMessage}</Text>
+          <Icon as={emptyIcon} boxSize={isMobile ? 8 : 10} opacity={0.5} />
+          <Text fontSize={isMobile ? "sm" : "md"}>{emptyMessage}</Text>
         </VStack>
       </Box>
     );
   }
   
   return (
-    <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={6}>
+    <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={{ base: 3, md: 6 }}>
       <AnimatePresence>
         {rooms.map((room) => (
           <MotionBox
@@ -700,6 +934,7 @@ const ChatRoomsList: React.FC<ChatRoomsListProps> = ({
               onDelete={onDeleteRoom}
               onArchive={onArchiveRoom}
               onStar={onStarRoom}
+              isMobile={isMobile}
             />
           </MotionBox>
         ))}
