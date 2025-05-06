@@ -231,13 +231,15 @@ const ConnectWalletPage = () => {
     {
       name: 'Phantom',
       icon: <PhantomIcon />,
-      isDetected: solanaWallet?.hasWallet && solanaWallet?.walletType === 'phantom',
+      isDetected: solanaWallet?.hasWallet && (solanaWallet?.walletType === 'phantom' || 
+                (typeof window !== 'undefined' && window.solana?.isPhantom)),
       installUrl: 'https://phantom.app/download'
     },
     {
       name: 'OKX Wallet',
       icon: <OKXIcon />,
-      isDetected: solanaWallet?.hasWallet && solanaWallet?.walletType === 'okx',
+      isDetected: solanaWallet?.hasWallet && (solanaWallet?.walletType === 'okx' || 
+                (typeof window !== 'undefined' && 'okxwallet' in window)),
       installUrl: 'https://www.okx.com/web3/wallet'
     }
   ];
