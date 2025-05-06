@@ -215,6 +215,13 @@ export async function getStaticPaths() {
   };
 }
 
+// Define the interface for chat info
+interface ChatInfo {
+  name?: string;
+  encryptionType?: string;
+  useP2P?: boolean;
+}
+
 const ChatPage = () => {
   const router = useRouter();
   const { id } = router.query;
@@ -325,12 +332,23 @@ const ChatPage = () => {
     copyToClipboard();
   };
   
-  // Extract simple chat info values safely
-  const chatInfo = chatData.chatInfo || {};
-  const chatName = chatInfo.name || "Chat";
-  const encryptionType = chatInfo.encryptionType || "none";
-  const isP2P = chatInfo.useP2P || false;
-  const participantCount = chatData.participants?.length || 0;
+  // Extract chat info values with proper type safety
+  let chatName = "Chat";
+  let encryptionType = "none";
+  let isP2P = false;
+  let participantCount = 0;
+  
+  // Only access properties if chatInfo exists
+  if (chatData.chatInfo) {
+    chatName = chatData.chatInfo.name || "Chat";
+    encryptionType = chatData.chatInfo.encryptionType || "none";
+    isP2P = !!chatData.chatInfo.useP2P;
+  }
+  
+  // Get participant count safely
+  if (chatData.participants && Array.isArray(chatData.participants)) {
+    participantCount = chatData.participants.length;
+  }
   
   return (
     <Layout>
