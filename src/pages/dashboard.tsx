@@ -39,7 +39,11 @@ import {
   DrawerContent,
   DrawerCloseButton,
   Collapse,
-  Link
+  Link,
+  useBreakpointValue,
+  Stack,
+  Container,
+  Circle
 } from '@chakra-ui/react';
 import { 
   FaPlus, 
@@ -62,7 +66,10 @@ import {
   FaCheck,
   FaEllipsisV,
   FaInfoCircle,
-  FaTimes
+  FaTimes,
+  FaLayerGroup,
+  FaChevronRight,
+  FaBars
 } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Layout } from '../components/layout/Layout';
@@ -72,6 +79,7 @@ import { WalletConnectionCard } from '../components/wallet/WalletConnectionCard'
 import NetworkStatsDashboard from '../components/dashboard/NetworkStatsDashboard';
 import { useAuth } from '../contexts/AuthContext';
 import { useChatRooms } from '../hooks/useChatRooms';
+import { NotificationToggle } from '../components/common/NotificationToggle';
 
 // Motion components for animations
 const MotionBox = motion(Box);
@@ -81,35 +89,39 @@ const MotionFlex = motion(Flex);
 const ConnectionCertificateAlert = () => {
   const [isVisible, setIsVisible] = useState(true);
   const { colorMode } = useColorMode();
+  const isMobile = useBreakpointValue({ base: true, md: false });
 
   if (!isVisible) return null;
 
   return (
     <Flex
       direction="column"
-      p={4}
+      p={isMobile ? 3 : 4}
       bg={colorMode === 'dark' ? 'yellow.800' : 'yellow.50'}
       borderRadius="md"
       borderWidth="1px"
       borderColor={colorMode === 'dark' ? 'yellow.700' : 'yellow.200'}
-      mb={6}
+      mb={isMobile ? 3 : 6}
       position="relative"
+      boxShadow="sm"
+      maxW="100%"
+      overflow="hidden"
     >
       <Flex align="center" mb={2}>
         <Icon as={FaInfoCircle} color={colorMode === 'dark' ? 'yellow.200' : 'yellow.500'} mr={2} />
-        <Text fontWeight="bold">Connection Certificate Notice</Text>
+        <Text fontWeight="bold" fontSize={isMobile ? "sm" : "md"}>Connection Certificate Notice</Text>
         <IconButton 
           icon={<FaTimes />} 
           size="sm" 
           aria-label="Close alert" 
           variant="ghost"
           position="absolute"
-          right={2}
-          top={2}
+          right={1}
+          top={1}
           onClick={() => setIsVisible(false)}
         />
       </Flex>
-      <Text fontSize="sm" mb={3}>
+      <Text fontSize={isMobile ? "xs" : "sm"} mb={3}>
         If you experience connection issues, you may need to visit the server URL in your browser first to accept its security certificate.
       </Text>
       <Link 
@@ -117,11 +129,60 @@ const ConnectionCertificateAlert = () => {
         isExternal 
         color={colorMode === 'dark' ? 'yellow.200' : 'yellow.700'}
         fontWeight="medium"
-        fontSize="sm"
+        fontSize={isMobile ? "xs" : "sm"}
+        wordBreak={isMobile ? "break-all" : "normal"}
       >
         Visit https://p2p.aeronyx.network:8080
       </Link>
     </Flex>
+  );
+};
+
+// Feature Card Component
+const FeatureCard = ({ icon, title, description }) => {
+  const { colorMode } = useColorMode();
+  const isMobile = useBreakpointValue({ base: true, md: false });
+  
+  return (
+    <Box 
+      p={isMobile ? 3 : 5} 
+      shadow="md" 
+      borderWidth="1px" 
+      borderRadius="lg"
+      bg={colorMode === 'dark' ? 'gray.700' : 'white'}
+      _hover={{
+        transform: 'translateY(-4px)',
+        shadow: 'lg',
+        borderColor: 'purple.400'
+      }}
+      transition="all 0.3s"
+      cursor="pointer"
+      height="100%"
+    >
+      <Flex direction="column" align="center" textAlign="center" h="100%">
+        <Icon as={icon} w={isMobile ? 6 : { base: 8, md: 10 }} h={isMobile ? 6 : { base: 8, md: 10 }} color="purple.500" mb={3} />
+        <Heading fontSize={isMobile ? "md" : { base: "lg", md: "xl" }} mb={isMobile ? 2 : { base: 2, md: 4 }}>
+          {title}
+        </Heading>
+        <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.500'} fontSize={isMobile ? "2xs" : { base: "xs", md: "sm" }}>
+          {description}
+        </Text>
+      </Flex>
+    </Box>
+  );
+};
+
+// Mobile Action Button
+const MobileActionButton = ({ icon, label, onClick, colorScheme = "gray" }) => {
+  return (
+    <VStack spacing={1} align="center" onClick={onClick} cursor="pointer" flex="1">
+      <Circle size="40px" bg={`${colorScheme}.500`} color="white">
+        <Icon as={icon} />
+      </Circle>
+      <Text fontSize="xs" textAlign="center" fontWeight="medium">
+        {label}
+      </Text>
+    </VStack>
   );
 };
 
@@ -133,9 +194,10 @@ const Dashboard = () => {
   const { user, isAuthenticated, logout } = useAuth();
   const { chatRooms, loading, error, refreshRooms, deleteRoom, archiveRoom, starRoom } = useChatRooms();
   
-  // Media queries for responsive design
-  const [isMobile] = useMediaQuery("(max-width: 480px)");
-  const [isTablet] = useMediaQuery("(max-width: 768px)");
+  // Responsive design hooks
+  const isMobile = useBreakpointValue({ base: true, sm: true, md: false });
+  const isTablet = useBreakpointValue({ base: true, lg: false });
+  const isSmallMobile = useBreakpointValue({ base: true, sm: false });
   
   // Filter drawer state (for mobile)
   const { 
@@ -330,87 +392,151 @@ const Dashboard = () => {
 
   return (
     <Layout>
-      <Box p={{ base: 3, md: 6, lg: 8 }}>
+      <Box px={{ base: 2, sm: 3, md: 6, lg: 8 }} py={{ base: 2, md: 6 }}>
         {/* Mobile-optimized Connection Certificate Alert */}
         <ConnectionCertificateAlert />
         
-        {/* Header */}
+        {/* Header Section - Fully Responsive */}
         <MotionFlex 
           direction={{ base: 'column', lg: 'row' }}
           justify="space-between" 
           align={{ base: 'flex-start', lg: 'center' }}
-          mb={{ base: 4, md: 6 }}
+          mb={{ base: 3, md: 6 }}
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <Box mb={{ base: 4, lg: 0 }}>
-            <Heading size={isMobile ? "md" : "lg"} mb={1}>
+          <Box mb={{ base: 2, lg: 0 }}>
+            <Heading 
+              size={isMobile ? "md" : "lg"} 
+              mb={1}
+              fontSize={{ base: "xl", md: "2xl", lg: "3xl" }}
+            >
               Welcome to AeroNyx
             </Heading>
-            <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.600'} fontSize={{ base: "sm", md: "md" }}>
+            <Text 
+              color={colorMode === 'dark' ? 'gray.400' : 'gray.600'} 
+              fontSize={{ base: "xs", sm: "sm", md: "md" }}
+              noOfLines={isMobile ? 2 : 1}
+            >
               Your secure end-to-end encrypted messaging platform
             </Text>
           </Box>
           
-          <HStack spacing={{ base: 2, md: 4 }} width={{ base: "100%", lg: "auto" }}>
-            <Button 
-              leftIcon={<FaPlus />} 
-              colorScheme="purple" 
-              onClick={handleCreateChat}
-              size={isMobile ? "sm" : "md"}
-              px={{ base: 3, md: 6 }}
-              py={{ base: 4, md: 5 }}
-              boxShadow="md"
-              flex={isMobile ? 1 : "auto"}
-              _hover={{
-                transform: 'translateY(-2px)',
-                boxShadow: 'lg'
-              }}
-              transition="all 0.2s"
-            >
-              {isMobile ? "New Chat" : "Create New Chat"}
-            </Button>
-            
-            <Menu>
-              <MenuButton
-                as={IconButton}
-                aria-label="Options"
-                icon={<FaEllipsisV />}
-                variant="ghost"
+          {/* Dynamic button stack based on screen size */}
+          {isMobile ? (
+            <Flex w="100%" justify="space-between" mt={2}>
+              <Button 
+                leftIcon={<FaPlus />} 
+                colorScheme="purple" 
+                onClick={handleCreateChat}
+                size="sm"
+                flex={1}
+                mr={2}
+              >
+                New Chat
+              </Button>
+              <HStack spacing={1}>
+                <NotificationToggle isCompact size="sm" />
+                <IconButton
+                  icon={<FaEllipsisV />}
+                  aria-label="More options"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onFilterDrawerOpen}
+                />
+              </HStack>
+            </Flex>
+          ) : (
+            <HStack spacing={{ base: 2, md: 4 }}>
+              <NotificationToggle isCompact />
+              <Button 
+                leftIcon={<FaPlus />} 
+                colorScheme="purple" 
+                onClick={handleCreateChat}
                 size={isMobile ? "sm" : "md"}
-              />
-              <MenuList>
-                <MenuItem icon={<FaWallet />} onClick={() => router.push('/settings?tab=3')}>
-                  Wallet Settings
-                </MenuItem>
-                <MenuItem icon={<FaKey />} onClick={() => router.push('/settings?tab=0')}>
-                  Encryption Settings
-                </MenuItem>
-                <MenuItem icon={<FaNetworkWired />} onClick={() => setShowNetworkStats(!showNetworkStats)}>
-                  {showNetworkStats ? 'Hide' : 'Show'} Network Status
-                </MenuItem>
-                {isTablet && (
-                  <MenuItem icon={showFeatureHighlights ? <FaTimes /> : <FaShieldAlt />} onClick={() => setShowFeatureHighlights(!showFeatureHighlights)}>
-                    {showFeatureHighlights ? 'Hide' : 'Show'} Features
+                px={{ base: 3, md: 6 }}
+                py={{ base: 4, md: 5 }}
+                boxShadow="md"
+                _hover={{
+                  transform: 'translateY(-2px)',
+                  boxShadow: 'lg'
+                }}
+                transition="all 0.2s"
+              >
+                Create New Chat
+              </Button>
+              
+              <Menu>
+                <MenuButton
+                  as={IconButton}
+                  aria-label="Options"
+                  icon={<FaEllipsisV />}
+                  variant="ghost"
+                  size={isMobile ? "sm" : "md"}
+                />
+                <MenuList>
+                  <MenuItem icon={<FaWallet />} onClick={() => router.push('/settings?tab=3')}>
+                    Wallet Settings
                   </MenuItem>
-                )}
-                <Divider />
-                <MenuItem icon={<FaSyncAlt />} onClick={handleRefreshRooms} isDisabled={isRefreshing}>
-                  Refresh Rooms
-                </MenuItem>
-                <MenuItem icon={<FaArchive />}>
-                  View Archived Chats
-                </MenuItem>
-              </MenuList>
-            </Menu>
-          </HStack>
+                  <MenuItem icon={<FaKey />} onClick={() => router.push('/settings?tab=0')}>
+                    Encryption Settings
+                  </MenuItem>
+                  <MenuItem icon={<FaNetworkWired />} onClick={() => setShowNetworkStats(!showNetworkStats)}>
+                    {showNetworkStats ? 'Hide' : 'Show'} Network Status
+                  </MenuItem>
+                  {isTablet && (
+                    <MenuItem icon={showFeatureHighlights ? <FaTimes /> : <FaShieldAlt />} onClick={() => setShowFeatureHighlights(!showFeatureHighlights)}>
+                      {showFeatureHighlights ? 'Hide' : 'Show'} Features
+                    </MenuItem>
+                  )}
+                  <Divider />
+                  <MenuItem icon={<FaSyncAlt />} onClick={handleRefreshRooms} isDisabled={isRefreshing}>
+                    Refresh Rooms
+                  </MenuItem>
+                  <MenuItem icon={<FaArchive />}>
+                    View Archived Chats
+                  </MenuItem>
+                </MenuList>
+              </Menu>
+            </HStack>
+          )}
         </MotionFlex>
+        
+        {/* Mobile Quick Action Buttons - Only on small mobile */}
+        {isSmallMobile && (
+          <Flex justify="space-between" px={1} py={3} mb={3}>
+            <MobileActionButton 
+              icon={FaSyncAlt} 
+              label="Refresh" 
+              onClick={handleRefreshRooms} 
+              colorScheme="blue"
+            />
+            <MobileActionButton 
+              icon={FaFilter} 
+              label="Filter" 
+              onClick={onFilterDrawerOpen} 
+              colorScheme="teal"
+            />
+            <MobileActionButton 
+              icon={FaNetworkWired} 
+              label="Network" 
+              onClick={() => setShowNetworkStats(!showNetworkStats)} 
+              colorScheme="purple"
+            />
+            <MobileActionButton 
+              icon={FaShieldAlt} 
+              label="Features" 
+              onClick={() => setShowFeatureHighlights(!showFeatureHighlights)} 
+              colorScheme="orange"
+            />
+          </Flex>
+        )}
         
         {/* Main content grid - adaptive layout for mobile */}
         <Grid 
           templateColumns={{ base: '1fr', xl: '3fr 1fr' }} 
-          gap={{ base: 4, md: 6 }}
+          gap={{ base: 3, md: 6 }}
           templateAreas={{
             base: `"main" "sidebar"`,
             xl: `"main sidebar"`
@@ -420,7 +546,7 @@ const Dashboard = () => {
             {/* Network Stats Dashboard (collapsible) */}
             <Collapse in={showNetworkStats} animateOpacity>
               <MotionBox
-                mb={6}
+                mb={{ base: 3, md: 6 }}
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
@@ -432,85 +558,32 @@ const Dashboard = () => {
             {/* Feature highlights - collapsible on mobile/tablet */}
             <Collapse in={showFeatureHighlights} animateOpacity>
               <MotionBox
-                mb={{ base: 4, md: 6 }}
+                mb={{ base: 3, md: 6 }}
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.2 }}
               >
-                <SimpleGrid columns={{ base: 1, md: 3 }} spacing={{ base: 3, md: 6 }}>
-                  <Box 
-                    p={{ base: 3, md: 5 }} 
-                    shadow="md" 
-                    borderWidth="1px" 
-                    borderRadius="lg"
-                    bg={colorMode === 'dark' ? 'gray.700' : 'white'}
-                    _hover={{
-                      transform: 'translateY(-4px)',
-                      shadow: 'lg',
-                      borderColor: 'purple.400'
-                    }}
-                    transition="all 0.3s"
-                    cursor="pointer"
-                  >
-                    <Flex direction="column" align="center" textAlign="center">
-                      <Icon as={FaKey} w={{ base: 8, md: 10 }} h={{ base: 8, md: 10 }} color="purple.500" mb={3} />
-                      <Heading fontSize={{ base: "lg", md: "xl" }} mb={{ base: 2, md: 4 }}>End-to-End Encryption</Heading>
-                      <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.500'} fontSize={{ base: "xs", md: "sm" }}>
-                        Military-grade ChaCha20-Poly1305 encryption protects your messages
-                      </Text>
-                    </Flex>
-                  </Box>
-
-                  <Box 
-                    p={{ base: 3, md: 5 }} 
-                    shadow="md" 
-                    borderWidth="1px" 
-                    borderRadius="lg"
-                    bg={colorMode === 'dark' ? 'gray.700' : 'white'}
-                    _hover={{
-                      transform: 'translateY(-4px)',
-                      shadow: 'lg',
-                      borderColor: 'purple.400'
-                    }}
-                    transition="all 0.3s"
-                    cursor="pointer"
-                  >
-                    <Flex direction="column" align="center" textAlign="center">
-                      <Icon as={FaShieldAlt} w={{ base: 8, md: 10 }} h={{ base: 8, md: 10 }} color="purple.500" mb={3} />
-                      <Heading fontSize={{ base: "lg", md: "xl" }} mb={{ base: 2, md: 4 }}>Decentralized Security</Heading>
-                      <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.500'} fontSize={{ base: "xs", md: "sm" }}>
-                        Messages are encrypted locally with distributed consensus verification
-                      </Text>
-                    </Flex>
-                  </Box>
-
-                  <Box 
-                    p={{ base: 3, md: 5 }} 
-                    shadow="md" 
-                    borderWidth="1px" 
-                    borderRadius="lg"
-                    bg={colorMode === 'dark' ? 'gray.700' : 'white'}
-                    _hover={{
-                      transform: 'translateY(-4px)',
-                      shadow: 'lg',
-                      borderColor: 'purple.400'
-                    }}
-                    transition="all 0.3s"
-                    cursor="pointer"
-                  >
-                    <Flex direction="column" align="center" textAlign="center">
-                      <Icon as={FaUsers} w={{ base: 8, md: 10 }} h={{ base: 8, md: 10 }} color="purple.500" mb={3} />
-                      <Heading fontSize={{ base: "lg", md: "xl" }} mb={{ base: 2, md: 4 }}>Peer-to-Peer Messaging</Heading>
-                      <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.500'} fontSize={{ base: "xs", md: "sm" }}>
-                        Direct device-to-device communication without server intermediaries
-                      </Text>
-                    </Flex>
-                  </Box>
+                <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={{ base: 2, md: 6 }}>
+                  <FeatureCard 
+                    icon={FaKey} 
+                    title="E2E Encryption" 
+                    description="Military-grade ChaCha20-Poly1305 encryption protects your messages"
+                  />
+                  <FeatureCard 
+                    icon={FaShieldAlt} 
+                    title="Decentralized" 
+                    description="Messages are encrypted locally with distributed consensus verification"
+                  />
+                  <FeatureCard 
+                    icon={FaUsers} 
+                    title="P2P Messaging" 
+                    description="Direct device-to-device communication without server intermediaries"
+                  />
                 </SimpleGrid>
               </MotionBox>
             </Collapse>
             
-            {/* Chat Rooms Section */}
+            {/* Chat Rooms Section - Optimized for mobile */}
             <Box mb={6}>
               <Tabs 
                 variant="soft-rounded" 
@@ -520,23 +593,35 @@ const Dashboard = () => {
                 onChange={(index) => setActiveTab(index)}
                 size={isMobile ? "sm" : "md"}
               >
-                <TabList mb={4} overflowX="auto" py={2} whiteSpace="nowrap">
-                  <Tab fontSize={isMobile ? "xs" : "md"}>All Chats</Tab>
-                  <Tab fontSize={isMobile ? "xs" : "md"}>P2P</Tab>
-                  <Tab fontSize={isMobile ? "xs" : "md"}>Ephemeral</Tab>
-                  <Tab fontSize={isMobile ? "xs" : "md"}>Starred</Tab>
-                  <Tab fontSize={isMobile ? "xs" : "md"}>Archived</Tab>
+                <TabList 
+                  mb={3} 
+                  overflowX="auto" 
+                  py={2} 
+                  whiteSpace="nowrap"
+                  css={{
+                    // Custom scrollbar styling
+                    '&::-webkit-scrollbar': {
+                      height: '4px',
+                    },
+                    '&::-webkit-scrollbar-track': {
+                      background: colorMode === 'dark' ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.05)',
+                    },
+                    '&::-webkit-scrollbar-thumb': {
+                      background: colorMode === 'dark' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)',
+                      borderRadius: '4px',
+                    },
+                  }}
+                >
+                  <Tab fontSize={isMobile ? "xs" : "md"} px={isMobile ? 2 : 4}>All Chats</Tab>
+                  <Tab fontSize={isMobile ? "xs" : "md"} px={isMobile ? 2 : 4}>P2P</Tab>
+                  <Tab fontSize={isMobile ? "xs" : "md"} px={isMobile ? 2 : 4}>Ephemeral</Tab>
+                  <Tab fontSize={isMobile ? "xs" : "md"} px={isMobile ? 2 : 4}>Starred</Tab>
+                  <Tab fontSize={isMobile ? "xs" : "md"} px={isMobile ? 2 : 4}>Archived</Tab>
                 </TabList>
                 
-                {/* Mobile-optimized search and filter controls */}
-                <Flex
-                  mb={{ base: 3, md: 6 }}
-                  direction={{ base: 'column', md: 'row' }}
-                  align={{ base: 'stretch', md: 'center' }}
-                  justify="space-between"
-                  gap={{ base: 2, md: 4 }}
-                >
-                  <InputGroup maxW={{ base: '100%', md: '400px' }} size={isMobile ? "sm" : "md"}>
+                {/* Mobile-optimized search input */}
+                <Box mb={{ base: 3, md: 4 }}>
+                  <InputGroup size={isMobile ? "sm" : "md"}>
                     <InputLeftElement pointerEvents="none">
                       <FaSearch color="gray.300" />
                     </InputLeftElement>
@@ -549,18 +634,20 @@ const Dashboard = () => {
                       fontSize={isMobile ? "sm" : "md"}
                     />
                   </InputGroup>
-                  
-                  {/* Desktop filter controls */}
-                  {!isMobile && (
-                    <HStack spacing={4}>
+                </Box>
+                
+                {/* Filter controls for desktop */}
+                {!isMobile && (
+                  <Flex mb={4} justify="flex-end">
+                    <HStack spacing={2}>
                       <Menu>
                         <MenuButton
                           as={Button}
                           rightIcon={<FaFilter />}
                           variant="outline"
-                          size={isMobile ? "sm" : "md"}
+                          size="sm"
                         >
-                          Filter: {filterType === 'all' ? 'All' : filterType}
+                          {filterType === 'all' ? 'All' : filterType}
                         </MenuButton>
                         <MenuList>
                           <MenuItem 
@@ -601,9 +688,9 @@ const Dashboard = () => {
                           as={Button}
                           rightIcon={sortOrder === 'newest' ? <FaSortAmountDown /> : <FaSortAmountUp />}
                           variant="outline"
-                          size={isMobile ? "sm" : "md"}
+                          size="sm"
                         >
-                          Sort: {sortOrder}
+                          {sortOrder}
                         </MenuButton>
                         <MenuList>
                           <MenuItem 
@@ -630,23 +717,10 @@ const Dashboard = () => {
                         </MenuList>
                       </Menu>
                     </HStack>
-                  )}
-                  
-                  {/* Mobile filter button that opens a drawer */}
-                  {isMobile && (
-                    <Button 
-                      leftIcon={<FaFilter />} 
-                      onClick={onFilterDrawerOpen}
-                      size="sm"
-                      colorScheme="gray"
-                      width="full"
-                    >
-                      Filter & Sort
-                    </Button>
-                  )}
-                </Flex>
+                  </Flex>
+                )}
                 
-                {/* Mobile Filter Drawer */}
+                {/* Mobile Filter Drawer - Enhanced for usability */}
                 <Drawer
                   isOpen={isFilterDrawerOpen}
                   placement="bottom"
@@ -752,7 +826,7 @@ const Dashboard = () => {
                       </SimpleGrid>
                     ) : (
                       <MotionBox
-                        p={{ base: 6, md: 10 }}
+                        p={{ base: 4, md: 10 }}
                         textAlign="center"
                         borderRadius="lg"
                         bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
@@ -761,8 +835,8 @@ const Dashboard = () => {
                         transition={{ duration: 0.5 }}
                       >
                         <VStack spacing={4}>
-                          <Icon as={FaRegComments} boxSize={{ base: 8, md: 10 }} opacity={0.5} />
-                          <Text mb={4} fontSize={{ base: "sm", md: "md" }}>
+                          <Icon as={FaRegComments} boxSize={{ base: 6, md: 10 }} opacity={0.5} />
+                          <Text mb={4} fontSize={{ base: "xs", md: "md" }}>
                             {searchQuery 
                               ? `No chat rooms found matching "${searchQuery}"` 
                               : "You don't have any active chats yet"}
@@ -844,18 +918,42 @@ const Dashboard = () => {
             </Box>
           </Box>
           
-          {/* Sidebar - Only shown on Desktop, moves to bottom on mobile */}
-          <Box 
-            gridArea="sidebar"
-            display={{ base: isTablet ? 'none' : 'block', xl: 'block' }}
-          >
-            <VStack spacing={6} align="stretch">
-              <WalletConnectionCard />
-              
-              {/* Additional sidebar widgets could go here */}
-            </VStack>
-          </Box>
+          {/* Sidebar - Only shown on Desktop or at bottom on mobile if needed */}
+          {(!isMobile || !isTablet) && (
+            <Box 
+              gridArea="sidebar"
+              display={{ base: isTablet && !isMobile ? 'none' : 'block', xl: 'block' }}
+            >
+              <VStack spacing={4} align="stretch">
+                <WalletConnectionCard />
+                
+                {/* Additional sidebar widgets could go here */}
+              </VStack>
+            </Box>
+          )}
         </Grid>
+        
+        {/* Mobile-only fixed action button for creating new chat */}
+        {isMobile && (
+          <Box 
+            position="fixed" 
+            bottom={4} 
+            right={4} 
+            zIndex={20}
+          >
+            <Button
+              colorScheme="purple"
+              boxShadow="lg"
+              borderRadius="full"
+              width="50px"
+              height="50px"
+              p={0}
+              onClick={handleCreateChat}
+            >
+              <FaPlus />
+            </Button>
+          </Box>
+        )}
       </Box>
 
       <EnhancedCreateChatModal isOpen={isOpen} onClose={onClose} />
@@ -908,8 +1006,8 @@ const ChatRoomsList: React.FC<ChatRoomsListProps> = ({
         bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
       >
         <VStack spacing={4}>
-          <Icon as={emptyIcon} boxSize={isMobile ? 8 : 10} opacity={0.5} />
-          <Text fontSize={isMobile ? "sm" : "md"}>{emptyMessage}</Text>
+          <Icon as={emptyIcon} boxSize={isMobile ? 6 : 10} opacity={0.5} />
+          <Text fontSize={isMobile ? "xs" : "md"}>{emptyMessage}</Text>
         </VStack>
       </Box>
     );
