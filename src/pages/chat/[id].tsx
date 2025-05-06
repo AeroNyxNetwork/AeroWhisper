@@ -56,8 +56,19 @@ const WalletButton = () => {
   );
 };
 
+// Define interface for ChatHeader props
+interface ChatHeaderProps {
+  chatName: string;
+  participantCount: number;
+  encryptionType: string;
+  isP2P: boolean;
+  isMobile: boolean;
+  onBackClick: () => void;
+  onInviteClick: () => void;
+}
+
 // Chat info header with responsive design
-const ChatHeader = ({ 
+const ChatHeader: React.FC<ChatHeaderProps> = ({ 
   chatName, 
   participantCount, 
   encryptionType, 
@@ -336,7 +347,7 @@ const ChatPage = () => {
         flexDirection="column"
         overflow="hidden"
       >
-        {/* Enhanced chat header */}
+        {/* Enhanced chat header with properly typed props */}
         <ChatHeader 
           chatName={chatName}
           participantCount={participantCount}
