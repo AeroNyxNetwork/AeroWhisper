@@ -388,30 +388,39 @@ const ChatPage = () => {
   }
   
   return (
-    <Layout hideHeader={isMobile}>
-      {/* Responsive chat layout */}
-      <Flex 
-        direction="column" 
+    <Layout>
+      {/* For mobile, create a full-height chat experience through CSS */}
+      <Box 
+        position="relative"
         h={isMobile ? "100vh" : "calc(100vh - 80px)"}
-        maxH={isMobile ? "100vh" : "calc(100vh - 80px)"}
+        mt={isMobile ? "-80px" : 0} // Offset the header height on mobile
+        pt={isMobile ? "0" : "0"}   // No padding on mobile
         overflow="hidden"
       >
-        {/* Chat header with info */}
-        <ChatInfoHeader 
-          chatName={chatName}
-          participantCount={participantCount}
-          isEncrypted={isEncrypted}
-          isP2P={isP2P}
-          isMobile={isMobile}
-          onBackClick={handleBackClick}
-          onInviteClick={onOpen}
-        />
-        
-        {/* Main chat area - EnhancedChatView */}
-        <Box flex="1" overflow="hidden">
-          <EnhancedChatView chatId={chatId} />
-        </Box>
-      </Flex>
+        {/* Responsive chat layout */}
+        <Flex 
+          direction="column" 
+          h="100%"
+          maxH="100%"
+          overflow="hidden"
+        >
+          {/* Chat header with info */}
+          <ChatInfoHeader 
+            chatName={chatName}
+            participantCount={participantCount}
+            isEncrypted={isEncrypted}
+            isP2P={isP2P}
+            isMobile={isMobile}
+            onBackClick={handleBackClick}
+            onInviteClick={onOpen}
+          />
+          
+          {/* Main chat area - EnhancedChatView */}
+          <Box flex="1" overflow="hidden">
+            <EnhancedChatView chatId={chatId} />
+          </Box>
+        </Flex>
+      </Box>
       
       {/* Invite Modal */}
       {isClient && (
