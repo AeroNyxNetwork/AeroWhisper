@@ -56,8 +56,19 @@ import { EnhancedChatView } from '../../components/chat/EnhancedChatView';
 
 const MotionBox = motion(Box);
 
+// Define prop types for the ChatInfoHeader component
+interface ChatInfoHeaderProps {
+  chatName: string;
+  participantCount: number;
+  isEncrypted: boolean;
+  isP2P: boolean;
+  isMobile: boolean;
+  onBackClick: () => void;
+  onInviteClick: () => void;
+}
+
 // Chat info header with responsive design
-const ChatInfoHeader = ({ 
+const ChatInfoHeader: React.FC<ChatInfoHeaderProps> = ({ 
   chatName, 
   participantCount, 
   isEncrypted, 
@@ -201,6 +212,16 @@ export async function getStaticPaths() {
   };
 }
 
+// Helper components
+interface IconProps {
+  as: React.ElementType;
+  [key: string]: any;
+}
+
+const Icon: React.FC<IconProps> = ({ as, ...props }) => {
+  return React.createElement(as, props);
+};
+
 const ChatPage = () => {
   const router = useRouter();
   const { id } = router.query;
@@ -338,7 +359,7 @@ const ChatPage = () => {
           chatName={chatRoom?.name || "Chat"}
           participantCount={chatRoom?.participants?.length || 0}
           isEncrypted={chatRoom?.encryptionType === 'high' || chatRoom?.encryptionType === 'maximum'}
-          isP2P={chatRoom?.useP2P}
+          isP2P={chatRoom?.useP2P || false}
           isMobile={isMobile}
           onBackClick={handleBackClick}
           onInviteClick={onOpen}
@@ -361,11 +382,6 @@ const ChatPage = () => {
       )}
     </Layout>
   );
-};
-
-// Helper components
-const Icon = ({ as, ...props }) => {
-  return React.createElement(as, props);
 };
 
 export default ChatPage;
