@@ -215,6 +215,13 @@ const Icon: React.FC<IconProps> = ({ as, ...props }) => {
   return React.createElement(as, props);
 };
 
+// Interface for chat info (based on what we're trying to access)
+interface ChatInfo {
+  name?: string;
+  encryptionType?: string;
+  useP2P?: boolean;
+}
+
 const ChatPage = () => {
   const router = useRouter();
   const { id } = router.query;
@@ -341,7 +348,10 @@ const ChatPage = () => {
   }
   
   // Extract data safely from chatInfo if it exists
-  const chatInfo = chatData.chatInfo || {};
+  // Using type assertion to help TypeScript understand the structure
+  const chatInfo = (chatData.chatInfo || {}) as ChatInfo;
+  
+  // Now we can safely access these properties
   const chatName = chatInfo.name || "Chat";
   const isEncrypted = chatInfo.encryptionType === 'high' || chatInfo.encryptionType === 'maximum';
   const isP2P = chatInfo.useP2P || false;
