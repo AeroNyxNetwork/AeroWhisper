@@ -47,7 +47,7 @@ export const NotificationToggle: React.FC<NotificationToggleProps> = ({
   useEffect(() => {
     // Check if browser supports notifications
     const checkNotificationSupport = () => {
-      // Detect if we're in a browser environment
+      // Check if we're in a browser environment
       if (typeof window === 'undefined') return false;
       
       // Check if the Notification API is available
@@ -62,14 +62,17 @@ export const NotificationToggle: React.FC<NotificationToggleProps> = ({
       // Safari on iOS says it supports but doesn't actually allow
       const isSafariIOS = isMobile && /Safari/i.test(navigator.userAgent) && /Apple/i.test(navigator.vendor);
       
-      // Some Web3 wallets have their own notification systems
-      const isInsideWalletBrowser = 
-        typeof window !== 'undefined' && 
-        (window.ethereum || 
-         window.web3 || 
-         (window as any).solana || 
-         (window as any).phantom) &&
-        isMobile;
+      // Check for Web3 wallet browser environment more safely
+      // Use type assertions with a separate variable
+      const windowAny = window as any;
+      const hasWalletExtension = !!(
+        windowAny.ethereum || 
+        windowAny.web3 || 
+        windowAny.solana || 
+        windowAny.phantom
+      );
+      
+      const isInsideWalletBrowser = hasWalletExtension && isMobile;
       
       // Set support flag based on these checks
       const supported = hasNotificationAPI && !(isSafariIOS && !isInsideWalletBrowser);
@@ -165,27 +168,31 @@ export const NotificationToggle: React.FC<NotificationToggleProps> = ({
   // Send a test notification when permissions are granted
   const sendTestNotification = () => {
     if (Notification.permission === 'granted') {
-      // Create logo URL for notification icon
-      const iconUrl = `${window.location.origin}/images/aeronyx-logo.png`;
-      
-      // Send test notification
-      const notification = new Notification('AeroNyx Notifications Enabled', {
-        body: 'You will now receive important updates and alerts',
-        icon: iconUrl,
-        badge: iconUrl,
-        tag: 'welcome-notification'
-      });
-      
-      // Close notification after 5 seconds
-      setTimeout(() => {
-        notification.close();
-      }, 5000);
-      
-      // Handle notification click
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
-      };
+      try {
+        // Create logo URL for notification icon
+        const iconUrl = `${window.location.origin}/images/aeronyx-logo.png`;
+        
+        // Send test notification
+        const notification = new Notification('AeroNyx Notifications Enabled', {
+          body: 'You will now receive important updates and alerts',
+          icon: iconUrl,
+          badge: iconUrl,
+          tag: 'welcome-notification'
+        });
+        
+        // Close notification after 5 seconds
+        setTimeout(() => {
+          notification.close();
+        }, 5000);
+        
+        // Handle notification click
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+        };
+      } catch (error) {
+        console.error('Error sending test notification:', error);
+      }
     }
   };
   
