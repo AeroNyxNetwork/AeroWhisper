@@ -3,16 +3,13 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Box, 
   Flex, 
-  useColorMode, 
-  useTheme, 
-  useToast, 
-  Text,
-  Heading,
-  Badge,
-  IconButton,
+  Text, 
+  Heading, 
+  Badge, 
+  IconButton, 
   Tooltip,
   HStack,
-  VStack,
+  VStack, 
   Button,
   Drawer,
   DrawerBody,
@@ -26,45 +23,23 @@ import {
   MenuList,
   MenuItem,
   Avatar,
-  AvatarGroup,
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-  PopoverHeader,
-  PopoverBody,
-  PopoverFooter,
-  PopoverArrow,
-  Divider,
-  Skeleton,
-  Image,
+  useToast
 } from '@chakra-ui/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { 
-  FaBell, 
-  FaBellSlash, 
-  FaUserPlus, 
-  FaCog, 
+  FaUserPlus,  
   FaEllipsisV, 
-  FaEthereum, 
   FaLock, 
-  FaWallet, 
-  FaRocket, 
   FaUsers, 
-  FaUser, 
-  FaPaperPlane, 
   FaArrowDown, 
-  FaExclamationTriangle,
-  FaChevronDown,
-  FaChevronUp,
-  FaChevronRight,
   FaKey,
   FaShieldAlt,
   FaChartLine,
   FaLink,
   FaNetworkWired,
-  FaCopy,
-  FaSun,
-  FaMoon,
+  FaUser,
+  FaWallet,
+  FaCog
 } from 'react-icons/fa';
 import { Message } from './Message';
 import { MessageComposer } from './MessageComposer';
@@ -74,29 +49,25 @@ import { ConnectionIndicator } from '../ui/ConnectionIndicator';
 import { useAuth } from '../../contexts/AuthContext';
 import { InviteModal } from '../modals/InviteModal';
 
-// Define message animation variants
+// Message animation variants
 const messageVariants = {
   initial: { opacity: 0, y: 20 },
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -20 }
 };
 
-// Type for the extended connection status
+// Extended connection status type
 type ExtendedConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'p2p-connecting' | 'p2p-connected';
 
-
-
+// Blockchain-inspired header component
 interface BlockchainInspiredHeaderProps {
   chatName: string;
-  participants: any[]; // Replace with the actual type of participants if known
-  connectionStatus: ExtendedConnectionStatus; // Use the same type that you defined for ChatHeader
+  participants: any[];
+  connectionStatus: ExtendedConnectionStatus;
   onInvite: () => void;
   onOpenSettings: () => void;
 }
 
-
-
-// New component: BlockchainInspiredHeader
 const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({ 
   chatName, 
   participants, 
@@ -104,7 +75,6 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
   onInvite, 
   onOpenSettings 
 }) => {
-  const { colorMode } = useColorMode();
   const [showBlockInfo, setShowBlockInfo] = useState(false);
   
   // Simulated blockchain data
@@ -118,14 +88,13 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
 
   return (
     <Box 
-      bg={colorMode === 'dark' ? 'gray.800' : 'white'}
       borderBottom="1px solid"
-      borderColor={colorMode === 'dark' ? 'gray.700' : 'gray.200'}
+      borderColor="gray.700"
       p={4}
       position="relative"
       overflow="hidden"
     >
-      {/* Animated "blockchain" background element */}
+      {/* Blockchain-inspired background animation */}
       <Box 
         position="absolute" 
         top={0} 
@@ -238,13 +207,13 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
         </HStack>
       </Flex>
       
-      {/* Blockchain-inspired metadata */}
+      {/* Blockchain metadata information */}
       {showBlockInfo && (
         <Box 
           mt={2} 
           p={2} 
           borderRadius="md" 
-          bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
+          bg="gray.700"
           fontSize="xs"
           display="flex"
           flexWrap="wrap"
@@ -275,6 +244,7 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
   );
 };
 
+// Participant type
 interface Participant {
   id: string;
   displayName: string;
@@ -282,20 +252,18 @@ interface Participant {
   wallet?: string;
 }
 
+// Participants list component
 interface ParticipantsListProps {
-  participants: Participant[]; // Assuming Participant is imported from types/chat
+  participants: Participant[];
   isOpen: boolean;
   onClose: () => void;
 }
 
-// New component: ParticipantsList
 const ParticipantsList: React.FC<ParticipantsListProps> = ({ 
   participants, 
   isOpen, 
   onClose 
 }) => {
-  const { colorMode } = useColorMode();
-  
   return (
     <Drawer
       isOpen={isOpen}
@@ -304,7 +272,7 @@ const ParticipantsList: React.FC<ParticipantsListProps> = ({
       size="md"
     >
       <DrawerOverlay backdropFilter="blur(3px)" />
-      <DrawerContent bg={colorMode === 'dark' ? 'gray.800' : 'white'}>
+      <DrawerContent>
         <DrawerCloseButton />
         <DrawerHeader borderBottomWidth="1px">
           <Flex align="center">
@@ -320,11 +288,11 @@ const ParticipantsList: React.FC<ParticipantsListProps> = ({
                 key={participant.id}
                 p={3}
                 borderRadius="md"
-                bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
+                bg="gray.700"
                 align="center"
                 justify="space-between"
                 _hover={{
-                  bg: colorMode === 'dark' ? 'gray.600' : 'gray.200',
+                  bg: "gray.600",
                   transform: 'translateY(-2px)',
                   transition: 'all 0.2s'
                 }}
@@ -374,11 +342,16 @@ const ParticipantsList: React.FC<ParticipantsListProps> = ({
                   <MenuList>
                     <MenuItem icon={<FaUser />}>View Profile</MenuItem>
                     <MenuItem icon={<FaKey />}>View Public Key</MenuItem>
-                    <MenuItem icon={<FaRocket />}>Send Direct Message</MenuItem>
                   </MenuList>
                 </Menu>
               </Flex>
             ))}
+            
+            {participants.length === 0 && (
+              <Text color="gray.500" textAlign="center" py={10}>
+                No participants found
+              </Text>
+            )}
           </VStack>
         </DrawerBody>
       </DrawerContent>
@@ -386,25 +359,18 @@ const ParticipantsList: React.FC<ParticipantsListProps> = ({
   );
 };
 
-
+// Main chat view component
 interface EnhancedChatViewProps {
   chatId: string;
 }
 
 export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) => {
-  const { colorMode, toggleColorMode } = useColorMode();
   const { user } = useAuth();
-  const theme = useTheme();
   const toast = useToast();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [newMessageCount, setNewMessageCount] = useState(0);
-  
-  // Simulated blockchain-inspired features
-  const [txPending, setTxPending] = useState(false);
-  const [gasSettings, setGasSettings] = useState({ priority: 'medium' });
-  const [encryptionStrength, setEncryptionStrength] = useState('high');
   
   // Chat state
   const { 
@@ -416,7 +382,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     error
   } = useChat(chatId);
 
-  // Modals and drawers
+  // Control the state of various panels
   const {
     isOpen: isParticipantsOpen,
     onOpen: onOpenParticipants,
@@ -435,13 +401,13 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     onClose: onCloseSettings
   } = useDisclosure();
 
-  // Cast connectionStatus to extended type
+  // Cast connection status to the extended type
   const extendedStatus = connectionStatus as ExtendedConnectionStatus;
 
-  // Get encryption type from chatInfo or use default
+  // Get encryption type
   const encryptionType = chatInfo?.encryptionType || 'standard';
 
-  // Handle errors
+  // Error handling
   useEffect(() => {
     if (error) {
       toast({
@@ -459,7 +425,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     if (isAtBottom) {
       scrollToBottom();
     } else if (messages.length > 0) {
-      // Increment new message count if not at bottom
+      // If not at bottom, increment new message count
       setNewMessageCount(prev => prev + 1);
     }
   }, [messages.length, isAtBottom]);
@@ -469,7 +435,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     setNewMessageCount(0);
   };
 
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+  const handleScroll = () => {
     if (!messagesContainerRef.current) return;
     
     const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
@@ -482,7 +448,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     }
   };
 
-  // Add connection status indicator
+  // Get connection status indicator
   const getConnectionStatusIndicator = () => {
     if (extendedStatus === 'connecting' || extendedStatus === 'p2p-connecting') {
       return <ConnectionIndicator status="connecting" message="Connecting to secure channel..." />;
@@ -497,17 +463,12 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     // Find the failed message
     const failedMessage = messages.find(m => m.id === messageId);
     if (failedMessage && failedMessage.status === 'failed') {
-      // Simulate blockchain transaction
-      setTxPending(true);
-      setTimeout(() => {
-        // Resend the message
-        sendMessage(content);
-        setTxPending(false);
-      }, 1500);
+      // Resend the message
+      sendMessage(content);
     }
   };
   
-  // Function to produce a shareable invite link
+  // Generate invite link
   const getInviteLink = useCallback(() => {
     if (typeof window !== 'undefined') {
       return window.location.href;
@@ -515,12 +476,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
     return '';
   }, []);
   
-  // Generate a unique room key
-  const generateRoomKey = useCallback(() => {
-    return `arx-${chatId.substring(0, 8)}-${Math.random().toString(36).substring(2, 7)}`;
-  }, [chatId]);
-  
-  // Function to copy invite link to clipboard
+  // Copy invite link
   const copyInviteLink = useCallback(() => {
     const link = getInviteLink();
     if (navigator.clipboard && link) {
@@ -539,7 +495,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
       direction="column" 
       h="calc(100vh - 80px)"
       position="relative"
-      bg={colorMode === 'dark' ? 'gray.900' : 'gray.50'}
+      bg="gray.900"
     >
       {/* Connection status indicator */}
       {extendedStatus !== 'connected' && extendedStatus !== 'p2p-connected' && (
@@ -548,26 +504,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
         </Box>
       )}
       
-      {/* Theme toggle button (floating) */}
-      <Tooltip label={`Switch to ${colorMode === 'dark' ? 'light' : 'dark'} mode`} placement="left">
-        <IconButton
-          aria-label={`Switch to ${colorMode === 'dark' ? 'light' : 'dark'} mode`}
-          icon={colorMode === 'dark' ? <FaSun /> : <FaMoon />}
-          position="absolute"
-          top="70px"
-          right="20px"
-          zIndex="10"
-          colorScheme="purple"
-          variant="ghost"
-          onClick={toggleColorMode}
-          border="1px solid"
-          borderColor={colorMode === 'dark' ? 'gray.700' : 'gray.200'}
-          borderRadius="full"
-          size="sm"
-        />
-      </Tooltip>
-      
-      {/* Chat Header with Blockchain Aesthetics */}
+      {/* Chat header */}
       <BlockchainInspiredHeader 
         chatName={chatInfo?.name || 'Secure Chat'}
         participants={participants}
@@ -576,14 +513,14 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
         onOpenSettings={onOpenSettings}
       />
       
-      {/* Security Status Bar */}
+      {/* Security status bar */}
       <EncryptionIndicator 
         type={encryptionType}
         isP2P={extendedStatus === 'p2p-connected'}
-        participants={participants.length}
+        participants={participants.length} 
       />
       
-      {/* Messages Container */}
+      {/* Messages container */}
       <Box 
         flex="1" 
         overflowY="auto"
@@ -597,10 +534,10 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
           },
           '&::-webkit-scrollbar-track': {
             width: '6px',
-            background: colorMode === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.1)',
+            background: 'rgba(0,0,0,0.2)',
           },
           '&::-webkit-scrollbar-thumb': {
-            background: theme.colors.purple[500],
+            background: 'purple.500',
             borderRadius: '24px',
           },
         }}
@@ -628,24 +565,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
         <div ref={messagesEndRef} />
       </Box>
       
-      {/* Transaction Pending Indicator */}
-      {txPending && (
-        <Box 
-          py={2} 
-          px={4} 
-          bg={colorMode === 'dark' ? 'yellow.800' : 'yellow.100'} 
-          color={colorMode === 'dark' ? 'yellow.200' : 'yellow.800'}
-          borderTop="1px solid"
-          borderColor={colorMode === 'dark' ? 'yellow.700' : 'yellow.300'}
-        >
-          <Flex align="center" justify="center">
-            <FaEthereum style={{ marginRight: '8px' }} />
-            <Text fontWeight="medium">Encrypting and signing message...</Text>
-          </Flex>
-        </Box>
-      )}
-      
-      {/* Message Composer */}
+      {/* Message composer */}
       <MessageComposer 
         onSendMessage={sendMessage}
         isEncrypted={true}
@@ -655,7 +575,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
         isDisabled={extendedStatus !== 'connected' && extendedStatus !== 'p2p-connected'}
       />
       
-      {/* New Message Indicator */}
+      {/* New message indicator */}
       <AnimatePresence>
         {!isAtBottom && newMessageCount > 0 && (
           <motion.div
@@ -681,27 +601,25 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
         )}
       </AnimatePresence>
       
-      {/* Participants Panel */}
+      {/* Participants panel */}
       <ParticipantsList 
         participants={participants} 
         isOpen={isParticipantsOpen} 
         onClose={onCloseParticipants}
       />
       
-      {/* Invite Modal */}
+      {/* Invite modal */}
       <InviteModal
         isOpen={isInviteModalOpen}
         onClose={onCloseInviteModal}
         chatId={chatId}
         inviteLink={getInviteLink()}
       />
-      
-      {/* Settings Panel/Drawer - would be implemented separately */}
     </Flex>
   );
 };
 
-// Helper function to determine if avatar should be shown
+// Helper function: determine if avatar should be shown
 function shouldShowAvatar(currentMsg: any, prevMsg: any | null): boolean {
   if (!prevMsg) return true;
   // Check if sender changed or if messages are more than 5 minutes apart
