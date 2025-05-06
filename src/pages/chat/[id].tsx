@@ -2,51 +2,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import {
-  Box, 
-  Flex, 
-  Heading, 
-  useColorMode, 
-  Button,
-  useToast, 
-  Center, 
-  Spinner, 
-  useDisclosure,
-  IconButton,
-  Tooltip,
-  Text,
-  useMediaQuery,
-  VStack,
-  HStack,
-  Avatar,
-  Badge,
-  Menu,
-  MenuButton,
-  MenuList,
-  MenuItem,
-  Divider
+  Box, Flex, Heading, useColorMode, Button,
+  useToast, Center, Spinner, useDisclosure
 } from '@chakra-ui/react';
-import { 
-  FaWallet, 
-  FaArrowLeft, 
-  FaUsers, 
-  FaShare, 
-  FaEllipsisV,
-  FaLock,
-  FaShieldAlt,
-  FaNetworkWired,
-  FaInfoCircle,
-  FaUserPlus,
-  FaCog,
-  FaSignOutAlt,
-  FaBell
-} from 'react-icons/fa';
+import { FaWallet } from 'react-icons/fa';
 import { Layout } from '../../components/layout/Layout';
 import { useChat } from '../../hooks/useChat';
 import { useAuth } from '../../contexts/AuthContext';
 import { InviteModal } from '../../components/modals/InviteModal';
 import { EnhancedChatView } from '../../components/chat/EnhancedChatView';
 
-// Simple wallet button component (preserved from original)
+// Simple wallet button component
 const WalletButton = () => {
   const { isAuthenticated, user } = useAuth();
   return (
@@ -56,152 +22,7 @@ const WalletButton = () => {
   );
 };
 
-// Define interface for ChatHeader props
-interface ChatHeaderProps {
-  chatName: string;
-  participantCount: number;
-  encryptionType: string;
-  isP2P: boolean;
-  isMobile: boolean;
-  onBackClick: () => void;
-  onInviteClick: () => void;
-}
-
-// Chat info header with responsive design
-const ChatHeader: React.FC<ChatHeaderProps> = ({ 
-  chatName, 
-  participantCount, 
-  encryptionType, 
-  isP2P, 
-  isMobile, 
-  onBackClick, 
-  onInviteClick 
-}) => {
-  const { colorMode } = useColorMode();
-  const isEncrypted = encryptionType === 'high' || encryptionType === 'maximum';
-  
-  return (
-    <Flex 
-      align="center" 
-      py={2} 
-      px={3}
-      borderBottomWidth="1px"
-      borderColor={colorMode === 'dark' ? 'gray.700' : 'gray.200'}
-      bg={colorMode === 'dark' ? 'gray.800' : 'white'}
-      position="sticky"
-      top={0}
-      zIndex={10}
-      h={{ base: "60px", md: "70px" }}
-    >
-      {isMobile && (
-        <IconButton
-          icon={<FaArrowLeft />}
-          aria-label="Go back"
-          variant="ghost"
-          size="sm"
-          mr={2}
-          onClick={onBackClick}
-        />
-      )}
-      
-      <Avatar 
-        bg="purple.500" 
-        color="white" 
-        name={chatName || "Chat"} 
-        size={isMobile ? "sm" : "md"}
-        mr={3}
-      />
-      
-      <VStack spacing={0} align="flex-start" flex={1}>
-        <HStack>
-          <Text fontWeight="bold" fontSize={isMobile ? "md" : "lg"} noOfLines={1}>
-            {chatName || "Chat"}
-          </Text>
-          {isEncrypted && (
-            <Tooltip label="End-to-end encrypted" placement="top">
-              <Box as="span">
-                <FaLock color={colorMode === 'dark' ? '#68D391' : '#38A169'} size={isMobile ? 12 : 16} />
-              </Box>
-            </Tooltip>
-          )}
-          {isP2P && (
-            <Tooltip label="Peer-to-peer connection" placement="top">
-              <Box as="span">
-                <FaNetworkWired color={colorMode === 'dark' ? '#63B3ED' : '#3182CE'} size={isMobile ? 12 : 16} />
-              </Box>
-            </Tooltip>
-          )}
-        </HStack>
-        
-        {!isMobile && (
-          <HStack spacing={2}>
-            <Badge colorScheme="purple" variant="subtle">
-              <HStack spacing={1}>
-                <FaUsers size={12} />
-                <Text fontSize="xs">{participantCount || 0} participants</Text>
-              </HStack>
-            </Badge>
-            {isEncrypted && (
-              <Badge colorScheme="green" variant="subtle">
-                <HStack spacing={1}>
-                  <FaShieldAlt size={12} />
-                  <Text fontSize="xs">Encrypted</Text>
-                </HStack>
-              </Badge>
-            )}
-          </HStack>
-        )}
-      </VStack>
-      
-      <HStack spacing={isMobile ? 1 : 2}>
-        {!isMobile && (
-          <Button
-            leftIcon={<FaUserPlus />}
-            size="sm"
-            colorScheme="purple"
-            variant="outline"
-            onClick={onInviteClick}
-          >
-            Invite
-          </Button>
-        )}
-        
-        <Menu>
-          <MenuButton
-            as={IconButton}
-            icon={<FaEllipsisV />}
-            variant="ghost"
-            aria-label="Options"
-            size={isMobile ? "sm" : "md"}
-          />
-          <MenuList>
-            <MenuItem icon={<FaUserPlus />} onClick={onInviteClick}>
-              Invite People
-            </MenuItem>
-            <MenuItem icon={<FaShare />}>
-              Share Chat
-            </MenuItem>
-            <MenuItem icon={<FaInfoCircle />}>
-              Chat Info
-            </MenuItem>
-            <Divider />
-            <MenuItem icon={<FaBell />}>
-              Mute Notifications
-            </MenuItem>
-            <MenuItem icon={<FaCog />}>
-              Chat Settings
-            </MenuItem>
-            <MenuItem icon={<FaSignOutAlt />} color="red.400">
-              Leave Chat
-            </MenuItem>
-          </MenuList>
-        </Menu>
-      </HStack>
-    </Flex>
-  );
-};
-
-// Define getStaticProps and getStaticPaths for proper routing (preserved from original)
+// Define getStaticProps and getStaticPaths for proper routing
 export async function getStaticProps() {
   return {
     props: {}
@@ -215,13 +36,6 @@ export async function getStaticPaths() {
   };
 }
 
-// Define the interface for chat info
-interface ChatInfo {
-  name?: string;
-  encryptionType?: string;
-  useP2P?: boolean;
-}
-
 const ChatPage = () => {
   const router = useRouter();
   const { id } = router.query;
@@ -231,17 +45,11 @@ const ChatPage = () => {
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
   
-  // Client-side only states (preserved from original)
+  // Client-side only states
   const [isClient, setIsClient] = useState(false);
   const [currentUrl, setCurrentUrl] = useState('');
   
-  // Media queries for responsive design
-  const [isMobile] = useMediaQuery("(max-width: 480px)");
-  
-  // Get chat data - keeping the original implementation intact
-  const chatData = useChat(chatId);
-  
-  // Initialize client-side functionality (preserved from original)
+  // Initialize client-side functionality
   useEffect(() => {
     setIsClient(true);
     if (typeof window !== 'undefined') {
@@ -254,7 +62,7 @@ const ChatPage = () => {
     }
   }, [isAuthenticated, isLoading, router]);
   
-  // Function to copy to clipboard with browser API (preserved from original)
+  // Function to copy to clipboard with browser API - we'll keep this for internal use
   const copyToClipboard = useCallback(() => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(currentUrl);
@@ -262,36 +70,19 @@ const ChatPage = () => {
         title: "Invitation link copied",
         status: "success",
         duration: 2000,
-        isClosable: true,
-        position: isMobile ? "bottom" : "top-right"
       });
     }
-  }, [currentUrl, toast, isMobile]);
-  
-  // Handle back button for mobile view
-  const handleBackClick = useCallback(() => {
-    router.push('/dashboard');
-  }, [router]);
+  }, [currentUrl, toast]);
   
   // Loading state when router is not ready or in SSR
   if (!isClient || isLoading || !isAuthenticated) {
     return (
       <Layout>
         <Center h="calc(100vh - 80px)">
-          <VStack spacing={4}>
-            <Spinner 
-              size={isMobile ? "lg" : "xl"} 
-              color="purple.500" 
-              thickness="4px" 
-              speed="0.65s" 
-            />
-            <Heading mt={2} fontSize={isMobile ? "md" : "lg"}>
-              Loading chat...
-            </Heading>
-            <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.600'} fontSize={isMobile ? "xs" : "sm"}>
-              Establishing secure connection
-            </Text>
-          </VStack>
+          <Flex direction="column" align="center">
+            <Spinner size="xl" color="purple.500" thickness="4px" speed="0.65s" />
+            <Heading mt={4} fontSize="lg">Loading chat...</Heading>
+          </Flex>
         </Center>
       </Layout>
     );
@@ -301,27 +92,16 @@ const ChatPage = () => {
     return (
       <Layout>
         <Center h="calc(100vh - 80px)">
-          <VStack spacing={4}>
-            <Box>
-              <FaInfoCircle 
-                size={isMobile ? 32 : 40} 
-                color={colorMode === 'dark' ? '#FC8181' : '#E53E3E'} 
-              />
-            </Box>
-            <Heading fontSize={isMobile ? "md" : "lg"}>Invalid chat ID</Heading>
-            <Text color={colorMode === 'dark' ? 'gray.400' : 'gray.600'} fontSize={isMobile ? "xs" : "sm"} textAlign="center">
-              The chat you're looking for does not exist or you don't have access to it.
-            </Text>
+          <Flex direction="column" align="center">
+            <Heading fontSize="lg">Invalid chat ID</Heading>
             <Button 
-              mt={2} 
+              mt={4} 
               colorScheme="purple" 
-              size={isMobile ? "sm" : "md"}
               onClick={() => router.push('/dashboard')}
-              leftIcon={<FaArrowLeft />}
             >
               Return to Dashboard
             </Button>
-          </VStack>
+          </Flex>
         </Center>
       </Layout>
     );
@@ -330,67 +110,44 @@ const ChatPage = () => {
   // Handle manual copy action when user clicks the copy button inside the modal
   const handleCopyAction = () => {
     copyToClipboard();
+    // If InviteModal has onClosed, we would call it here
   };
-  
-  // Extract chat info values with proper type safety
-  let chatName = "Chat";
-  let encryptionType = "none";
-  let isP2P = false;
-  let participantCount = 0;
-  
-  // Only access properties if chatInfo exists
-  if (chatData.chatInfo) {
-    chatName = chatData.chatInfo.name || "Chat";
-    encryptionType = chatData.chatInfo.encryptionType || "none";
-    isP2P = !!chatData.chatInfo.useP2P;
-  }
-  
-  // Get participant count safely
-  if (chatData.participants && Array.isArray(chatData.participants)) {
-    participantCount = chatData.participants.length;
-  }
   
   return (
     <Layout>
-      {/* Optimize layout for mobile using CSS only */}
-      <Box 
-        css={{
-          "@media (max-width: 480px)": {
-            height: "calc(100vh - 60px)",
-            marginTop: "-10px"
-          }
-        }}
-        h="calc(100vh - 80px)"
-        display="flex"
-        flexDirection="column"
-        overflow="hidden"
-      >
-        {/* Enhanced chat header with properly typed props */}
-        <ChatHeader 
-          chatName={chatName}
-          participantCount={participantCount}
-          encryptionType={encryptionType}
-          isP2P={isP2P}
-          isMobile={isMobile}
-          onBackClick={handleBackClick}
-          onInviteClick={onOpen}
-        />
-        
-        {/* Main chat area - EnhancedChatView */}
-        <Box flex="1" overflow="hidden">
-          <EnhancedChatView chatId={chatId} />
-        </Box>
+      {/* Web3 wallet connection status */}
+      <Box position="absolute" top={2} right={4} zIndex={10}>
+        <WalletButton />
       </Box>
       
-      {/* Invite Modal */}
+      {/* Only pass the chatId prop to EnhancedChatView */}
+      <EnhancedChatView 
+        chatId={chatId} 
+      />
+      
       {isClient && (
         <InviteModal 
           isOpen={isOpen} 
           onClose={onClose}
           chatId={chatId}
           inviteLink={currentUrl}
+          // Remove onCopy prop - it's not defined in InviteModalProps
+          // Remove solanaEnabled prop - it's likely also not defined or needs to be adapted
         />
       )}
+      
+      {/* Add a global event listener to handle copy actions */}
+      <Box id="copy-event-handler" hidden>
+        <script dangerouslySetInnerHTML={{
+          __html: `
+            document.addEventListener('click', function(e) {
+              if (e.target && e.target.id === 'copy-link-button') {
+                document.dispatchEvent(new CustomEvent('copy-invite-link'));
+              }
+            });
+          `
+        }} />
+      </Box>
     </Layout>
   );
 };
