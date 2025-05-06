@@ -745,7 +745,6 @@ const Dashboard = () => {
                                 onDelete={handleDeleteRoom}
                                 onArchive={handleArchiveRoom}
                                 onStar={handleStarRoom}
-                                isMobile={isMobile}
                               />
                             </MotionBox>
                           ))}
@@ -934,7 +933,6 @@ const ChatRoomsList: React.FC<ChatRoomsListProps> = ({
               onDelete={onDeleteRoom}
               onArchive={onArchiveRoom}
               onStar={onStarRoom}
-              isMobile={isMobile}
             />
           </MotionBox>
         ))}
