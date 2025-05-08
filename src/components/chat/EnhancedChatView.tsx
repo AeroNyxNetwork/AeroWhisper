@@ -437,8 +437,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
   }, [messages.length, isAtBottom]);
   
   // Handle notifications for new messages
-  // Handle notifications for new messages
-useEffect(() => {
+  useEffect(() => {
     if (messages.length === 0) return;
     
     // Get the latest message
@@ -467,6 +466,13 @@ useEffect(() => {
                       latestMessage.senderName || 
                       'Unknown User';
     
+    // Ensure timestamp is a string
+    const timestamp = typeof latestMessage.timestamp === 'string' 
+      ? latestMessage.timestamp 
+      : (latestMessage.timestamp instanceof Date 
+          ? latestMessage.timestamp.toISOString() 
+          : new Date().toISOString());
+    
     // Create notification object
     const notificationMsg = {
       id: latestMessage.id,
@@ -475,7 +481,7 @@ useEffect(() => {
       senderName: senderName,
       chatId: chatId,
       chatName: chatInfo?.name || 'Secure Chat',
-      timestamp: latestMessage.timestamp || new Date().toISOString(),
+      timestamp: timestamp, // Now this is guaranteed to be a string
       isDirectMessage: participants.length === 2,
       hasMention
     };
