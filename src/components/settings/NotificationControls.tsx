@@ -31,6 +31,7 @@ import {
   FaInfoCircle,
   FaBellSlash,
 } from 'react-icons/fa';
+import { useNotifications } from '../../contexts/NotificationContext';
 
 interface NotificationControlsProps {
   onSave?: () => void;
@@ -40,51 +41,25 @@ export const NotificationControls: React.FC<NotificationControlsProps> = ({ onSa
   const { colorMode } = useColorMode();
   const toast = useToast();
   
-  // Check if browser supports notifications
-  const [notificationsSupported, setNotificationsSupported] = useState(false);
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'default'>('default');
-  
-  // Notification settings state
-  const [settings, setSettings] = useState({
-    enableNotifications: false,
-    notificationSound: 'standard',
-    notifyOnAllMessages: false,
-    notifyOnMentions: true,
-    notifyOnDirectMessages: true,
-    quietHoursEnabled: false,
-    quietHoursStart: '22:00',
-    quietHoursEnd: '08:00',
-    showPreview: true,
-    vibrate: true,
-  });
+  // Use the notification context instead of local state
+  const { 
+    settings, 
+    updateSettings, 
+    hasPermission, 
+    requestPermission,
+    notificationsSupported 
+  } = useNotifications();
   
   // Saving state
   const [isSaving, setIsSaving] = useState(false);
   
-  // Check browser notification support on mount
-  useEffect(() => {
-    setNotificationsSupported('Notification' in window);
-    if ('Notification' in window) {
-      setNotificationPermission(Notification.permission);
-    }
-  }, []);
-  
-  const requestNotificationPermission = async () => {
+  const handleRequestPermission = async () => {
     try {
-      const permission = await Notification.requestPermission();
-      setNotificationPermission(permission);
+      const granted = await requestPermission();
       
-      if (permission === 'granted') {
-        setSettings(prev => ({
-          ...prev,
-          enableNotifications: true
-        }));
-        
-        // Show a test notification
-        const notification = new Notification("AeroNyx Notifications Enabled", {
-          body: "You will now receive secure message notifications",
-          icon: "/logo.svg" // Assuming you have a logo at this path
-        });
+      if (granted) {
+        // Update settings to enable notifications
+        updateSettings({ enableNotifications: true });
         
         toast({
           title: "Notifications enabled",
@@ -107,18 +82,22 @@ export const NotificationControls: React.FC<NotificationControlsProps> = ({ onSa
   };
   
   const handleSwitchChange = (name: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSettings({ ...settings, [name]: e.target.checked });
+    updateSettings({ [name]: e.target.checked });
   };
   
   const handleInputChange = (name: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setSettings({ ...settings, [name]: e.target.value });
+    updateSettings({ [name]: e.target.value });
   };
   
   const saveSettings = async () => {
     setIsSaving(true);
     try {
-      // In a real implementation, this would call an API endpoint
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
+      // Ensure the settings are saved to localStorage via context
+      try {
+        localStorage.setItem('aero-notification-settings', JSON.stringify(settings));
+      } catch (error) {
+        console.error('Failed to save notification settings to localStorage:', error);
+      }
       
       toast({
         title: "Notification settings saved",
@@ -161,7 +140,7 @@ export const NotificationControls: React.FC<NotificationControlsProps> = ({ onSa
         
         {notificationsSupported ? (
           <>
-            {notificationPermission !== 'granted' && (
+            {!hasPermission && (
               <Alert status="info" borderRadius="md">
                 <AlertIcon />
                 Browser notifications are not enabled. Enable them to receive message alerts even when the app is in the background.
@@ -169,7 +148,7 @@ export const NotificationControls: React.FC<NotificationControlsProps> = ({ onSa
                   ml={4} 
                   size="sm" 
                   colorScheme="blue"
-                  onClick={requestNotificationPermission}
+                  onClick={handleRequestPermission}
                 >
                   Enable Notifications
                 </Button>
@@ -189,7 +168,7 @@ export const NotificationControls: React.FC<NotificationControlsProps> = ({ onSa
                     colorScheme="purple"
                     isChecked={settings.enableNotifications}
                     onChange={handleSwitchChange('enableNotifications')}
-                    isDisabled={notificationPermission !== 'granted'}
+                    isDisabled={!hasPermission}
                   />
                 </FormControl>
                 
