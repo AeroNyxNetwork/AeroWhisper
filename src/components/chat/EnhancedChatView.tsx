@@ -452,8 +452,13 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
       return;
     }
     
-    // Skip if the message status isn't success
-    if (latestMessage.status !== 'success' && latestMessage.status !== 'delivered') return;
+    // Use optional chaining to safely check message status
+    // This avoids the type error by handling undefined status safely
+    const messageStatus = latestMessage.status;
+    const isValidStatus = messageStatus === 'success' || messageStatus === 'delivered';
+    
+    // Skip if the message doesn't have a valid status
+    if (!isValidStatus) return;
     
     // Check if message mentions the current user
     const hasMention = latestMessage.content?.includes(`@${user?.displayName}`) || false;
