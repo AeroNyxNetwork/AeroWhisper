@@ -90,7 +90,7 @@ interface MessageComposerProps {
 }
 
 const MotionBox = motion(Box);
-const [isMobile] = useMediaQuery("(max-width: 768px)");
+
 
 export const MessageComposer: React.FC<MessageComposerProps> = ({
   onSendMessage,
@@ -283,7 +283,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   };
   
   const gasInfo = formatGasLevel(gasLevel);
-  
+  const [isMobile] = useMediaQuery("(max-width: 768px)");
   // Get animation variants for the composer box
   const composerVariants = {
     disabled: { opacity: 0.7, y: 5 },
