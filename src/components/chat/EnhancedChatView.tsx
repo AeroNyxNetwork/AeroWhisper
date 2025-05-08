@@ -23,7 +23,8 @@ import {
   MenuList,
   MenuItem,
   Avatar,
-  useToast
+  useToast,
+  useColorMode 
 } from '@chakra-ui/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { 
@@ -77,6 +78,7 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
   onOpenSettings 
 }) => {
   const [showBlockInfo, setShowBlockInfo] = useState(false);
+  const { colorMode } = useColorMode(); 
   
   // Simulated blockchain data
   const blockData = {
@@ -90,10 +92,11 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
   return (
     <Box 
       borderBottom="1px solid"
-      borderColor="gray.700"
+      borderColor={colorMode === 'dark' ? 'gray.700' : 'gray.200'} 
       p={4}
       position="relative"
       overflow="hidden"
+      bg={colorMode === 'dark' ? 'gray.800' : 'white'} 
     >
       {/* Blockchain-inspired background animation */}
       <Box 
@@ -199,7 +202,7 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
             variant="ghost"
             zIndex={2}
           />
-          <MenuList zIndex={9999}>
+          <MenuList zIndex={9999} bg={colorMode === 'dark' ? 'gray.700' : 'white'}>
             <MenuItem icon={<FaCog />} onClick={onOpenSettings}>Settings</MenuItem>
             <MenuItem icon={<FaKey />}>Encryption Details</MenuItem>
             <MenuItem icon={<FaUser />}>View Participants</MenuItem>
@@ -215,7 +218,7 @@ const BlockchainInspiredHeader: React.FC<BlockchainInspiredHeaderProps> = ({
           mt={2} 
           p={2} 
           borderRadius="md" 
-          bg="gray.700"
+          bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'} // 动态设置背景颜色
           fontSize="xs"
           display="flex"
           flexWrap="wrap"
@@ -266,6 +269,8 @@ const ParticipantsList: React.FC<ParticipantsListProps> = ({
   isOpen, 
   onClose 
 }) => {
+  const { colorMode } = useColorMode(); // 添加 useColorMode
+  
   return (
     <Drawer
       isOpen={isOpen}
@@ -274,9 +279,9 @@ const ParticipantsList: React.FC<ParticipantsListProps> = ({
       size="md"
     >
       <DrawerOverlay backdropFilter="blur(3px)" />
-      <DrawerContent>
+      <DrawerContent bg={colorMode === 'dark' ? 'gray.800' : 'white'}>
         <DrawerCloseButton />
-        <DrawerHeader borderBottomWidth="1px">
+        <DrawerHeader borderBottomWidth="1px" borderColor={colorMode === 'dark' ? 'gray.700' : 'gray.200'}>
           <Flex align="center">
             <FaUsers style={{ marginRight: '12px' }} />
             Chat Participants ({participants.length})
@@ -290,11 +295,11 @@ const ParticipantsList: React.FC<ParticipantsListProps> = ({
                 key={participant.id}
                 p={3}
                 borderRadius="md"
-                bg="gray.700"
+                bg={colorMode === 'dark' ? 'gray.700' : 'gray.100'}
                 align="center"
                 justify="space-between"
                 _hover={{
-                  bg: "gray.600",
+                  bg: colorMode === 'dark' ? 'gray.600' : 'gray.200',
                   transform: 'translateY(-2px)',
                   transition: 'all 0.2s'
                 }}
@@ -341,7 +346,7 @@ const ParticipantsList: React.FC<ParticipantsListProps> = ({
                     variant="ghost"
                     size="sm"
                   />
-                  <MenuList>
+                  <MenuList bg={colorMode === 'dark' ? 'gray.700' : 'white'}>
                     <MenuItem icon={<FaUser />}>View Profile</MenuItem>
                     <MenuItem icon={<FaKey />}>View Public Key</MenuItem>
                   </MenuList>
@@ -369,6 +374,7 @@ interface EnhancedChatViewProps {
 export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) => {
   const { user } = useAuth();
   const toast = useToast();
+  const { colorMode } = useColorMode(); // 添加 useColorMode
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -481,7 +487,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
       senderName: senderName,
       chatId: chatId,
       chatName: chatInfo?.name || 'Secure Chat',
-      timestamp: timestamp, // Now this is guaranteed to be a string
+      timestamp: timestamp, // 保证这是一个字符串
       isDirectMessage: participants.length === 2,
       hasMention
     };
@@ -559,7 +565,7 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
       direction="column" 
       h="calc(100vh - 80px)"
       position="relative"
-      bg="gray.900"
+      bg={colorMode === 'dark' ? 'gray.900' : 'white'} // 动态设置背景颜色
     >
       {/* Connection status indicator */}
       {extendedStatus !== 'connected' && extendedStatus !== 'p2p-connected' && (
@@ -592,13 +598,14 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
         py={2}
         ref={messagesContainerRef}
         onScroll={handleScroll}
+        bg={colorMode === 'dark' ? 'gray.900' : 'white'} // 动态设置背景颜色
         css={{
           '&::-webkit-scrollbar': {
             width: '4px',
           },
           '&::-webkit-scrollbar-track': {
             width: '6px',
-            background: 'rgba(0,0,0,0.2)',
+            background: colorMode === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)', // 动态设置滚动条背景
           },
           '&::-webkit-scrollbar-thumb': {
             background: 'purple.500',
