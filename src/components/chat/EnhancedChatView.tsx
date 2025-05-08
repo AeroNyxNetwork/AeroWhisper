@@ -48,6 +48,7 @@ import { useChat } from '../../hooks/useChat';
 import { ConnectionIndicator } from '../ui/ConnectionIndicator';
 import { useAuth } from '../../contexts/AuthContext';
 import { InviteModal } from '../modals/InviteModal';
+import { useNotifications } from '../../contexts/NotificationContext';
 
 // Message animation variants
 const messageVariants = {
@@ -372,6 +373,10 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [newMessageCount, setNewMessageCount] = useState(0);
+  const [lastProcessedMessageId, setLastProcessedMessageId] = useState<string | null>(null);
+  
+  // Add notification context
+  const { showNotification } = useNotifications();
   
   // Chat state
   const { 
@@ -430,6 +435,54 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
       setNewMessageCount(prev => prev + 1);
     }
   }, [messages.length, isAtBottom]);
+  
+  // Handle notifications for new messages
+  useEffect(() => {
+    if (messages.length === 0) return;
+    
+    // Get the latest message
+    const latestMessage = messages[messages.length - 1];
+    
+    // Skip if we've already processed this message
+    if (lastProcessedMessageId === latestMessage.id) return;
+    
+    // Skip if it's our own message
+    if (latestMessage.senderId === user?.id) {
+      setLastProcessedMessageId(latestMessage.id);
+      return;
+    }
+    
+    // Skip if the message status isn't success
+    if (latestMessage.status !== 'success' && latestMessage.status !== 'delivered') return;
+    
+    // Check if message mentions the current user
+    const hasMention = latestMessage.content?.includes(`@${user?.displayName}`) || false;
+    
+    // Find sender display name
+    const senderName = participants.find(p => p.id === latestMessage.senderId)?.displayName || 
+                      latestMessage.senderName || 
+                      'Unknown User';
+    
+    // Create notification object
+    const notificationMsg = {
+      id: latestMessage.id,
+      content: latestMessage.content || 'New message received',
+      senderId: latestMessage.senderId,
+      senderName: senderName,
+      chatId: chatId,
+      chatName: chatInfo?.name || 'Secure Chat',
+      timestamp: latestMessage.timestamp || new Date().toISOString(),
+      isDirectMessage: participants.length === 2,
+      hasMention
+    };
+    
+    // Show notification
+    showNotification(notificationMsg);
+    
+    // Update the last processed message id
+    setLastProcessedMessageId(latestMessage.id);
+    
+  }, [messages, user, chatId, chatInfo, participants, showNotification, lastProcessedMessageId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
