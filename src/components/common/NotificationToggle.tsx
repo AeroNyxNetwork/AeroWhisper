@@ -15,9 +15,11 @@ import {
   ModalFooter,
   ModalBody,
   ModalCloseButton,
-  useDisclosure
+  useDisclosure,
+  Switch
 } from '@chakra-ui/react';
 import { FaBell, FaBellSlash, FaInfoCircle } from 'react-icons/fa';
+import { useNotifications } from '../../contexts/NotificationContext';
 
 // AeroNyx logo as inline SVG data URI
 const AERONYX_LOGO_SVG = `data:image/svg+xml;base64,${btoa(`<?xml version="1.0" standalone="no"?>
@@ -54,6 +56,15 @@ export const NotificationToggle: React.FC<NotificationToggleProps> = ({
   const { colorMode } = useColorMode();
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
+  
+  // Use notification context
+  const {
+    settings,
+    updateSettings,
+    hasPermission,
+    requestPermission,
+    notificationsSupported
+  } = useNotifications();
   
   // Track notification permission status
   const [permissionStatus, setPermissionStatus] = useState<NotificationStatus>('default');
@@ -141,32 +152,17 @@ export const NotificationToggle: React.FC<NotificationToggleProps> = ({
       setPermissionStatus('unavailable');
     }
     
-    // Set up event listener for visibility changes
-    // This helps update the permission status when user returns to the page
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && isSupported && 'Notification' in window) {
-        try {
-          const currentPermission = Notification.permission;
-          if (currentPermission === 'granted') {
-            setPermissionStatus('granted');
-          } else if (currentPermission === 'denied') {
-            setPermissionStatus('denied');
-          }
-        } catch (error) {
-          console.error("Error in visibility change handler:", error);
-        }
-      }
-    };
-    
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
   }, []);
+
+  // Sync with NotificationContext
+  useEffect(() => {
+    if (hasPermission) {
+      setPermissionStatus('granted');
+    }
+  }, [hasPermission]);
   
   // Handle requesting notification permission
-  const requestPermission = async () => {
+  const handleNotificationToggle = async () => {
     if (!isSupported || typeof window === 'undefined' || !('Notification' in window)) {
       toast({
         title: 'Notifications not supported',
@@ -177,14 +173,45 @@ export const NotificationToggle: React.FC<NotificationToggleProps> = ({
       });
       return;
     }
+
+    // If notifications are currently enabled, we want to disable them
+    if (settings.enableNotifications) {
+      // Update context to disable notifications
+      updateSettings({ enableNotifications: false });
+      toast({
+        title: 'Notifications disabled',
+        description: 'You will no longer receive notifications from AeroNyx',
+        status: 'info',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     
+    // If notifications are disabled but we already have permission, just enable them
+    if (permissionStatus === 'granted') {
+      // Update context to enable notifications
+      updateSettings({ enableNotifications: true });
+      toast({
+        title: 'Notifications enabled',
+        description: 'You will now receive notifications from AeroNyx',
+        status: 'success',
+        duration: 3000,
+        isClosable: true,
+      });
+      sendTestNotification();
+      return;
+    }
+    
+    // Otherwise, request permission
     try {
-      // Request permission
-      const permission = await Notification.requestPermission();
+      // Request permission through context
+      const granted = await requestPermission();
       
       // Update state based on user's choice
-      if (permission === 'granted') {
+      if (granted) {
         setPermissionStatus('granted');
+        updateSettings({ enableNotifications: true });
         sendTestNotification();
         toast({
           title: 'Notifications enabled',
@@ -193,8 +220,9 @@ export const NotificationToggle: React.FC<NotificationToggleProps> = ({
           duration: 3000,
           isClosable: true,
         });
-      } else if (permission === 'denied') {
+      } else if (Notification.permission === 'denied') {
         setPermissionStatus('denied');
+        updateSettings({ enableNotifications: false });
         toast({
           title: 'Notifications blocked',
           description: 'Please update your browser settings to enable notifications',
@@ -266,7 +294,7 @@ export const NotificationToggle: React.FC<NotificationToggleProps> = ({
     onOpen(); // Open modal with instructions
   };
   
-  // Determine button appearance based on status
+  // Determine button appearance based on status and settings
   const getButtonProps = () => {
     if (!isSupported) {
       return {
@@ -286,58 +314,56 @@ export const NotificationToggle: React.FC<NotificationToggleProps> = ({
       };
     }
     
-    switch (permissionStatus) {
-      case 'granted':
-        return {
-          icon: <FaBell />,
-          colorScheme: 'green',
-          tooltipText: 'Notifications enabled',
-          onClick: () => {
-            // Send a test notification to confirm they're working
-            sendTestNotification();
-            toast({
-              title: 'Notifications are enabled',
-              description: 'A test notification has been sent',
-              status: 'success',
-              duration: 2000,
-              isClosable: true,
-            });
-          }, 
-          'aria-label': 'Notifications enabled'
-        };
-      case 'denied':
-        return {
-          icon: <FaBellSlash />,
-          colorScheme: 'red',
-          tooltipText: 'Notifications blocked - Click to open settings',
-          onClick: openBrowserSettings,
-          'aria-label': 'Notifications blocked'
-        };
-      case 'unavailable':
-        return {
-          icon: <FaBellSlash />,
-          colorScheme: 'gray',
-          tooltipText: 'Notifications not available',
-          onClick: () => {
-            toast({
-              title: 'Notifications unavailable',
-              description: 'Notifications are not available in your current browser environment',
-              status: 'info',
-              duration: 3000,
-              isClosable: true,
-            });
-          },
-          'aria-label': 'Notifications unavailable'
-        };
-      default:
-        return {
-          icon: <FaBell />,
-          colorScheme: 'purple',
-          tooltipText: 'Enable notifications',
-          onClick: requestPermission,
-          'aria-label': 'Enable notifications'
-        };
+    if (permissionStatus === 'denied') {
+      return {
+        icon: <FaBellSlash />,
+        colorScheme: 'red',
+        tooltipText: 'Notifications blocked - Click to open settings',
+        onClick: openBrowserSettings,
+        'aria-label': 'Notifications blocked'
+      };
     }
+    
+    if (permissionStatus === 'granted') {
+      return {
+        icon: settings.enableNotifications ? <FaBell /> : <FaBellSlash />,
+        colorScheme: settings.enableNotifications ? 'green' : 'gray',
+        tooltipText: settings.enableNotifications ? 
+          'Notifications enabled - Click to disable' : 
+          'Notifications disabled - Click to enable',
+        onClick: handleNotificationToggle,
+        'aria-label': settings.enableNotifications ? 
+          'Disable notifications' : 
+          'Enable notifications'
+      };
+    }
+    
+    if (permissionStatus === 'unavailable') {
+      return {
+        icon: <FaBellSlash />,
+        colorScheme: 'gray',
+        tooltipText: 'Notifications not available',
+        onClick: () => {
+          toast({
+            title: 'Notifications unavailable',
+            description: 'Notifications are not available in your current browser environment',
+            status: 'info',
+            duration: 3000,
+            isClosable: true,
+          });
+        },
+        'aria-label': 'Notifications unavailable'
+      };
+    }
+    
+    // Default
+    return {
+      icon: <FaBell />,
+      colorScheme: 'purple',
+      tooltipText: 'Enable notifications',
+      onClick: handleNotificationToggle,
+      'aria-label': 'Enable notifications'
+    };
   };
   
   const buttonProps = getButtonProps();
@@ -369,8 +395,9 @@ export const NotificationToggle: React.FC<NotificationToggleProps> = ({
           onClick={buttonProps.onClick}
           className={className}
         >
-          {permissionStatus === 'granted' ? 'Notifications On' : 
-           permissionStatus === 'denied' ? 'Notifications Off' : 
+          {permissionStatus === 'granted' && settings.enableNotifications ? 'Notifications On' : 
+           permissionStatus === 'granted' && !settings.enableNotifications ? 'Notifications Off' :
+           permissionStatus === 'denied' ? 'Notifications Blocked' : 
            permissionStatus === 'unavailable' || !isSupported ? 'Not Supported' :
            'Enable Notifications'}
         </Button>
