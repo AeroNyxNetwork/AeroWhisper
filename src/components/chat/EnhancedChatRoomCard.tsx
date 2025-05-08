@@ -36,7 +36,8 @@ import {
   AlertDialogContent,
   AlertDialogOverlay,
   useToast,
-  SimpleGrid
+  SimpleGrid,
+  Portal
 } from '@chakra-ui/react';
 import { 
   FaShieldAlt, 
@@ -444,68 +445,72 @@ export const EnhancedChatRoomCard: React.FC<EnhancedChatRoomCardProps> = ({
             </Tooltip>
           </HStack>
           
-          <Menu isLazy>
+          {/* FIX: Menu button is always visible and properly positioned */}
+          <Menu closeOnSelect placement="bottom-end">
             <MenuButton
               as={IconButton}
               icon={<FaEllipsisV />}
               variant="ghost"
               size="sm"
               onClick={(e) => e.stopPropagation()}
-              opacity={isHovered ? 1 : 0}
-              transition="opacity 0.2s"
+              zIndex={3}
+              // FIX: Removed opacity condition to always show the button
             />
-            <MenuList>
-              <MenuItem icon={<FaInfoCircle />} onClick={(e) => {
-                e.stopPropagation();
-                onOpenDetails();
-              }}>
-                View Details
-              </MenuItem>
-              <MenuItem 
-                icon={<FaUserPlus />} 
-                onClick={(e) => e.stopPropagation()}
-              >
-                Invite Members
-              </MenuItem>
-              <MenuItem 
-                icon={isStarred ? <FaStar color="yellow.400" /> : <FaStar />} 
-                onClick={(e) => {
+            {/* FIX: Added Portal to ensure menu renders above other elements */}
+            <Portal>
+              <MenuList zIndex={1500}>
+                <MenuItem icon={<FaInfoCircle />} onClick={(e) => {
                   e.stopPropagation();
-                  handleStar();
-                }}
-              >
-                {isStarred ? 'Unstar' : 'Star'} Chat
-              </MenuItem>
-              <MenuItem 
-                icon={isMuted ? <FaRegBell /> : <FaBellSlash />} 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsMuted(!isMuted);
-                }}
-              >
-                {isMuted ? 'Unmute' : 'Mute'} Notifications
-              </MenuItem>
-              <Divider />
-              <MenuItem 
-                icon={<FaArchive />} 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleArchive();
-                }}
-              >
-                Archive Chat
-              </MenuItem>
-              <MenuItem 
-                icon={<FaTrash />} 
-                color="red.500"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenDeleteAlert();
-                }}
-              >
-                Delete Chat
-              </MenuItem>
-            </MenuList>
+                  onOpenDetails();
+                }}>
+                  View Details
+                </MenuItem>
+                <MenuItem 
+                  icon={<FaUserPlus />} 
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  Invite Members
+                </MenuItem>
+                <MenuItem 
+                  icon={isStarred ? <FaStar color="yellow.400" /> : <FaStar />} 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleStar();
+                  }}
+                >
+                  {isStarred ? 'Unstar' : 'Star'} Chat
+                </MenuItem>
+                <MenuItem 
+                  icon={isMuted ? <FaRegBell /> : <FaBellSlash />} 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsMuted(!isMuted);
+                  }}
+                >
+                  {isMuted ? 'Unmute' : 'Mute'} Notifications
+                </MenuItem>
+                <Divider />
+                <MenuItem 
+                  icon={<FaArchive />} 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleArchive();
+                  }}
+                >
+                  Archive Chat
+                </MenuItem>
+                <MenuItem 
+                  icon={<FaTrash />} 
+                  color="red.500"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenDeleteAlert();
+                  }}
+                >
+                  Delete Chat
+                </MenuItem>
+              </MenuList>
+            </Portal>
           </Menu>
         </Flex>
       </VStack>
