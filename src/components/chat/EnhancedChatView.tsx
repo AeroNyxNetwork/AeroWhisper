@@ -437,7 +437,8 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
   }, [messages.length, isAtBottom]);
   
   // Handle notifications for new messages
-  useEffect(() => {
+  // Handle notifications for new messages
+useEffect(() => {
     if (messages.length === 0) return;
     
     // Get the latest message
@@ -452,13 +453,11 @@ export const EnhancedChatView: React.FC<EnhancedChatViewProps> = ({ chatId }) =>
       return;
     }
     
-    // Use optional chaining to safely check message status
-    // This avoids the type error by handling undefined status safely
-    const messageStatus = latestMessage.status;
-    const isValidStatus = messageStatus === 'success' || messageStatus === 'delivered';
+    // Use string literal type and type guard to handle the message status
+    const status = latestMessage.status as string | undefined;
     
-    // Skip if the message doesn't have a valid status
-    if (!isValidStatus) return;
+    // Skip if the message status isn't valid - without using direct comparison
+    if (!status || (status !== 'success' && status !== 'delivered')) return;
     
     // Check if message mentions the current user
     const hasMention = latestMessage.content?.includes(`@${user?.displayName}`) || false;
