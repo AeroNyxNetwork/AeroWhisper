@@ -41,6 +41,7 @@ import {
   Input,
   InputGroup,
   InputRightElement,
+  useMediaQuery,
 } from '@chakra-ui/react';
 import {
   FaPaperPlane,
@@ -102,6 +103,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   chatId,
 }) => {
   const { colorMode } = useColorMode();
+  const [isMobile] = useMediaQuery("(max-width: 768px)");
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -283,7 +285,6 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   };
   
   const gasInfo = formatGasLevel(gasLevel);
-  const [isMobile] = useMediaQuery("(max-width: 768px)");
   // Get animation variants for the composer box
   const composerVariants = {
     disabled: { opacity: 0.7, y: 5 },
