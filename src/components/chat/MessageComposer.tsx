@@ -90,6 +90,7 @@ interface MessageComposerProps {
 }
 
 const MotionBox = motion(Box);
+const [isMobile] = useMediaQuery("(max-width: 768px)");
 
 export const MessageComposer: React.FC<MessageComposerProps> = ({
   onSendMessage,
@@ -222,7 +223,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   // Handle keyboard shortcuts (Ctrl/Cmd + Enter to send)
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     // Check for Ctrl/Cmd + Enter
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    if (e.key === 'Enter') {
       e.preventDefault();
       sendMessage();
     }
@@ -558,13 +559,18 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
               
               <Box flex="1" />
               
-              <Tooltip label="Keyboard shortcuts (Ctrl+Enter to send)" placement="top">
+              {!isMobile && (
+              <Tooltip label="Keyboard shortcuts" placement="top">
                 <Flex align="center" mx={2} opacity={0.6}>
-                  <Kbd fontSize="xs" mr={1}>Ctrl</Kbd>
+                  <Kbd fontSize="xs" mr={1}>Enter</Kbd>
+                  <span>to send,</span>
+                  <Kbd fontSize="xs" mx={1}>Shift</Kbd>
                   <span>+</span>
                   <Kbd fontSize="xs" ml={1}>Enter</Kbd>
+                  <span>for new line</span>
                 </Flex>
               </Tooltip>
+            )}
             </Flex>
           </Box>
           
